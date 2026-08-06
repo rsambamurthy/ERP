@@ -17,10 +17,13 @@ const config: Config = {
           800: "#0C447C",
           900: "#042C53",
         },
+        // Exact values from SmartAppt Gold's actual login screen (src/pages/LoginPage.tsx,
+        // the `T` theme-colours object) — public auth pages only.
         cream: {
-          50: "#FBF8F2",
-          100: "#F3ECDF",
-          200: "#EDE3D3",
+          50: "#FDF8F5",   // pinBg
+          100: "#F5F0E5",  // cream
+          200: "#E8D9C0",  // creamBorder
+          300: "#DDD0C8",  // inputBorder
         },
         navy: {
           600: "#2A3B5F",
@@ -32,9 +35,9 @@ const config: Config = {
           50: "#FBEEE7",
           100: "#F3D6C4",
           400: "#D4712F",
-          500: "#C15A2E",
-          600: "#A94A24",
-          700: "#8C3B1C",
+          500: "#C4572B",  // T.primary
+          600: "#9C3F1E",  // T.primaryDark
+          700: "#8A6050",  // T.labelColor
         },
       },
     },

@@ -34,7 +34,12 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: "journal_entries", label: "Journal Entries", path: "/accounting/journal", dot: "#7c3aed" },
       { id: "ledger", label: "Ledger", path: "/accounting/ledger", dot: "#16a34a" },
+      { id: "day_book", label: "Day Book", path: "/accounting/day-book", dot: "#f59e0b" },
+      { id: "cash_book", label: "Cash / Bank Book", path: "/accounting/cash-book", dot: "#16a34a" },
+      { id: "receipts_payments", label: "Receipts & Payments", path: "/accounting/receipts-payments", dot: "#15803d" },
       { id: "trial_balance", label: "Trial Balance", path: "/accounting/trial-balance", dot: "#0891b2" },
+      { id: "pnl", label: "Profit & Loss", path: "/accounting/pnl", dot: "#f59e0b" },
+      { id: "balance_sheet", label: "Balance Sheet", path: "/accounting/balance-sheet", dot: "#7c3aed" },
     ],
   },
 ];

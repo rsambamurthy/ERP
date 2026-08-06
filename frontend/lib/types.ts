@@ -134,3 +134,60 @@ export interface TrialBalanceResponse {
   totalDebit: number;
   totalCredit: number;
 }
+
+export interface PnLRow {
+  account: Account;
+  amount: number;
+}
+
+export interface PnLResponse {
+  from: string | null;
+  to: string | null;
+  income: PnLRow[];
+  expense: PnLRow[];
+  totalIncome: number;
+  totalExpense: number;
+  netProfit: number;
+}
+
+export interface BalanceSheetResponse {
+  asOf: string | null;
+  assets: PnLRow[];
+  liabilities: PnLRow[];
+  equity: PnLRow[];
+  totalAssets: number;
+  totalLiabilities: number;
+  totalEquity: number;
+  netProfitToDate: number;
+  totalEquityAndProfit: number;
+  balanced: boolean;
+}
+
+export interface CashBookRow {
+  date: string;
+  narration: string;
+  account: string;
+  debit: number;
+  credit: number;
+  balance: number;
+}
+
+export interface CashBookResponse {
+  rows: CashBookRow[];
+  openingBalance: number;
+}
+
+export interface ReceiptPaymentRow {
+  date: string;
+  narration: string;
+  account: string;
+  partner: string | null;
+  amount: number;
+}
+
+export interface ReceiptsPaymentsResponse {
+  receipts: ReceiptPaymentRow[];
+  payments: ReceiptPaymentRow[];
+  totalReceipts: number;
+  totalPayments: number;
+}

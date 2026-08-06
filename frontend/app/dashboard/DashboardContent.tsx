@@ -19,33 +19,28 @@ export default function DashboardContent() {
   const domains = (params.get("domains")?.split(",").filter(Boolean) ?? []) as DomainCode[];
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-8">
-      <header>
-        <h1 className="text-2xl font-bold text-navy-800">Dashboard</h1>
-        <p className="text-sm text-gray-500">
+    <div>
+      <div className="ent-page-hdr">
+        <h1>Dashboard</h1>
+        <p>
           Workspace provisioned for:{" "}
-          <span className="font-medium text-terracotta-600">
-            {domains.length ? domains.join(", ") : "no domains selected"}
-          </span>
+          <strong>{domains.length ? domains.join(", ") : "no domains selected"}</strong>
         </p>
-      </header>
+      </div>
 
-      <section className="grid gap-4 sm:grid-cols-2">
+      <div className="grid-2">
         {domains.flatMap((d) => WIDGETS[d] ?? []).map((w) => (
-          <div
-            key={w.title}
-            className="rounded-2xl border border-cream-200 bg-white p-5 shadow-sm"
-          >
-            <h3 className="font-semibold text-navy-800">{w.title}</h3>
-            <p className="mt-1 text-sm text-gray-500">{w.blurb}</p>
+          <div key={w.title} className="card">
+            <h3 style={{ fontSize: 14, fontWeight: 600, color: "var(--color-text)" }}>{w.title}</h3>
+            <p style={{ marginTop: 4, fontSize: 13, color: "var(--color-muted)" }}>{w.blurb}</p>
           </div>
         ))}
         {domains.length === 0 && (
-          <p className="text-sm text-gray-500">
+          <p style={{ fontSize: 13, color: "var(--color-muted)" }}>
             No domain data to show — start from the registration wizard.
           </p>
         )}
-      </section>
+      </div>
     </div>
   );
 }

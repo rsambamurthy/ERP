@@ -1,12 +1,16 @@
 import type {
   Account,
+  BalanceSheetResponse,
   BusinessPartner,
+  CashBookResponse,
   DomainDetailsMap,
   DomainType,
   JournalEntry,
   JournalLineInput,
   LedgerResponse,
   OnboardingStatus,
+  PnLResponse,
+  ReceiptsPaymentsResponse,
   RegisterPayload,
   RegisterResponse,
   TrialBalanceResponse,
@@ -188,4 +192,29 @@ export function getLedger(params: { accountId: string; businessPartnerId?: strin
 export function getTrialBalance(params?: { asOf?: string }) {
   const qs = new URLSearchParams(cleanParams(params)).toString();
   return request<{ data: TrialBalanceResponse }>(`/journal/trial-balance${qs ? `?${qs}` : ""}`);
+}
+
+export function getPnL(params?: { from?: string; to?: string }) {
+  const qs = new URLSearchParams(cleanParams(params)).toString();
+  return request<{ data: PnLResponse }>(`/journal/pnl${qs ? `?${qs}` : ""}`);
+}
+
+export function getBalanceSheet(params?: { asOf?: string }) {
+  const qs = new URLSearchParams(cleanParams(params)).toString();
+  return request<{ data: BalanceSheetResponse }>(`/journal/balance-sheet${qs ? `?${qs}` : ""}`);
+}
+
+export function getCashBook(params?: { from?: string; to?: string }) {
+  const qs = new URLSearchParams(cleanParams(params)).toString();
+  return request<{ data: CashBookResponse }>(`/journal/cash-book${qs ? `?${qs}` : ""}`);
+}
+
+export function getReceiptsPayments(params?: { from?: string; to?: string }) {
+  const qs = new URLSearchParams(cleanParams(params)).toString();
+  return request<{ data: ReceiptsPaymentsResponse }>(`/journal/receipts-payments${qs ? `?${qs}` : ""}`);
+}
+
+export function getDayBook(params?: { from?: string; to?: string }) {
+  const qs = new URLSearchParams(cleanParams(params)).toString();
+  return request<{ data: JournalEntry[] }>(`/journal/day-book${qs ? `?${qs}` : ""}`);
 }

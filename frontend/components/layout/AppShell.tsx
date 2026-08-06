@@ -3,14 +3,21 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import Logo from "@/components/ui/Logo";
 import { NAV_GROUPS } from "./navGroups";
 import { clearSession, isLoggedIn } from "@/lib/auth";
 
+// Structure ported from SmartAppt Gold's authenticated app shell
+// (frontend/src/components/organisms/Layout.tsx — WebLayout) — sa-shell /
+// sa-header / sa-sidebar / sa-mg-* classes come straight from its
+// src/index.css, just rebranded. That's the actual navy/blue "enterprise"
+// design system SmartAppt uses post-login (distinct from the cream/
+// terracotta public login/register pages, which already matched).
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [ready, setReady] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set(NAV_GROUPS.map((g) => g.id)));
 
   useEffect(() => {
     if (!isLoggedIn()) {
@@ -20,83 +27,102 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     setReady(true);
   }, [router]);
 
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [pathname]);
+
   if (!ready) return null;
+
+  const toggleGroup = (id: string) => {
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
 
   const handleLogout = () => {
     clearSession();
     router.push("/login");
   };
 
-  return (
-    <div className="flex min-h-screen">
-      {/* ── Sidebar ── */}
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-cream-200 bg-white sm:flex">
-        <div className="flex items-center gap-2 px-5 py-5">
-          <Logo size={32} />
-          <div className="text-lg font-bold">
-            <span className="text-navy-800">Smart</span>
-            <span className="text-terracotta-500">ERP</span>
-          </div>
-        </div>
+  const activeGroupId = NAV_GROUPS.find((g) =>
+    g.items.some((i) => pathname === i.path || pathname?.startsWith(i.path + "/"))
+  )?.id;
 
-        <nav className="flex-1 overflow-y-auto px-3 pb-6">
-          <Link
-            href="/dashboard"
-            className={`mb-4 block rounded-lg px-3 py-2 text-sm font-medium ${
-              pathname === "/dashboard"
-                ? "bg-terracotta-50 text-terracotta-700"
-                : "text-navy-800 hover:bg-cream-50"
-            }`}
-          >
+  return (
+    <div className="sa-shell">
+      {/* ── Header ── */}
+      <header className="sa-header">
+        <button className="sa-hamburger" onClick={() => setSidebarOpen((o) => !o)} aria-label="Toggle menu">
+          <svg viewBox="0 0 20 20" fill="currentColor" width="20" height="20">
+            <path fillRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+          </svg>
+        </button>
+
+        <Link href="/dashboard" className="sa-logo">
+          <span className="sa-logo-box">S</span>
+          SmartERP
+        </Link>
+
+        <div style={{ flex: 1 }} />
+
+        <button className="sa-hbtn" onClick={handleLogout} title="Logout">
+          <svg viewBox="0 0 20 20" fill="currentColor" width="17" height="17">
+            <path fillRule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V4a1 1 0 00-1-1zm10.293 9.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z" clipRule="evenodd" />
+          </svg>
+        </button>
+
+        <div className="sa-user-chip">
+          <div className="sa-avatar">Me</div>
+        </div>
+      </header>
+
+      <div className="sa-body">
+        <div className={`sa-sidebar-overlay${sidebarOpen ? " open" : ""}`} onClick={() => setSidebarOpen(false)} />
+
+        <aside className={`sa-sidebar${sidebarOpen ? " mobile-open" : ""}`}>
+          <div className="sa-sb-head">Navigation</div>
+
+          <Link href="/dashboard" className={`sa-sb-single${pathname === "/dashboard" ? " active" : ""}`}>
+            <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13">
+              <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z" />
+            </svg>
             Dashboard
           </Link>
 
           {NAV_GROUPS.map((group) => (
-            <div key={group.id} className="mb-5">
-              <div className="mb-1 flex items-center gap-2 px-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
-                <span>{group.icon}</span>
-                {group.label}
-              </div>
-              <div className="flex flex-col gap-0.5">
-                {group.items.map((item) => {
-                  const active = pathname === item.path;
-                  return (
+            <div key={group.id} className="sa-mg">
+              <button
+                className={`sa-mg-h${openGroups.has(group.id) ? " open" : ""}${activeGroupId === group.id ? " active-group" : ""}`}
+                onClick={() => toggleGroup(group.id)}
+              >
+                <div className="sa-mg-ic">{group.icon}</div>
+                <span className="sa-mg-t">{group.label}</span>
+                <svg className="sa-mg-cv" viewBox="0 0 20 20" fill="currentColor" width="12" height="12">
+                  <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              </button>
+
+              {openGroups.has(group.id) && (
+                <div className="sa-mi-list">
+                  {group.items.map((item) => (
                     <Link
                       key={item.id}
                       href={item.path}
-                      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${
-                        active
-                          ? "bg-terracotta-50 font-medium text-terracotta-700"
-                          : "text-gray-600 hover:bg-cream-50"
-                      }`}
+                      className={`sa-mi${pathname === item.path ? " active" : ""}`}
                     >
-                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: item.dot }} />
+                      <span className="sa-dot" style={{ background: item.dot }} />
                       {item.label}
                     </Link>
-                  );
-                })}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
-        </nav>
-      </aside>
+        </aside>
 
-      {/* ── Main ── */}
-      <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-cream-200 bg-white px-6 py-3">
-          <div className="sm:hidden text-lg font-bold">
-            <span className="text-navy-800">Smart</span>
-            <span className="text-terracotta-500">ERP</span>
-          </div>
-          <div className="flex-1" />
-          <button
-            onClick={handleLogout}
-            className="rounded-lg border border-cream-200 px-3 py-1.5 text-sm font-medium text-navy-800 hover:bg-cream-50"
-          >
-            Logout
-          </button>
-        </header>
-        <main className="flex-1 bg-[#f3ece0] p-6">{children}</main>
+        <main className="sa-main">{children}</main>
       </div>
     </div>
   );

@@ -2,13 +2,8 @@
 
 import { useEffect, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
-import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
 import { ApiError, createBusinessPartner, getBusinessPartners, toggleBusinessPartner } from "@/lib/api";
 import type { BusinessPartner } from "@/lib/types";
-
-const selectClass =
-  "rounded-lg border border-cream-200 bg-cream-50 px-3 py-2.5 text-sm outline-none focus:border-terracotta-400 focus:ring-1 focus:ring-terracotta-400";
 
 export default function BusinessPartnersPage() {
   const [bpType, setBpType] = useState<"CUSTOMER" | "VENDOR">("CUSTOMER");
@@ -43,11 +38,8 @@ export default function BusinessPartnersPage() {
     setError(null);
     try {
       await createBusinessPartner({
-        bpType,
-        name: form.name,
-        gstin: form.gstin || null,
-        phone: form.phone || null,
-        email: form.email || null,
+        bpType, name: form.name,
+        gstin: form.gstin || null, phone: form.phone || null, email: form.email || null,
       });
       setShowForm(false);
       setForm({ name: "", gstin: "", phone: "", email: "" });
@@ -66,78 +58,63 @@ export default function BusinessPartnersPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto flex max-w-4xl flex-col gap-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-navy-800">Business Partners</h1>
-            <p className="text-sm text-gray-500">Customers and vendors — the sub-ledger behind your control accounts.</p>
+      <div className="ent-page-hdr">
+        <h1>Business Partners</h1>
+        <p>Customers and vendors — the sub-ledger behind your control accounts.</p>
+      </div>
+
+      <div className="ent-tabs">
+        {(["CUSTOMER", "VENDOR"] as const).map((t) => (
+          <button key={t} className={`ent-tab${bpType === t ? " active" : ""}`} onClick={() => setBpType(t)}>
+            {t === "CUSTOMER" ? "Customers" : "Vendors"}
+          </button>
+        ))}
+      </div>
+
+      <div className="ent-toolbar">
+        <div style={{ flex: 1 }} />
+        <button className="ent-btn-add" onClick={() => setShowForm((s) => !s)}>
+          {showForm ? "Cancel" : `+ Add ${bpType === "CUSTOMER" ? "Customer" : "Vendor"}`}
+        </button>
+      </div>
+
+      {showForm && (
+        <form onSubmit={handleCreate} className="ent-section">
+          <div className="ent-section-hdr"><span className="ent-section-title">New {bpType === "CUSTOMER" ? "Customer" : "Vendor"}</span></div>
+          <div className="ent-form-grid">
+            <div className="ent-fg"><label className="ent-fl">Name</label><input className="ent-fc" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} required /></div>
+            <div className="ent-fg"><label className="ent-fl">GSTIN (optional)</label><input className="ent-fc" value={form.gstin} onChange={(e) => setForm((f) => ({ ...f, gstin: e.target.value }))} /></div>
+            <div className="ent-fg"><label className="ent-fl">Phone (optional)</label><input className="ent-fc" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} /></div>
+            <div className="ent-fg"><label className="ent-fl">Email (optional)</label><input className="ent-fc" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} /></div>
           </div>
-          <Button onClick={() => setShowForm((s) => !s)}>{showForm ? "Cancel" : `Add ${bpType === "CUSTOMER" ? "Customer" : "Vendor"}`}</Button>
-        </div>
+          {error && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 10px" }}>{error}</p>}
+          <div style={{ padding: "0 14px 14px" }}>
+            <button type="submit" className="ent-btn-save" disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+          </div>
+        </form>
+      )}
 
-        <div className="flex gap-2">
-          {(["CUSTOMER", "VENDOR"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setBpType(t)}
-              className={`rounded-lg px-4 py-2 text-sm font-medium ${
-                bpType === t ? "bg-terracotta-500 text-white" : "bg-white text-navy-800 border border-cream-200"
-              }`}
-            >
-              {t === "CUSTOMER" ? "Customers" : "Vendors"}
-            </button>
-          ))}
-        </div>
+      {error && !showForm && <p style={{ color: "#dc2626", fontSize: 13, marginBottom: 12 }}>{error}</p>}
 
-        {showForm && (
-          <form onSubmit={handleCreate} className="flex flex-col gap-4 rounded-2xl border border-cream-200 bg-white p-5 shadow-sm">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Input label="Name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} required />
-              <Input label="GSTIN (optional)" value={form.gstin} onChange={(e) => setForm((f) => ({ ...f, gstin: e.target.value }))} />
-              <Input label="Phone (optional)" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
-              <Input label="Email (optional)" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
-            </div>
-            {error && <p className="text-sm text-red-600">{error}</p>}
-            <div><Button type="submit" loading={saving}>Save</Button></div>
-          </form>
-        )}
-
-        {error && !showForm && <p className="text-sm text-red-600">{error}</p>}
-
-        <div className="overflow-hidden rounded-2xl border border-cream-200 bg-white shadow-sm">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-cream-50 text-xs uppercase tracking-wide text-gray-500">
-              <tr>
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">GSTIN</th>
-                <th className="px-4 py-3">Contact</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3" />
+      <div className="ent-page-table">
+        <table>
+          <thead><tr><th>Name</th><th>GSTIN</th><th>Contact</th><th>Status</th><th /></tr></thead>
+          <tbody>
+            {loading && <tr><td colSpan={5} className="ent-empty">Loading…</td></tr>}
+            {!loading && partners.length === 0 && <tr><td colSpan={5} className="ent-empty">None yet.</td></tr>}
+            {partners.map((p) => (
+              <tr key={p.id}>
+                <td style={{ fontWeight: 500 }}>{p.name}</td>
+                <td style={{ color: "var(--color-muted)" }}>{p.gstin || "—"}</td>
+                <td style={{ color: "var(--color-muted)" }}>{p.phone || p.email || "—"}</td>
+                <td><span className={p.isActive ? "badge badge-green" : "badge badge-gray"}>{p.isActive ? "Active" : "Inactive"}</span></td>
+                <td style={{ textAlign: "right" }}>
+                  <button className="ent-ia ent-ia-edit" onClick={() => handleToggle(p.id)}>{p.isActive ? "Deactivate" : "Activate"}</button>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {loading && <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">Loading…</td></tr>}
-              {!loading && partners.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">None yet.</td></tr>
-              )}
-              {partners.map((p) => (
-                <tr key={p.id} className="border-t border-cream-100">
-                  <td className="px-4 py-2.5 font-medium text-navy-800">{p.name}</td>
-                  <td className="px-4 py-2.5 text-gray-500">{p.gstin || "—"}</td>
-                  <td className="px-4 py-2.5 text-gray-500">{p.phone || p.email || "—"}</td>
-                  <td className="px-4 py-2.5">
-                    <span className={p.isActive ? "text-green-600" : "text-gray-400"}>{p.isActive ? "Active" : "Inactive"}</span>
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <button onClick={() => handleToggle(p.id)} className="text-xs font-medium text-terracotta-600 hover:underline">
-                      {p.isActive ? "Deactivate" : "Activate"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </table>
       </div>
     </AppShell>
   );
