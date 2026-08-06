@@ -27,6 +27,8 @@ docs/      Registration_Module_Spec_v2.docx  -- design spec: flow, schema
                                                  open decisions
 frontend/  Next.js registration wizard, deployed on Vercel — see
            frontend/README.md for setup and deploy steps
+backend/   Node + Express + Prisma API implementing the onboarding
+           endpoints, deployed on Railway — see backend/README.md
 ```
 
 ## Database
@@ -42,6 +44,9 @@ psql "$DATABASE_URL" -f db/registration_schema_v2.sql
 
 ## Status
 
-Design phase. Registration/onboarding flow and schema are drafted and
-reviewed; no application code yet. Open decisions are listed at the end of
-`docs/Registration_Module_Spec_v2.docx`.
+Registration/onboarding flow, schema, frontend wizard, and backend API are
+drafted and reviewed. Open decisions are listed at the end of
+`docs/Registration_Module_Spec_v2.docx`. Neither `frontend/` nor `backend/`
+has been through a real `npm install`/build in the environment they were
+written in (no package registry access there) — verify with a local install
+or the first Vercel/Railway build before treating either as done.

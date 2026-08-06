@@ -1,0 +1,289 @@
+// Mirrors db/registration_schema_v2.sql. That SQL file (run directly via
+// psql) is the source of truth for the actual DDL — it includes the
+// trg_lock_org_domains trigger and CHECK constraints that Prisma's schema
+// language can't express. This file exists so the backend gets a typed
+// client; run `npx prisma generate` (no DB connection needed) after the SQL
+// has been applied.
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model DomainType {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String   @unique @db.VarChar(30)
+  name        String   @db.VarChar(100)
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  domainModules DomainModule[]
+  coaTemplates  CoaTemplate[]
+  orgDomains    OrgDomain[]
+
+  @@map("domain_types")
+}
+
+model Module {
+  id   String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code String @unique @db.VarChar(30)
+  name String @db.VarChar(100)
+
+  domainModules DomainModule[]
+  orgModules    OrgModule[]
+
+  @@map("modules")
+}
+
+model DomainModule {
+  domainTypeId String  @map("domain_type_id") @db.Uuid
+  moduleId     String  @map("module_id") @db.Uuid
+  isDefault    Boolean @default(true) @map("is_default")
+
+  domainType DomainType @relation(fields: [domainTypeId], references: [id])
+  module     Module     @relation(fields: [moduleId], references: [id])
+
+  @@id([domainTypeId, moduleId])
+  @@map("domain_modules")
+}
+
+model CoaTemplate {
+  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  domainTypeId     String? @map("domain_type_id") @db.Uuid
+  accountCode      String  @map("account_code") @db.VarChar(10)
+  accountName      String  @map("account_name") @db.VarChar(100)
+  accountType      String  @map("account_type") @db.VarChar(20)
+  isControlAccount Boolean @default(false) @map("is_control_account")
+  defaultBpType    String? @map("default_bp_type") @db.VarChar(20)
+
+  domainType DomainType? @relation(fields: [domainTypeId], references: [id])
+
+  @@unique([domainTypeId, accountCode])
+  @@map("coa_templates")
+}
+
+model Organization {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String    @db.VarChar(200)
+  status         String    @default("PENDING_VERIFICATION") @db.VarChar(20)
+  domainLockedAt DateTime? @map("domain_locked_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  orgDomains       OrgDomain[]
+  branches         Branch[]
+  accounts         Account[]
+  orgUsers         OrgUser[]
+  onboardingState  OnboardingState?
+  orgModules       OrgModule[]
+  items            Item[]
+  bomLines         BomLine[]
+  businessPartners BusinessPartner[]
+  journalEntries   JournalEntry[]
+
+  @@map("organizations")
+}
+
+model OrgDomain {
+  organizationId String   @map("organization_id") @db.Uuid
+  domainTypeId   String   @map("domain_type_id") @db.Uuid
+  domainDetails  Json?    @map("domain_details")
+  addedAt        DateTime @default(now()) @map("added_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  domainType   DomainType   @relation(fields: [domainTypeId], references: [id])
+
+  @@id([organizationId, domainTypeId])
+  @@map("org_domains")
+}
+
+model Branch {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  code           String    @db.VarChar(20)
+  name           String    @db.VarChar(200)
+  gstin          String?   @db.VarChar(15)
+  address        Json?
+  isHeadOffice   Boolean   @default(false) @map("is_head_office")
+  status         String    @default("ACTIVE") @db.VarChar(20)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  orgUsers       OrgUser[]
+  itemStocks     ItemStock[]
+  journalEntries JournalEntry[]
+
+  @@unique([organizationId, code])
+  @@map("branches")
+}
+
+model Account {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String    @map("organization_id") @db.Uuid
+  accountCode      String    @map("account_code") @db.VarChar(10)
+  accountName      String    @map("account_name") @db.VarChar(100)
+  accountType      String    @map("account_type") @db.VarChar(20)
+  isControlAccount Boolean   @default(false) @map("is_control_account")
+  defaultBpType    String?   @map("default_bp_type") @db.VarChar(20)
+  createdAt        DateTime  @default(now()) @map("created_at")
+  deletedAt        DateTime? @map("deleted_at")
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  journalLines JournalLine[]
+
+  @@unique([organizationId, accountCode])
+  @@map("accounts")
+}
+
+model User {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String?   @unique @db.VarChar(255)
+  phone        String?   @unique @db.VarChar(20)
+  passwordHash String    @map("password_hash")
+  isVerified   Boolean   @default(false) @map("is_verified")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  orgUsers OrgUser[]
+
+  @@map("users")
+}
+
+model OrgUser {
+  organizationId String  @map("organization_id") @db.Uuid
+  userId         String  @map("user_id") @db.Uuid
+  role           String  @default("OWNER") @db.VarChar(20)
+  branchId       String? @map("branch_id") @db.Uuid
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+  branch       Branch?      @relation(fields: [branchId], references: [id])
+
+  @@id([organizationId, userId])
+  @@map("org_users")
+}
+
+model OnboardingState {
+  organizationId String    @id @map("organization_id") @db.Uuid
+  step           String    @default("SIGNUP") @db.VarChar(20)
+  otpCode        String?   @map("otp_code") @db.VarChar(10)
+  otpExpiresAt   DateTime? @map("otp_expires_at")
+  provisionedAt  DateTime? @map("provisioned_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@map("onboarding_state")
+}
+
+model OrgModule {
+  organizationId String   @map("organization_id") @db.Uuid
+  moduleId       String   @map("module_id") @db.Uuid
+  enabledAt      DateTime @default(now()) @map("enabled_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  module       Module       @relation(fields: [moduleId], references: [id])
+
+  @@id([organizationId, moduleId])
+  @@map("org_modules")
+}
+
+model Item {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  sku            String    @db.VarChar(50)
+  name           String    @db.VarChar(200)
+  uom            String    @default("EA") @db.VarChar(20)
+  isFinishedGood Boolean   @default(false) @map("is_finished_good")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  organization        Organization @relation(fields: [organizationId], references: [id])
+  itemStocks           ItemStock[]
+  bomLinesAsFinished   BomLine[]   @relation("FinishedItem")
+  bomLinesAsComponent  BomLine[]   @relation("ComponentItem")
+
+  @@unique([organizationId, sku])
+  @@map("items")
+}
+
+model ItemStock {
+  itemId         String   @map("item_id") @db.Uuid
+  branchId       String   @map("branch_id") @db.Uuid
+  quantityOnHand Decimal  @default(0) @map("quantity_on_hand") @db.Decimal(14, 4)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  item   Item   @relation(fields: [itemId], references: [id])
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@id([itemId, branchId])
+  @@map("item_stock")
+}
+
+model BomLine {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  finishedItemId  String   @map("finished_item_id") @db.Uuid
+  componentItemId String   @map("component_item_id") @db.Uuid
+  qtyPerUnit      Decimal  @map("qty_per_unit") @db.Decimal(14, 4)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  organization  Organization @relation(fields: [organizationId], references: [id])
+  finishedItem  Item         @relation("FinishedItem", fields: [finishedItemId], references: [id])
+  componentItem Item         @relation("ComponentItem", fields: [componentItemId], references: [id])
+
+  @@map("bom_lines")
+}
+
+model BusinessPartner {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  bpType         String    @map("bp_type") @db.VarChar(20)
+  refId          String    @map("ref_id") @db.Uuid
+  name           String    @db.VarChar(200)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  journalLines JournalLine[]
+
+  @@map("business_partners")
+}
+
+model JournalEntry {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  branchId       String?   @map("branch_id") @db.Uuid
+  entryDate      DateTime  @map("entry_date") @db.Date
+  referenceType  String?   @map("reference_type") @db.VarChar(30)
+  postedAt       DateTime? @map("posted_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  branch       Branch?       @relation(fields: [branchId], references: [id])
+  journalLines JournalLine[]
+
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  journalEntryId    String  @map("journal_entry_id") @db.Uuid
+  accountId         String  @map("account_id") @db.Uuid
+  businessPartnerId String? @map("business_partner_id") @db.Uuid
+  debit             Decimal @default(0) @db.Decimal(14, 2)
+  credit            Decimal @default(0) @db.Decimal(14, 2)
+
+  journalEntry    JournalEntry     @relation(fields: [journalEntryId], references: [id])
+  account         Account          @relation(fields: [accountId], references: [id])
+  businessPartner BusinessPartner? @relation(fields: [businessPartnerId], references: [id])
+
+  @@map("journal_lines")
+}
