@@ -1,7 +1,7 @@
 import { randomBytes } from "crypto";
 import { Router } from "express";
 import { prisma } from "../db";
-import { authenticate, requireRole } from "../middleware/auth";
+import { authenticate, requireRole, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 
 const router = Router();
@@ -10,9 +10,19 @@ router.use(authenticate);
 const ORG_ROLES = ["ADMIN", "ACCOUNTANT", "VIEWER"]; // OWNER is never assignable — set once at registration
 const canManageUsers = requireRole("OWNER", "ADMIN");
 
+function orgIdOr400(req: import("express").Request, res: import("express").Response): string | null {
+  const organizationId = resolveOrgId(req);
+  if (!organizationId) {
+    res.status(400).json({ message: "organizationId is required." });
+    return null;
+  }
+  return organizationId;
+}
+
 // GET /org/users — current members + pending invites, for the Team settings screen.
 router.get("/", canManageUsers, async (req, res) => {
-  const organizationId = req.user!.organizationId!;
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
 
   const members = await prisma.orgUser.findMany({
     where: { organizationId },
@@ -37,8 +47,9 @@ router.get("/", canManageUsers, async (req, res) => {
 
 // POST /org/users/invite — OWNER/ADMIN only.
 router.post("/invite", canManageUsers, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
   const { email, phone, role } = req.body ?? {};
-  const organizationId = req.user!.organizationId!;
 
   if ((!email && !phone) || !role) {
     return res.status(400).json({ message: "email or phone, and role, are required." });
@@ -84,15 +95,17 @@ router.post("/invite", canManageUsers, async (req, res) => {
 
 // DELETE /org/invites/:id — cancel a pending invite.
 router.delete("/invites/:id", canManageUsers, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
   const invite = await prisma.orgInvite.findFirst({
-    where: { id: req.params.id, organizationId: req.user!.organizationId! },
+    where: { id: req.params.id, organizationId },
   });
   if (!invite) return res.status(404).json({ message: "Invite not found." });
   if (invite.acceptedAt) return res.status(409).json({ message: "This invite was already accepted." });
 
   await prisma.orgInvite.delete({ where: { id: invite.id } });
   logAudit({
-    organizationId: req.user!.organizationId, actorUserId: req.user!.userId,
+    organizationId, actorUserId: req.user!.userId,
     action: "REVOKE", entityType: "org_invite", entityId: invite.id,
     summary: `Cancelled invite to ${invite.email || invite.phone}`,
   });
@@ -102,8 +115,9 @@ router.delete("/invites/:id", canManageUsers, async (req, res) => {
 // PATCH /org/users/:userId/role — change a teammate's role. Can't touch the
 // OWNER (there's exactly one, set at registration) or promote to OWNER.
 router.patch("/:userId/role", canManageUsers, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
   const { role } = req.body ?? {};
-  const organizationId = req.user!.organizationId!;
 
   if (!ORG_ROLES.includes(role)) {
     return res.status(400).json({ message: `role must be one of ${ORG_ROLES.join(", ")}.` });
@@ -130,7 +144,8 @@ router.patch("/:userId/role", canManageUsers, async (req, res) => {
 // DELETE /org/users/:userId — revoke access. Can't remove the OWNER, or
 // yourself.
 router.delete("/:userId", canManageUsers, async (req, res) => {
-  const organizationId = req.user!.organizationId!;
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
 
   const member = await prisma.orgUser.findUnique({
     where: { organizationId_userId: { organizationId, userId: req.params.userId } },

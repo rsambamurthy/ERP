@@ -235,10 +235,22 @@ model OnboardingState {
   @@map("onboarding_state")
 }
 
+// Per-org, per-module subscription standing — mirrors SmartAppt's
+// AssociationModule (see subscriptions.routes.ts): a real grant/renew/cancel
+// console, not a single org-wide on/off switch. `status` ACTIVE/TRIAL/
+// CANCELLED, `expiresOn` null means perpetual, amount/reference/note are the
+// billing record of what was actually granted and why.
 model OrgModule {
-  organizationId String   @map("organization_id") @db.Uuid
-  moduleId       String   @map("module_id") @db.Uuid
-  enabledAt      DateTime @default(now()) @map("enabled_at")
+  organizationId String    @map("organization_id") @db.Uuid
+  moduleId       String    @map("module_id") @db.Uuid
+  status         String    @default("ACTIVE") @map("status") @db.VarChar(20)
+  startsOn       DateTime  @default(now()) @map("starts_on") @db.Date
+  expiresOn      DateTime? @map("expires_on") @db.Date
+  amount         Decimal?  @map("amount") @db.Decimal(10, 2)
+  reference      String?   @map("reference") @db.VarChar(100)
+  note           String?   @map("note")
+  grantedBy      String?   @map("granted_by") @db.Uuid
+  enabledAt      DateTime  @default(now()) @map("enabled_at")
 
   organization Organization @relation(fields: [organizationId], references: [id])
   module       Module       @relation(fields: [moduleId], references: [id])

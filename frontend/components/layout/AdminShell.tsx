@@ -30,6 +30,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
 
   const links = [
     { href: "/admin", label: "Organizations" },
+    { href: "/admin/subscriptions", label: "Subscriptions" },
     { href: "/admin/audit-log", label: "Audit Trail" },
   ];
 

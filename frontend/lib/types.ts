@@ -220,6 +220,15 @@ export interface OrgUsersResponse {
 
 // ── Platform admin ───────────────────────────────────────────────────────────
 
+export interface AdminOrgModule {
+  code: string;
+  name: string;
+  status: "ACTIVE" | "TRIAL" | "CANCELLED";
+  startsOn?: string;
+  expiresOn: string | null;
+  amount?: number | string | null;
+}
+
 export interface AdminOrganization {
   id: string;
   name: string;
@@ -229,7 +238,53 @@ export interface AdminOrganization {
   branchCount: number;
   userCount: number;
   journalEntryCount: number;
+  modules: AdminOrgModule[];
   createdAt: string;
+}
+
+export interface AdminOrgDetailUser {
+  userId: string;
+  role: string;
+  email: string | null;
+  phone: string | null;
+  isVerified: boolean;
+}
+
+export interface AdminOrgDetailBranch {
+  id: string;
+  code: string;
+  name: string;
+  isHeadOffice: boolean;
+  status: string;
+}
+
+export interface AdminOrganizationDetail {
+  id: string;
+  name: string;
+  status: string;
+  subscriptionStatus: "ACTIVE" | "SUSPENDED";
+  createdAt: string;
+  domains: { code: string; name: string; addedAt: string }[];
+  branches: AdminOrgDetailBranch[];
+  users: AdminOrgDetailUser[];
+  modules: AdminOrgModule[];
+  counts: { journalEntries: number; accounts: number; businessPartners: number };
+}
+
+export interface ModuleCatalogItem {
+  code: string;
+  name: string;
+}
+
+export interface SubscriptionOrgRow {
+  id: string;
+  name: string;
+  modules: AdminOrgModule[];
+}
+
+export interface AdminSubscriptionsResponse {
+  data: SubscriptionOrgRow[];
+  catalog: ModuleCatalogItem[];
 }
 
 export interface AuditLogEntry {

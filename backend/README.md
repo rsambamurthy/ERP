@@ -13,6 +13,7 @@ cp .env.example .env      # set DATABASE_URL to your Postgres instance, and JWT_
 psql "$DATABASE_URL" -f ../db/registration_schema_v2.sql
 psql "$DATABASE_URL" -f ../db/migration_002_accounting.sql
 psql "$DATABASE_URL" -f ../db/migration_003_users_admin.sql
+psql "$DATABASE_URL" -f ../db/migration_004_module_subscriptions.sql
 npx prisma generate
 npx prisma db seed         # seeds domain_types, modules, coa_templates
 npm run create-admin -- --email you@example.com --password "something long"   # makes yourself a platform admin
@@ -70,13 +71,35 @@ Roles: **OWNER** (one per org, set at registration, full access) · **ADMIN** (s
 
 ### Platform admin (`/admin/*`, platform-admin accounts only)
 
-Not a member of any org — created via `npm run create-admin`, never through the public signup. Logs in through the same `/auth/login`.
+Not a member of any org — created via `npm run create-admin`, never through
+the public signup. Logs in through the same `/auth/login`. Ported from
+SmartAppt's `SUPER_USER` pattern (`middleware/rbac.ts`,
+`entitlement.service.ts`, `associations.routes.ts`,
+`subscriptions.routes.ts`): a platform admin isn't limited to a separate
+read-only monitoring view — `isPlatformAdmin` bypasses every `requireRole()`
+check and every subscription gate everywhere in the app
+(`middleware/auth.ts`), and can act on any org's data directly.
 
 | Endpoint | Notes |
 |---|---|
-| `GET /admin/organizations` | Every org: domains, branch/user counts, status, subscription. |
-| `PATCH /admin/organizations/:id/subscription` | `{ status: "ACTIVE" \| "SUSPENDED" }` — a suspended org's accounting endpoints (`/accounts`, `/business-partners`, `/journal/*`) start returning 402 until reactivated. |
-| `GET /admin/audit-logs?organizationId=` | Platform-wide (or one org's) activity log — every account/business-partner/journal/user-management mutation writes here via `lib/audit.ts`. |
+| `GET /admin/organizations?q=` | Every org: domains, branch/user/module counts, status, subscription. |
+| `GET /admin/organizations/:id` | Full detail — team, branches, domains, module standing — for the drill-in screen. |
+| `PATCH /admin/organizations/:id` | `{ name }` — rename an org. |
+| `PATCH /admin/organizations/:id/subscription` | `{ status: "ACTIVE" \| "SUSPENDED" }` — the org-wide kill switch; a suspended org's accounting endpoints (`/accounts`, `/business-partners`, `/journal/*`) start returning 402 for its own users until reactivated. Platform admins are always exempt. |
+| `DELETE /admin/organizations/:id` | Permanently deletes the org and everything in it. Guarded like SmartAppt's `hardDelete`: must already be `SUSPENDED`, and must have zero posted journal entries. |
+| `GET /admin/subscriptions?q=&filter=` | Per-module subscription console — one row per org, one column per module. `filter` is `ALL \| EXPIRING \| LAPSED \| TRIAL \| UNSUBSCRIBED`. |
+| `POST /admin/subscriptions/:organizationId/:moduleCode` | Grant or renew one module for one org — `{ status, expiresOn, startsOn?, amount?, reference?, note? }`. `expiresOn: null` means perpetual; it must be passed explicitly. |
+| `DELETE /admin/subscriptions/:organizationId/:moduleCode` | Cancel a module (soft — sets `CANCELLED`, keeps the billing record). |
+| `GET /admin/audit-logs?organizationId=` | Platform-wide (or one org's) activity log — every account/business-partner/journal/user-management/module mutation writes here via `lib/audit.ts`. |
+
+**Operating inside a specific org.** The ordinary `/accounts`,
+`/business-partners`, `/journal/*`, and `/org/users/*` endpoints all resolve
+their target org via `resolveOrgId()` (`middleware/auth.ts`): for a normal
+user that's their own `organizationId` from the JWT; for a platform admin
+it's whichever org they pass explicitly via `?organizationId=` (GET/DELETE)
+or `organizationId` in the body (POST/PATCH) — the same shape as SmartAppt
+passing `?association_id=` into a manager's own endpoints rather than
+maintaining a separate parallel "admin view" of the data.
 
 `domain_locked_at` itself is set by the database trigger the moment a
 `journal_entries` row is inserted, not by any of these endpoints — none of
@@ -100,7 +123,10 @@ real transactional endpoints are built later.
    ```bash
    psql "$DATABASE_URL" -f ../db/registration_schema_v2.sql
    psql "$DATABASE_URL" -f ../db/migration_002_accounting.sql
+   psql "$DATABASE_URL" -f ../db/migration_003_users_admin.sql
+   psql "$DATABASE_URL" -f ../db/migration_004_module_subscriptions.sql
    npx prisma db seed
+   npm run create-admin -- --email you@example.com --password "something long"
    ```
 6. Copy the service's public URL into the frontend's `NEXT_PUBLIC_API_URL`
    on Vercel.

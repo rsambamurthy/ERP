@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import AdminShell from "@/components/layout/AdminShell";
 import { ApiError, getAdminOrganizations, setOrgSubscription } from "@/lib/api";
 import type { AdminOrganization } from "@/lib/types";
@@ -9,11 +10,12 @@ export default function AdminOrganizationsPage() {
   const [orgs, setOrgs] = useState<AdminOrganization[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState("");
 
-  async function load() {
+  async function load(query?: string) {
     setLoading(true);
     try {
-      const res = await getAdminOrganizations();
+      const res = await getAdminOrganizations(query);
       setOrgs(res.data);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load organizations.");
@@ -23,6 +25,11 @@ export default function AdminOrganizationsPage() {
   }
 
   useEffect(() => { load(); }, []);
+
+  function handleSearch(e: React.FormEvent) {
+    e.preventDefault();
+    load(q || undefined);
+  }
 
   async function handleToggle(org: AdminOrganization) {
     await setOrgSubscription(org.id, org.subscriptionStatus === "ACTIVE" ? "SUSPENDED" : "ACTIVE");
@@ -57,6 +64,14 @@ export default function AdminOrganizationsPage() {
 
       {error && <p style={{ color: "#dc2626", fontSize: 13, marginBottom: 12 }}>{error}</p>}
 
+      <form onSubmit={handleSearch} className="ent-toolbar">
+        <input
+          className="ent-fc" style={{ maxWidth: 280 }}
+          placeholder="Search by name…" value={q} onChange={(e) => setQ(e.target.value)}
+        />
+        <button type="submit" className="ent-btn-add">Search</button>
+      </form>
+
       <div className="ent-page-table">
         <table>
           <thead>
@@ -67,7 +82,9 @@ export default function AdminOrganizationsPage() {
             {!loading && orgs.length === 0 && <tr><td colSpan={8} className="ent-empty">No organizations yet.</td></tr>}
             {orgs.map((o) => (
               <tr key={o.id}>
-                <td style={{ fontWeight: 500 }}>{o.name}</td>
+                <td style={{ fontWeight: 500 }}>
+                  <Link href={`/admin/organizations/${o.id}`} style={{ color: "var(--color-navy-800, inherit)" }}>{o.name}</Link>
+                </td>
                 <td style={{ color: "var(--color-muted)" }}>{o.domains.join(", ") || "—"}</td>
                 <td>{o.branchCount}</td>
                 <td>{o.userCount}</td>
@@ -79,6 +96,7 @@ export default function AdminOrganizationsPage() {
                 </td>
                 <td style={{ color: "var(--color-muted)" }}>{new Date(o.createdAt).toLocaleDateString()}</td>
                 <td style={{ textAlign: "right" }}>
+                  <Link href={`/admin/organizations/${o.id}`} className="ent-ia ent-ia-edit">View</Link>{" "}
                   <button className="ent-ia ent-ia-edit" onClick={() => handleToggle(o)}>
                     {o.subscriptionStatus === "ACTIVE" ? "Suspend" : "Reactivate"}
                   </button>

@@ -34,8 +34,15 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
 //   ACCOUNTANT — can post journal entries and manage business partners, but
 //                not restructure the Chart of Accounts or manage users.
 //   VIEWER     — read-only.
+//
+// A platform admin bypasses every one of these checks, everywhere — same
+// pattern as SmartAppt's SUPER_USER in middleware/rbac.ts ("SUPER_USER
+// bypasses all role restrictions"). It isn't a member of any org, but once
+// it's targeting one (via resolveOrgId), it has the same authority any
+// role in that org would have.
 export function requireRole(...roles: string[]) {
   return (req: Request, res: Response, next: NextFunction) => {
+    if (req.user?.isPlatformAdmin) return next();
     if (!req.user || !req.user.role || !roles.includes(req.user.role)) {
       return res.status(403).json({ message: "You don't have permission to do that." });
     }
@@ -54,8 +61,11 @@ export function requirePlatformAdmin(req: Request, res: Response, next: NextFunc
 
 // Gives the platform-admin "manage subscriptions" toggle actual teeth —
 // a SUSPENDED org's accounting endpoints stop working (reads included) until
-// a platform admin flips it back.
+// a platform admin flips it back. Platform admins themselves are exempt —
+// same as SmartAppt's entitlement.service.ts: "SUPER_USER is exempt: they
+// administer every association" and always resolve to FULL access.
 export async function requireActiveSubscription(req: Request, res: Response, next: NextFunction) {
+  if (req.user?.isPlatformAdmin) return next();
   if (!req.user?.organizationId) return next();
   const org = await prisma.organization.findUnique({
     where: { id: req.user.organizationId },
@@ -65,4 +75,20 @@ export async function requireActiveSubscription(req: Request, res: Response, nex
     return res.status(402).json({ message: "This organization's subscription is suspended. Contact support." });
   }
   next();
+}
+
+// Every data-scoped route (accounts, business partners, journal, org users)
+// normally operates on the caller's own organizationId. A platform admin
+// isn't scoped to any org, so it targets one explicitly via
+// ?organizationId=<id> (GET/DELETE) or organizationId in the body
+// (POST/PATCH) — the same shape as SmartAppt's admin console passing
+// ?association_id= into the ordinary units/users endpoints, rather than a
+// separate parallel "admin view" of the data.
+export function resolveOrgId(req: Request): string | null {
+  if (req.user?.isPlatformAdmin) {
+    const fromQuery = typeof req.query.organizationId === "string" ? req.query.organizationId : null;
+    const fromBody = req.body && typeof req.body.organizationId === "string" ? req.body.organizationId : null;
+    return fromQuery || fromBody || null;
+  }
+  return req.user?.organizationId ?? null;
 }

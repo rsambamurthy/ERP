@@ -1,6 +1,8 @@
 import type {
   Account,
   AdminOrganization,
+  AdminOrganizationDetail,
+  AdminSubscriptionsResponse,
   AuditLogEntry,
   BalanceSheetResponse,
   BusinessPartner,
@@ -261,8 +263,20 @@ export function removeMember(userId: string) {
 
 // ── Platform admin ───────────────────────────────────────────────────────────
 
-export function getAdminOrganizations() {
-  return request<{ data: AdminOrganization[] }>("/admin/organizations");
+export function getAdminOrganizations(q?: string) {
+  const qs = q ? `?q=${encodeURIComponent(q)}` : "";
+  return request<{ data: AdminOrganization[] }>(`/admin/organizations${qs}`);
+}
+
+export function getAdminOrganization(id: string) {
+  return request<{ data: AdminOrganizationDetail }>(`/admin/organizations/${id}`);
+}
+
+export function updateAdminOrganization(id: string, name: string) {
+  return request<{ data: { id: string; name: string } }>(`/admin/organizations/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
 }
 
 export function setOrgSubscription(id: string, status: "ACTIVE" | "SUSPENDED") {
@@ -270,6 +284,32 @@ export function setOrgSubscription(id: string, status: "ACTIVE" | "SUSPENDED") {
     method: "PATCH",
     body: JSON.stringify({ status }),
   });
+}
+
+// Permanently deletes an org. The backend refuses unless it's already
+// SUSPENDED and has zero posted journal entries.
+export function deleteAdminOrganization(id: string) {
+  return request<{ data: { deleted: true } }>(`/admin/organizations/${id}`, { method: "DELETE" });
+}
+
+export function getAdminSubscriptions(params?: { q?: string; filter?: string }) {
+  const qs = new URLSearchParams(cleanParams(params)).toString();
+  return request<AdminSubscriptionsResponse>(`/admin/subscriptions${qs ? `?${qs}` : ""}`);
+}
+
+export function grantModule(
+  organizationId: string,
+  moduleCode: string,
+  body: { status?: "ACTIVE" | "TRIAL"; expiresOn: string | null; startsOn?: string; amount?: number | null; reference?: string; note?: string },
+) {
+  return request<{ data: unknown }>(`/admin/subscriptions/${organizationId}/${moduleCode}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function cancelModule(organizationId: string, moduleCode: string) {
+  return request<{ data: unknown }>(`/admin/subscriptions/${organizationId}/${moduleCode}`, { method: "DELETE" });
 }
 
 export function getAdminAuditLogs(organizationId?: string) {

@@ -1,7 +1,18 @@
 import { Router } from "express";
 import { prisma } from "../db";
-import { authenticate, requireRole, requireActiveSubscription } from "../middleware/auth";
+import { authenticate, requireRole, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
+
+// Resolves the target org for this request (the caller's own org, or — for
+// a platform admin — whichever org they passed via ?organizationId=/body).
+function orgIdOr400(req: import("express").Request, res: import("express").Response): string | null {
+  const organizationId = resolveOrgId(req);
+  if (!organizationId) {
+    res.status(400).json({ message: "organizationId is required." });
+    return null;
+  }
+  return organizationId;
+}
 
 const router = Router();
 router.use(authenticate, requireActiveSubscription);
@@ -15,8 +26,10 @@ const canManageCoa = requireRole("OWNER", "ADMIN");
 // GET /accounts — full chart of accounts for the org, ordered like a COA
 // screen expects (by type, then sort order, then code).
 router.get("/", async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
   const accounts = await prisma.account.findMany({
-    where: { organizationId: req.user!.organizationId!, deletedAt: null },
+    where: { organizationId, deletedAt: null },
     orderBy: [{ accountType: "asc" }, { sortOrder: "asc" }, { accountCode: "asc" }],
   });
   res.json({ data: accounts });
@@ -26,6 +39,8 @@ router.get("/", async (req, res) => {
 // ones. Templated accounts are is_system=true and protected from structural
 // edits (see PATCH below), but nothing stops adding new ones here.
 router.post("/", canManageCoa, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
   const {
     accountCode, accountName, accountType, subType, description,
     parentId, isGroup, isControlAccount, defaultBpType,
@@ -43,13 +58,13 @@ router.post("/", canManageCoa, async (req, res) => {
   }
 
   const existing = await prisma.account.findUnique({
-    where: { organizationId_accountCode: { organizationId: req.user!.organizationId!, accountCode } },
+    where: { organizationId_accountCode: { organizationId, accountCode } },
   });
   if (existing) return res.status(409).json({ message: `Account code ${accountCode} already exists.` });
 
   const account = await prisma.account.create({
     data: {
-      organizationId: req.user!.organizationId!,
+      organizationId,
       accountCode, accountName, accountType,
       subType: subType ?? null,
       description: description ?? null,
@@ -64,7 +79,7 @@ router.post("/", canManageCoa, async (req, res) => {
     },
   });
   logAudit({
-    organizationId: req.user!.organizationId, actorUserId: req.user!.userId,
+    organizationId, actorUserId: req.user!.userId,
     action: "CREATE", entityType: "account", entityId: account.id,
     summary: `Created account ${account.accountCode} — ${account.accountName}`,
   });
@@ -74,8 +89,10 @@ router.post("/", canManageCoa, async (req, res) => {
 // PATCH /accounts/:id — system (templated) accounts keep their code/type/
 // hierarchy fixed; everything else is editable by OWNER/ADMIN.
 router.patch("/:id", canManageCoa, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
   const account = await prisma.account.findFirst({
-    where: { id: req.params.id, organizationId: req.user!.organizationId! },
+    where: { id: req.params.id, organizationId },
   });
   if (!account) return res.status(404).json({ message: "Account not found." });
 
@@ -96,7 +113,7 @@ router.patch("/:id", canManageCoa, async (req, res) => {
 
   const updated = await prisma.account.update({ where: { id: account.id }, data });
   logAudit({
-    organizationId: req.user!.organizationId, actorUserId: req.user!.userId,
+    organizationId, actorUserId: req.user!.userId,
     action: "UPDATE", entityType: "account", entityId: account.id,
     summary: `Updated account ${account.accountCode} — ${account.accountName}`,
   });
@@ -106,8 +123,10 @@ router.patch("/:id", canManageCoa, async (req, res) => {
 // PATCH /accounts/:id/toggle — activate/deactivate (hide from pickers without
 // losing history).
 router.patch("/:id/toggle", canManageCoa, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
   const account = await prisma.account.findFirst({
-    where: { id: req.params.id, organizationId: req.user!.organizationId! },
+    where: { id: req.params.id, organizationId },
   });
   if (!account) return res.status(404).json({ message: "Account not found." });
   if (account.isSystem) return res.status(409).json({ message: "System accounts cannot be deactivated." });
@@ -117,7 +136,7 @@ router.patch("/:id/toggle", canManageCoa, async (req, res) => {
     data: { isActive: !account.isActive },
   });
   logAudit({
-    organizationId: req.user!.organizationId, actorUserId: req.user!.userId,
+    organizationId, actorUserId: req.user!.userId,
     action: "TOGGLE", entityType: "account", entityId: account.id,
     summary: `${updated.isActive ? "Activated" : "Deactivated"} account ${account.accountCode} — ${account.accountName}`,
   });
@@ -126,8 +145,10 @@ router.patch("/:id/toggle", canManageCoa, async (req, res) => {
 
 // DELETE /accounts/:id — only if it has never been posted to.
 router.delete("/:id", canManageCoa, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
   const account = await prisma.account.findFirst({
-    where: { id: req.params.id, organizationId: req.user!.organizationId! },
+    where: { id: req.params.id, organizationId },
   });
   if (!account) return res.status(404).json({ message: "Account not found." });
   if (account.isSystem) return res.status(409).json({ message: "System accounts cannot be deleted." });
@@ -137,7 +158,7 @@ router.delete("/:id", canManageCoa, async (req, res) => {
 
   await prisma.account.update({ where: { id: account.id }, data: { deletedAt: new Date() } });
   logAudit({
-    organizationId: req.user!.organizationId, actorUserId: req.user!.userId,
+    organizationId, actorUserId: req.user!.userId,
     action: "DELETE", entityType: "account", entityId: account.id,
     summary: `Deleted account ${account.accountCode} — ${account.accountName}`,
   });
