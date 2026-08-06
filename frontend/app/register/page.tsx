@@ -17,6 +17,7 @@ import {
   submitDomains,
   verifyOtp,
 } from "@/lib/api";
+import { setSession } from "@/lib/auth";
 import type {
   DomainCode,
   DomainDetailsMap,
@@ -61,7 +62,8 @@ export default function RegisterPage() {
       setLoading(true);
       setError(null);
       try {
-        await verifyOtp(organizationId, otp);
+        const res = await verifyOtp(organizationId, otp);
+        if (res.token) setSession(res.token, organizationId);
         setWizardStep(3);
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "Verification failed.");

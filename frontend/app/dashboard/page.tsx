@@ -1,10 +1,13 @@
 import { Suspense } from "react";
+import AppShell from "@/components/layout/AppShell";
 import DashboardContent from "./DashboardContent";
 
 export default function DashboardPage() {
   return (
-    <Suspense fallback={null}>
-      <DashboardContent />
-    </Suspense>
+    <AppShell>
+      <Suspense fallback={null}>
+        <DashboardContent />
+      </Suspense>
+    </AppShell>
   );
 }

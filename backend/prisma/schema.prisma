@@ -124,17 +124,29 @@ model Branch {
 }
 
 model Account {
-  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId   String    @map("organization_id") @db.Uuid
-  accountCode      String    @map("account_code") @db.VarChar(10)
-  accountName      String    @map("account_name") @db.VarChar(100)
-  accountType      String    @map("account_type") @db.VarChar(20)
-  isControlAccount Boolean   @default(false) @map("is_control_account")
-  defaultBpType    String?   @map("default_bp_type") @db.VarChar(20)
-  createdAt        DateTime  @default(now()) @map("created_at")
-  deletedAt        DateTime? @map("deleted_at")
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String    @map("organization_id") @db.Uuid
+  accountCode         String    @map("account_code") @db.VarChar(10)
+  accountName         String    @map("account_name") @db.VarChar(100)
+  accountType         String    @map("account_type") @db.VarChar(20)
+  subType             String?   @map("sub_type") @db.VarChar(60)
+  description         String?   @db.VarChar(255)
+  sortOrder           Int       @default(0) @map("sort_order")
+  parentId            String?   @map("parent_id") @db.Uuid
+  isGroup             Boolean   @default(false) @map("is_group")
+  isControlAccount    Boolean   @default(false) @map("is_control_account")
+  defaultBpType       String?   @map("default_bp_type") @db.VarChar(20)
+  isSystem            Boolean   @default(false) @map("is_system")
+  isActive            Boolean   @default(true) @map("is_active")
+  openingBalance      Decimal?  @map("opening_balance") @db.Decimal(14, 2)
+  openingBalanceType  String?   @map("opening_balance_type") @db.VarChar(6)
+  openingBalanceDate  DateTime? @map("opening_balance_date") @db.Date
+  createdAt           DateTime  @default(now()) @map("created_at")
+  deletedAt           DateTime? @map("deleted_at")
 
   organization Organization  @relation(fields: [organizationId], references: [id])
+  parent       Account?      @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children     Account[]     @relation("AccountHierarchy")
   journalLines JournalLine[]
 
   @@unique([organizationId, accountCode])
@@ -243,13 +255,20 @@ model BomLine {
 }
 
 model BusinessPartner {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String    @map("organization_id") @db.Uuid
-  bpType         String    @map("bp_type") @db.VarChar(20)
-  refId          String    @map("ref_id") @db.Uuid
-  name           String    @db.VarChar(200)
-  createdAt      DateTime  @default(now()) @map("created_at")
-  deletedAt      DateTime? @map("deleted_at")
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
+  bpType             String    @map("bp_type") @db.VarChar(20)
+  refId              String?   @map("ref_id") @db.Uuid
+  name               String    @db.VarChar(200)
+  gstin              String?   @db.VarChar(15)
+  phone              String?   @db.VarChar(20)
+  email              String?   @db.VarChar(255)
+  address            Json?
+  openingBalance     Decimal   @default(0) @map("opening_balance") @db.Decimal(14, 2)
+  openingBalanceType String?   @map("opening_balance_type") @db.VarChar(6)
+  isActive           Boolean   @default(true) @map("is_active")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  deletedAt          DateTime? @map("deleted_at")
 
   organization Organization  @relation(fields: [organizationId], references: [id])
   journalLines JournalLine[]
@@ -262,7 +281,10 @@ model JournalEntry {
   organizationId String    @map("organization_id") @db.Uuid
   branchId       String?   @map("branch_id") @db.Uuid
   entryDate      DateTime  @map("entry_date") @db.Date
+  narration      String    @default("") @db.VarChar(255)
+  voucherType    String?   @map("voucher_type") @db.VarChar(4)
   referenceType  String?   @map("reference_type") @db.VarChar(30)
+  createdBy      String?   @map("created_by") @db.Uuid
   postedAt       DateTime? @map("posted_at")
   createdAt      DateTime  @default(now()) @map("created_at")
 
@@ -280,6 +302,7 @@ model JournalLine {
   businessPartnerId String? @map("business_partner_id") @db.Uuid
   debit             Decimal @default(0) @db.Decimal(14, 2)
   credit            Decimal @default(0) @db.Decimal(14, 2)
+  narration         String? @db.VarChar(255)
 
   journalEntry    JournalEntry     @relation(fields: [journalEntryId], references: [id])
   account         Account          @relation(fields: [accountId], references: [id])

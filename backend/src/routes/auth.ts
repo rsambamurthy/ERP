@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { prisma } from "../db";
-import { hashPassword } from "../lib/password";
+import { hashPassword, verifyPassword } from "../lib/password";
 import { generateOtp, otpExpiry, sendOtp } from "../lib/otp";
+import { signToken } from "../lib/jwt";
 
 const router = Router();
 
@@ -90,7 +91,53 @@ router.post("/verify-otp", async (req, res) => {
     }),
   ]);
 
-  res.json({ ok: true });
+  // Log the owner straight in — the rest of the wizard (domain selection,
+  // provisioning) and the dashboard/accounting screens that follow all need
+  // an authenticated session.
+  const orgUser = await prisma.orgUser.findFirst({ where: { organizationId } });
+  const token = orgUser
+    ? signToken({
+        userId: orgUser.userId,
+        organizationId,
+        role: orgUser.role,
+        branchId: orgUser.branchId,
+      })
+    : null;
+
+  res.json({ ok: true, token });
+});
+
+// POST /auth/login — for returning users (registration already happened).
+router.post("/login", async (req, res) => {
+  const { email, phone, password } = req.body ?? {};
+  if (!password || (!email && !phone)) {
+    return res.status(400).json({ message: "password and email or phone are required." });
+  }
+
+  const user = await prisma.user.findFirst({
+    where: { OR: [email ? { email } : undefined, phone ? { phone } : undefined].filter(Boolean) as any },
+    include: { orgUsers: true },
+  });
+  if (!user) return res.status(401).json({ message: "Incorrect email/phone or password." });
+
+  const ok = await verifyPassword(password, user.passwordHash);
+  if (!ok) return res.status(401).json({ message: "Incorrect email/phone or password." });
+
+  if (!user.isVerified) {
+    return res.status(403).json({ message: "Account not verified yet — complete OTP verification first." });
+  }
+
+  const orgUser = user.orgUsers[0];
+  if (!orgUser) return res.status(409).json({ message: "This account isn't linked to an organization." });
+
+  const token = signToken({
+    userId: user.id,
+    organizationId: orgUser.organizationId,
+    role: orgUser.role,
+    branchId: orgUser.branchId,
+  });
+
+  res.json({ token, organizationId: orgUser.organizationId, role: orgUser.role });
 });
 
 export default router;

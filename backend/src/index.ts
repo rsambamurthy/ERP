@@ -5,6 +5,9 @@ import authRoutes from "./routes/auth";
 import domainTypesRoutes from "./routes/domainTypes";
 import onboardingRoutes from "./routes/onboarding";
 import branchesRoutes from "./routes/branches";
+import accountsRoutes from "./routes/accounts";
+import businessPartnersRoutes from "./routes/businessPartners";
+import journalRoutes from "./routes/journal";
 
 const app = express();
 app.use(cors());
@@ -16,6 +19,9 @@ app.use("/auth", authRoutes);
 app.use("/domain-types", domainTypesRoutes);
 app.use("/onboarding", onboardingRoutes);
 app.use("/branches", branchesRoutes);
+app.use("/accounts", accountsRoutes);
+app.use("/business-partners", businessPartnersRoutes);
+app.use("/journal", journalRoutes);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

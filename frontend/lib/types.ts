@@ -48,3 +48,89 @@ export interface OnboardingStatus {
   step: OnboardingStep;
   organizationId: string;
 }
+
+// ── Accounting core ─────────────────────────────────────────────────────────
+
+export type AccountType = "ASSET" | "LIABILITY" | "EQUITY" | "INCOME" | "EXPENSE";
+export type BalanceType = "DEBIT" | "CREDIT";
+
+export interface Account {
+  id: string;
+  accountCode: string;
+  accountName: string;
+  accountType: AccountType;
+  subType: string | null;
+  description: string | null;
+  sortOrder: number;
+  parentId: string | null;
+  isGroup: boolean;
+  isControlAccount: boolean;
+  defaultBpType: "CUSTOMER" | "VENDOR" | "ITEM" | null;
+  isSystem: boolean;
+  isActive: boolean;
+  openingBalance: string | null;
+  openingBalanceType: BalanceType | null;
+}
+
+export interface BusinessPartner {
+  id: string;
+  bpType: "CUSTOMER" | "VENDOR" | "ITEM";
+  name: string;
+  gstin: string | null;
+  phone: string | null;
+  email: string | null;
+  openingBalance: string;
+  openingBalanceType: BalanceType | null;
+  isActive: boolean;
+}
+
+export interface JournalLineInput {
+  accountId: string;
+  businessPartnerId?: string | null;
+  debit?: number;
+  credit?: number;
+  narration?: string | null;
+}
+
+export interface JournalLine extends JournalLineInput {
+  id: string;
+  account: Account;
+  businessPartner: BusinessPartner | null;
+}
+
+export interface JournalEntry {
+  id: string;
+  entryDate: string;
+  narration: string;
+  voucherType: "BV" | "CV" | "JV" | null;
+  branchId: string | null;
+  journalLines: JournalLine[];
+}
+
+export interface LedgerRow {
+  date: string;
+  narration: string;
+  businessPartner: string | null;
+  debit: number;
+  credit: number;
+  balance: number;
+}
+
+export interface LedgerResponse {
+  account: Account;
+  openingBalance: number;
+  rows: LedgerRow[];
+}
+
+export interface TrialBalanceRow {
+  account: Account;
+  debit: number;
+  credit: number;
+}
+
+export interface TrialBalanceResponse {
+  asOf: string | null;
+  rows: TrialBalanceRow[];
+  totalDebit: number;
+  totalCredit: number;
+}
