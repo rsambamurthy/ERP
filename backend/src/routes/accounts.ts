@@ -4,6 +4,7 @@ import { authenticate, requireRole, requireActiveSubscription, resolveOrgId } fr
 import { logAudit } from "../lib/audit";
 import { upload } from "../lib/upload";
 import { buildTemplateWorkbook, loadUploadedWorksheet, cellText, cellDateIso } from "../lib/xlsxTemplate";
+import { provisionOrganization } from "../lib/provisioning";
 
 // Resolves the target org for this request (the caller's own org, or — for
 // a platform admin — whichever org they passed via ?organizationId=/body).
@@ -35,6 +36,33 @@ router.get("/", async (req, res) => {
     orderBy: [{ accountType: "asc" }, { sortOrder: "asc" }, { accountCode: "asc" }],
   });
   res.json({ data: accounts });
+});
+
+// POST /accounts/sync-templates — re-runs provisioning's account seeding
+// for an org that already exists. Orgs provisioned before a given template
+// account existed (e.g. anyone who signed up before Sales/Purchase/
+// Inventory shipped GST Input/Output, COGS, Sales Revenue, Inventory
+// Adjustments, Trade Receivables/Payables) never got it — provisioning
+// only ever runs once, automatically, at signup. provisionOrganization()
+// is safe to call again: it only adds accounts whose code doesn't already
+// exist for this org, never touches or duplicates anything already there.
+router.post("/sync-templates", canManageCoa, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+
+  const before = await prisma.account.count({ where: { organizationId } });
+  await provisionOrganization(organizationId);
+  const after = await prisma.account.count({ where: { organizationId } });
+  const added = after - before;
+
+  if (added > 0) {
+    logAudit({
+      organizationId, actorUserId: req.user!.userId,
+      action: "UPDATE", entityType: "account", entityId: organizationId,
+      summary: `Synced Chart of Accounts from templates — ${added} account${added === 1 ? "" : "s"} added`,
+    });
+  }
+  res.json({ data: { added } });
 });
 
 // POST /accounts — add a custom account on top of the provisioned/templated

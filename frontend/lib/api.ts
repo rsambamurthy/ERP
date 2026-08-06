@@ -155,6 +155,14 @@ export function toggleAccount(id: string) {
   return request<{ data: Account }>(`/accounts/${id}/toggle`, { method: "PATCH" });
 }
 
+// Re-runs provisioning's account seeding for an org that already exists —
+// picks up any template account added since this org signed up (e.g. GST
+// Input/Output, COGS, Sales Revenue — added with Sales/Purchase/Inventory).
+// Safe to call anytime: only ever adds accounts missing by code.
+export function syncAccountTemplates() {
+  return request<{ data: { added: number } }>("/accounts/sync-templates", { method: "POST" });
+}
+
 export function deleteAccount(id: string) {
   return request<{ data: { deleted: true } }>(`/accounts/${id}`, { method: "DELETE" });
 }

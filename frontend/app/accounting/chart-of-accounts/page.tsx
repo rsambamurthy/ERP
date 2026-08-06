@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
-import { ApiError, createAccount, getAccounts, toggleAccount } from "@/lib/api";
+import { ApiError, createAccount, getAccounts, syncAccountTemplates, toggleAccount } from "@/lib/api";
 import { useBulkUpload } from "@/components/shared/BulkUpload";
 import type { Account, AccountType, CoaUploadRow } from "@/lib/types";
 
@@ -22,6 +22,8 @@ export default function ChartOfAccountsPage() {
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     accountCode: "",
@@ -76,6 +78,25 @@ export default function ChartOfAccountsPage() {
     await load();
   }
 
+  async function handleSync() {
+    setSyncing(true);
+    setSyncMessage(null);
+    setError(null);
+    try {
+      const res = await syncAccountTemplates();
+      setSyncMessage(
+        res.data.added > 0
+          ? `Added ${res.data.added} account${res.data.added === 1 ? "" : "s"} from the latest templates.`
+          : "Already up to date — nothing to add."
+      );
+      if (res.data.added > 0) await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not sync chart of accounts.");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   return (
     <AppShell>
       <div className="ent-page-hdr">
@@ -85,6 +106,15 @@ export default function ChartOfAccountsPage() {
 
       <div className="ent-toolbar">
         <div style={{ flex: 1 }} />
+        <button
+          className="ent-btn-add"
+          style={{ background: "#fff", color: "var(--color-navy, #1e3a5f)", border: "1px solid var(--color-border, #e2e8f0)" }}
+          onClick={handleSync}
+          disabled={syncing}
+          title="Pick up any account added to the standard templates since this org was set up (e.g. GST Input/Output, COGS, Sales Revenue)"
+        >
+          {syncing ? "Syncing…" : "⟳ Sync from Templates"}
+        </button>
         {bulk.buttons}
         <button className="ent-btn-add" onClick={() => setShowForm((s) => !s)}>
           {showForm ? "Cancel" : "+ Add Account"}
@@ -145,6 +175,7 @@ export default function ChartOfAccountsPage() {
       )}
 
       {error && !showForm && <p style={{ color: "#dc2626", fontSize: 13, marginBottom: 12 }}>{error}</p>}
+      {syncMessage && <p style={{ color: "#15803d", fontSize: 13, marginBottom: 12 }}>{syncMessage}</p>}
 
       <div className="ent-page-table">
         <table>
