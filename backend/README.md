@@ -14,6 +14,7 @@ psql "$DATABASE_URL" -f ../db/registration_schema_v2.sql
 psql "$DATABASE_URL" -f ../db/migration_002_accounting.sql
 psql "$DATABASE_URL" -f ../db/migration_003_users_admin.sql
 psql "$DATABASE_URL" -f ../db/migration_004_module_subscriptions.sql
+psql "$DATABASE_URL" -f ../db/migration_005_menu_config.sql
 npx prisma generate
 npx prisma db seed         # seeds domain_types, modules, coa_templates
 npm run create-admin -- --email you@example.com --password "something long"   # makes yourself a platform admin
@@ -68,6 +69,29 @@ All routes below require `Authorization: Bearer <token>` from login/verify-otp.
 | `POST /auth/accept-invite` | `{ token, password }` → creates the login, joins the org, returns a session token. |
 
 Roles: **OWNER** (one per org, set at registration, full access) · **ADMIN** (same minus touching the OWNER) · **ACCOUNTANT** (post transactions, manage business partners) · **VIEWER** (read-only). Enforced server-side via `requireRole()` in `middleware/auth.ts` — not just hidden UI.
+
+### Access control (`/access-control/*`) — which sidebar items a role sees
+
+Ported from SmartAppt's web-menu-by-role screen (`menu-scope.ts`,
+`system.routes.ts` `/menu-config`, `WebMenuPage.tsx`). This is a *visibility*
+layer on top of the roles above, not a replacement for them — the actual
+write permission on every mutation is still whatever `requireRole()` says on
+that route regardless of what the sidebar shows. Item catalogue and default
+per-role visibility live in `frontend/components/layout/navGroups.ts`
+(`NavItem.roles`); only departures from that default are stored, in
+`org_menu_config`.
+
+| Endpoint | Notes |
+|---|---|
+| `GET /access-control/menu` | Any org member — full override map for their own org, all roles. AppShell filters the sidebar for the caller's own role from this. |
+| `GET /access-control/menu/:organizationId` | OWNER/ADMIN (own org — the URL id is a hint, not an authority) or platform admin (any org). Returns the matrix plus `editableRoles`. |
+| `PUT /access-control/menu/:organizationId` | `{ items: [{ itemId, role, enabled }] }` — replaces the caller's editable roles' overrides. |
+
+**Who can edit which role's menu:** OWNER/ADMIN can configure every role
+except OWNER (never restrictable) and except their own role (self-lock
+protection — an ADMIN hiding a screen from ADMIN would lock themselves out
+with no way back short of a platform admin). A platform admin can configure
+all four org roles. See `editableRolesFor()` in `middleware/auth.ts`.
 
 ### Platform admin (`/admin/*`, platform-admin accounts only)
 
@@ -125,6 +149,7 @@ real transactional endpoints are built later.
    psql "$DATABASE_URL" -f ../db/migration_002_accounting.sql
    psql "$DATABASE_URL" -f ../db/migration_003_users_admin.sql
    psql "$DATABASE_URL" -f ../db/migration_004_module_subscriptions.sql
+   psql "$DATABASE_URL" -f ../db/migration_005_menu_config.sql
    npx prisma db seed
    npm run create-admin -- --email you@example.com --password "something long"
    ```

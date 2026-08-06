@@ -1,5 +1,6 @@
 import type {
   Account,
+  AccessControlMenuResponse,
   AdminOrganization,
   AdminOrganizationDetail,
   AdminSubscriptionsResponse,
@@ -12,6 +13,7 @@ import type {
   JournalEntry,
   JournalLineInput,
   LedgerResponse,
+  MenuConfigMap,
   OnboardingStatus,
   OrgRole,
   OrgUsersResponse,
@@ -259,6 +261,28 @@ export function updateMemberRole(userId: string, role: OrgRole) {
 
 export function removeMember(userId: string) {
   return request<{ data: { deleted: true } }>(`/org/users/${userId}`, { method: "DELETE" });
+}
+
+// ── Access control (menu visibility by role) ────────────────────────────────
+
+// Own org, resolved for whatever role the caller happens to have —
+// AppShell uses this to filter the sidebar.
+export function getMenuConfig() {
+  return request<{ data: MenuConfigMap }>("/access-control/menu");
+}
+
+// The configuration screen: full matrix + which roles this caller may edit.
+// Works for an OWNER/ADMIN's own org, or (with organizationId) a platform
+// admin targeting any org.
+export function getMenuConfigForOrg(organizationId: string) {
+  return request<AccessControlMenuResponse>(`/access-control/menu/${organizationId}`);
+}
+
+export function saveMenuConfig(organizationId: string, items: Array<{ itemId: string; role: OrgRole; enabled: boolean }>) {
+  return request<{ data: MenuConfigMap }>(`/access-control/menu/${organizationId}`, {
+    method: "PUT",
+    body: JSON.stringify({ items }),
+  });
 }
 
 // ── Platform admin ───────────────────────────────────────────────────────────

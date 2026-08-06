@@ -218,6 +218,18 @@ export interface OrgUsersResponse {
   invites: OrgInvite[];
 }
 
+// ── Access control (menu visibility by role) ────────────────────────────────
+
+/** role -> itemId -> enabled. Sparse — only overrides, never the full catalogue. */
+export type MenuConfigMap = Record<string, Record<string, boolean>>;
+
+export interface AccessControlMenuResponse {
+  data: MenuConfigMap;
+  organizationId: string;
+  editableRoles: OrgRole[];
+  allRoles: OrgRole[];
+}
+
 // ── Platform admin ───────────────────────────────────────────────────────────
 
 export interface AdminOrgModule {

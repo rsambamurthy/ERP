@@ -88,6 +88,7 @@ model Organization {
   journalEntries   JournalEntry[]
   invites          OrgInvite[]
   auditLogs        AuditLog[]
+  menuConfig       OrgMenuConfig[]
 
   @@map("organizations")
 }
@@ -220,6 +221,23 @@ model OrgUser {
 
   @@id([organizationId, userId])
   @@map("org_users")
+}
+
+// Sparse per-org, per-role menu overrides — see db/migration_005_menu_config.sql.
+// itemId matches a NavItem.id in frontend/components/layout/navGroups.ts,
+// which also carries each item's default `roles`; a row here only exists
+// where an org has departed from that default.
+model OrgMenuConfig {
+  organizationId String   @map("organization_id") @db.Uuid
+  itemId         String   @map("item_id") @db.VarChar(50)
+  role           String   @db.VarChar(20)
+  enabled        Boolean
+  updatedAt      DateTime @default(now()) @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@id([organizationId, itemId, role])
+  @@map("org_menu_config")
 }
 
 model OnboardingState {

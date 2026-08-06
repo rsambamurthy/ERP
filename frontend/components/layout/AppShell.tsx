@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { NAV_GROUPS } from "./navGroups";
-import { canManageTeam, clearSession, getRole, isLoggedIn, isPlatformAdmin } from "@/lib/auth";
+import { clearSession, getRole, isLoggedIn, isPlatformAdmin } from "@/lib/auth";
+import { getMenuConfig } from "@/lib/api";
+import type { MenuConfigMap } from "@/lib/types";
 
 // Structure ported from SmartAppt Gold's authenticated app shell
 // (frontend/src/components/organisms/Layout.tsx — WebLayout) — sa-shell /
@@ -18,6 +20,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set(NAV_GROUPS.map((g) => g.id)));
+  const [menuConfig, setMenuConfig] = useState<MenuConfigMap>({});
 
   useEffect(() => {
     if (!isLoggedIn()) {
@@ -30,6 +33,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
     setReady(true);
   }, [router]);
+
+  // Which items this role actually sees, per navGroups.ts defaults with any
+  // org-level override from the Access Control screen applied on top. Falls
+  // back to the built-in defaults silently if the fetch fails, so a slow or
+  // down /access-control endpoint never hides the whole sidebar.
+  useEffect(() => {
+    if (!ready) return;
+    getMenuConfig().then((res) => setMenuConfig(res.data)).catch(() => {});
+  }, [ready]);
 
   useEffect(() => {
     setSidebarOpen(false);
@@ -50,9 +62,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     router.push("/login");
   };
 
+  const role = getRole();
+  const isVisible = (itemId: string, defaultRoles: string[]) => {
+    const override = role ? menuConfig[role]?.[itemId] : undefined;
+    if (override !== undefined) return override;
+    return role ? defaultRoles.includes(role) : false;
+  };
+
   const allowedGroups = NAV_GROUPS.map((g) => ({
     ...g,
-    items: g.items.filter((i) => !i.ownerAdminOnly || canManageTeam()),
+    items: g.items.filter((i) => isVisible(i.id, i.roles)),
   })).filter((g) => g.items.length > 0);
 
   const activeGroupId = allowedGroups.find((g) =>

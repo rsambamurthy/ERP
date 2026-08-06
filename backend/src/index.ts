@@ -10,6 +10,7 @@ import businessPartnersRoutes from "./routes/businessPartners";
 import journalRoutes from "./routes/journal";
 import orgUsersRoutes from "./routes/orgUsers";
 import adminRoutes from "./routes/admin";
+import accessControlRoutes from "./routes/accessControl";
 
 const app = express();
 app.use(cors());
@@ -26,6 +27,7 @@ app.use("/business-partners", businessPartnersRoutes);
 app.use("/journal", journalRoutes);
 app.use("/org/users", orgUsersRoutes);
 app.use("/admin", adminRoutes);
+app.use("/access-control", accessControlRoutes);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

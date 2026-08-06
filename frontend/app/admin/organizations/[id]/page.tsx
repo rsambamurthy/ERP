@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import AdminShell from "@/components/layout/AdminShell";
 import {
@@ -111,6 +112,9 @@ export default function AdminOrganizationDetailPage() {
         <button className="ent-ia ent-ia-edit" onClick={handleToggleSubscription}>
           {org.subscriptionStatus === "ACTIVE" ? "Suspend" : "Reactivate"}
         </button>
+        <Link href={`/admin/organizations/${org.id}/access-control`} className="ent-ia ent-ia-edit" style={{ marginLeft: 8 }}>
+          Access Control
+        </Link>
       </div>
 
       <div className="ent-page-table" style={{ marginBottom: 20 }}>

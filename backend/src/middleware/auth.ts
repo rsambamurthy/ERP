@@ -92,3 +92,34 @@ export function resolveOrgId(req: Request): string | null {
   }
   return req.user?.organizationId ?? null;
 }
+
+export const ORG_ROLES = ["OWNER", "ADMIN", "ACCOUNTANT", "VIEWER"];
+
+// The org a :organizationId route param actually targets — for access
+// control configuration. Same rule as SmartAppt's scopeAssociation(): a
+// platform admin must name one explicitly (the param is authoritative); an
+// org user is pinned to their own org regardless of what the URL asks for
+// — the param is a hint there, never an authority, so an ADMIN can't probe
+// another org's menu config by editing the URL.
+export function scopeOrgId(req: Request): string | null {
+  if (req.user?.isPlatformAdmin) {
+    return typeof req.params.organizationId === "string" ? req.params.organizationId : null;
+  }
+  return req.user?.organizationId ?? null;
+}
+
+// Which roles this caller may configure the menu for.
+//   Platform admin — all four org roles (it isn't one of them itself).
+//   OWNER/ADMIN    — every role except OWNER (the top of the hierarchy,
+//                    never restrictable) and except their own role — an
+//                    ADMIN who hid a screen from ADMIN would lock
+//                    themselves out with no way back short of a platform
+//                    admin or a direct SQL update. Same self-lock
+//                    protection as SmartAppt's editableRolesFor().
+export function editableRolesFor(req: Request): string[] {
+  if (req.user?.isPlatformAdmin) return ORG_ROLES;
+  if (req.user?.role === "OWNER" || req.user?.role === "ADMIN") {
+    return ORG_ROLES.filter((r) => r !== "OWNER" && r !== req.user!.role);
+  }
+  return [];
+}
