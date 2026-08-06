@@ -47,9 +47,15 @@ router.post("/register", async (req, res) => {
 
   sendOtp(email || phone, otp);
 
+  // Dev convenience: no email/SMS provider is wired up yet, so surface the
+  // OTP directly in the response until a real provider is in place. Set
+  // EXPOSE_DEV_OTP=false in Railway to turn this off (e.g. before going live).
+  const exposeDevOtp = process.env.EXPOSE_DEV_OTP !== "false";
+
   res.status(201).json({
     organizationId: result.organization.id,
     userId: result.user.id,
+    ...(exposeDevOtp ? { devOtp: otp } : {}),
   });
 });
 

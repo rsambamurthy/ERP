@@ -35,6 +35,7 @@ export default function RegisterPage() {
 
   const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [contact, setContact] = useState<string>("");
+  const [devOtp, setDevOtp] = useState<string | null>(null);
   const [domains, setDomains] = useState<DomainCode[]>([]);
   const [provisionStatus, setProvisionStatus] = useState<OnboardingStep>("SIGNUP");
 
@@ -45,6 +46,7 @@ export default function RegisterPage() {
       const res = await registerUser(payload);
       setOrganizationId(res.organizationId);
       setContact(payload.email || payload.phone);
+      setDevOtp(res.devOtp ?? null);
       setWizardStep(2);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong.");
@@ -120,6 +122,7 @@ export default function RegisterPage() {
         {wizardStep === 2 && (
           <VerifyStep
             destination={contact}
+            devOtp={devOtp}
             loading={loading}
             error={error}
             onSubmit={handleVerify}
