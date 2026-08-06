@@ -8,13 +8,16 @@ export default function Input({ label, id, ...rest }: Props) {
   const inputId = id ?? label.toLowerCase().replace(/\s+/g, "-");
   return (
     <div className="flex flex-col gap-1 text-left">
-      <label htmlFor={inputId} className="text-sm font-medium text-gray-700">
+      <label
+        htmlFor={inputId}
+        className="text-xs font-semibold uppercase tracking-wide text-terracotta-600"
+      >
         {label}
       </label>
       <input
         id={inputId}
         {...rest}
-        className="rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400"
+        className="rounded-lg border border-cream-200 bg-cream-50 px-3 py-2.5 text-sm outline-none focus:border-terracotta-400 focus:ring-1 focus:ring-terracotta-400"
       />
     </div>
   );

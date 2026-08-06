@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
-import Card from "@/components/ui/Card";
+import AuthCard from "@/components/ui/AuthCard";
 import StepIndicator from "@/components/ui/StepIndicator";
 import SignUpStep from "@/components/steps/SignUpStep";
 import VerifyStep from "@/components/steps/VerifyStep";
@@ -113,7 +113,7 @@ export default function RegisterPage() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 px-4 py-12">
       <StepIndicator current={wizardStep} />
-      <Card>
+      <AuthCard>
         {wizardStep === 1 && (
           <SignUpStep loading={loading} error={error} onSubmit={handleSignUp} />
         )}
@@ -142,7 +142,7 @@ export default function RegisterPage() {
           />
         )}
         {wizardStep === 5 && <ProvisioningStep step={provisionStatus} error={error} />}
-      </Card>
+      </AuthCard>
     </main>
   );
 }

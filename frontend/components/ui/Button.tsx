@@ -14,11 +14,11 @@ export default function Button({
   ...rest
 }: Props) {
   const base =
-    "rounded-lg px-5 py-2.5 text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed";
+    "rounded-xl px-5 py-3 text-sm font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed";
   const styles =
     variant === "primary"
-      ? "bg-brand-600 text-white hover:bg-brand-800"
-      : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50";
+      ? "bg-terracotta-500 text-white hover:bg-terracotta-600"
+      : "bg-white text-navy-800 border border-cream-200 hover:bg-cream-50";
 
   return (
     <button

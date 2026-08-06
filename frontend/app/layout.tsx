@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ERP — Registration",
-  description: "MSME ERP onboarding",
+  title: "SmartERP — Registration",
+  description: "MSME accounting, inventory & production onboarding",
 };
 
 export default function RootLayout({

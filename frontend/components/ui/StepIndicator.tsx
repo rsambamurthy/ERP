@@ -12,15 +12,15 @@ export default function StepIndicator({ current }: { current: number }) {
             <span
               className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-medium ${
                 done
-                  ? "bg-brand-600 text-white"
+                  ? "bg-terracotta-500 text-white"
                   : active
-                  ? "border-2 border-brand-600 text-brand-800"
-                  : "border border-gray-300 text-gray-400"
+                  ? "border-2 border-terracotta-500 text-terracotta-600"
+                  : "border border-cream-200 text-gray-400"
               }`}
             >
               {idx}
             </span>
-            <span className={active ? "font-medium text-gray-800" : ""}>
+            <span className={active ? "font-medium text-navy-800" : ""}>
               {label}
             </span>
           </li>
