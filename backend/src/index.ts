@@ -1,5 +1,15 @@
 import "dotenv/config";
 import express from "express";
+// Must load right after express, before any route file is imported: patches
+// Express 4's router dispatch so a rejected promise inside an async route
+// handler is forwarded to next(err) — the error middleware below — instead
+// of becoming an unhandled rejection that (by default on modern Node) kills
+// the whole process. This is exactly what took the server down on 2026-08-06:
+// a Prisma error inside an async /auth/login handler crashed and
+// Railway-restarted the container on every login attempt until the
+// underlying migration gap was fixed. That gap is fixed now, but nothing
+// else stopped the *next* unexpected error from doing the same thing again.
+import "express-async-errors";
 import cors from "cors";
 import authRoutes from "./routes/auth";
 import domainTypesRoutes from "./routes/domainTypes";
@@ -16,6 +26,19 @@ import purchaseBillsRoutes from "./routes/purchaseBills";
 import salesInvoicesRoutes from "./routes/salesInvoices";
 import stockAdjustmentsRoutes from "./routes/stockAdjustments";
 import inventoryRoutes from "./routes/inventory";
+
+// Last-resort net for anything outside Express's request cycle entirely
+// (a rejected promise with no .catch anywhere, a timer callback that
+// throws, etc.) — express-async-errors above only covers route handlers.
+// Same convention SmartAppt uses: log it, keep the process (and the
+// healthcheck) alive, rather than letting Node's default behavior
+// terminate on an unhandled rejection.
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err);
+});
 
 const app = express();
 app.use(cors());
