@@ -11,6 +11,11 @@ import journalRoutes from "./routes/journal";
 import orgUsersRoutes from "./routes/orgUsers";
 import adminRoutes from "./routes/admin";
 import accessControlRoutes from "./routes/accessControl";
+import itemsRoutes from "./routes/items";
+import purchaseBillsRoutes from "./routes/purchaseBills";
+import salesInvoicesRoutes from "./routes/salesInvoices";
+import stockAdjustmentsRoutes from "./routes/stockAdjustments";
+import inventoryRoutes from "./routes/inventory";
 
 const app = express();
 app.use(cors());
@@ -28,6 +33,11 @@ app.use("/journal", journalRoutes);
 app.use("/org/users", orgUsersRoutes);
 app.use("/admin", adminRoutes);
 app.use("/access-control", accessControlRoutes);
+app.use("/items", itemsRoutes);
+app.use("/purchase-bills", purchaseBillsRoutes);
+app.use("/sales-invoices", salesInvoicesRoutes);
+app.use("/stock-adjustments", stockAdjustmentsRoutes);
+app.use("/inventory", inventoryRoutes);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

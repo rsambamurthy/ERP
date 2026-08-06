@@ -8,8 +8,11 @@ import type {
   BalanceSheetResponse,
   BusinessPartner,
   CashBookResponse,
+  CostingMethod,
+  DocumentLineInput,
   DomainDetailsMap,
   DomainType,
+  Item,
   JournalEntry,
   JournalLineInput,
   LedgerResponse,
@@ -18,10 +21,16 @@ import type {
   OrgRole,
   OrgUsersResponse,
   PnLResponse,
+  PurchaseBill,
   ReceiptsPaymentsResponse,
   RegisterPayload,
   RegisterResponse,
+  SalesInvoice,
+  StockAdjustment,
+  StockAdjustmentLineInput,
+  StockLedgerResponse,
   TrialBalanceResponse,
+  ValuationResponse,
 } from "./types";
 import { getToken } from "./auth";
 
@@ -233,6 +242,84 @@ export function getReceiptsPayments(params?: { from?: string; to?: string }) {
 export function getDayBook(params?: { from?: string; to?: string }) {
   const qs = new URLSearchParams(cleanParams(params)).toString();
   return request<{ data: JournalEntry[] }>(`/journal/day-book${qs ? `?${qs}` : ""}`);
+}
+
+// ── Sales / Purchase / Inventory ────────────────────────────────────────────
+
+export function getCostingMethod() {
+  return request<{ data: { costingMethod: CostingMethod | null } }>("/items/costing-method");
+}
+
+// Succeeds exactly once per org — see backend/src/routes/items.ts.
+export function setCostingMethod(costingMethod: CostingMethod) {
+  return request<{ data: { costingMethod: CostingMethod } }>("/items/costing-method", {
+    method: "POST",
+    body: JSON.stringify({ costingMethod }),
+  });
+}
+
+export function getStockAccounts() {
+  return request<{ data: Account[] }>("/items/stock-accounts");
+}
+
+export function getItems() {
+  return request<{ data: Item[] }>("/items");
+}
+
+export function createItem(body: {
+  sku: string; name: string; description?: string; uom?: string; hsnCode?: string;
+  isFinishedGood?: boolean; stockAccountId: string; salesRate?: number; purchaseRate?: number; taxRate?: number;
+  openingQuantity?: number; openingCost?: number; openingBranchId?: string; openingDate?: string;
+}) {
+  return request<{ data: Item }>("/items", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function updateItem(id: string, body: Partial<Item>) {
+  return request<{ data: Item }>(`/items/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function deleteItem(id: string) {
+  return request<{ data: { deleted: true } }>(`/items/${id}`, { method: "DELETE" });
+}
+
+export function getPurchaseBills() {
+  return request<{ data: PurchaseBill[] }>("/purchase-bills");
+}
+
+export function createPurchaseBill(body: {
+  businessPartnerId: string; billDate: string; branchId?: string; narration?: string; lines: DocumentLineInput[];
+}) {
+  return request<{ data: PurchaseBill }>("/purchase-bills", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function getSalesInvoices() {
+  return request<{ data: SalesInvoice[] }>("/sales-invoices");
+}
+
+export function createSalesInvoice(body: {
+  businessPartnerId: string; invoiceDate: string; branchId?: string; narration?: string; lines: DocumentLineInput[];
+}) {
+  return request<{ data: SalesInvoice }>("/sales-invoices", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function getStockAdjustments() {
+  return request<{ data: StockAdjustment[] }>("/stock-adjustments");
+}
+
+export function createStockAdjustment(body: {
+  adjustmentDate: string; branchId?: string; narration?: string; lines: StockAdjustmentLineInput[];
+}) {
+  return request<{ data: StockAdjustment }>("/stock-adjustments", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function getStockLedger(params: { itemId: string; branchId?: string; from?: string; to?: string }) {
+  const qs = new URLSearchParams(cleanParams(params)).toString();
+  return request<{ data: StockLedgerResponse }>(`/inventory/stock-ledger?${qs}`);
+}
+
+export function getValuation(params?: { branchId?: string }) {
+  const qs = new URLSearchParams(cleanParams(params)).toString();
+  return request<{ data: ValuationResponse }>(`/inventory/valuation${qs ? `?${qs}` : ""}`);
 }
 
 // ── Team / user management ──────────────────────────────────────────────────

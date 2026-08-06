@@ -41,8 +41,35 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: "chart_of_accounts", label: "Chart of Accounts", path: "/accounting/chart-of-accounts", dot: "#2563eb", roles: ALL_ROLES },
       { id: "business_partners", label: "Business Partners", path: "/accounting/business-partners", dot: "#0891b2", roles: ALL_ROLES },
+      { id: "items", label: "Items", path: "/inventory/items", dot: "#0d9488", roles: ALL_ROLES },
       { id: "team", label: "Team", path: "/settings/team", dot: "#a855f7", roles: ["OWNER", "ADMIN"] },
       { id: "access_control", label: "Access Control", path: "/settings/access-control", dot: "#dc2626", roles: ["OWNER", "ADMIN"] },
+    ],
+  },
+  {
+    id: "sales",
+    label: "Sales",
+    icon: "S",
+    items: [
+      { id: "sales_invoices", label: "Sales Invoices", path: "/sales/invoices", dot: "#16a34a", roles: ["OWNER", "ADMIN", "ACCOUNTANT"] },
+    ],
+  },
+  {
+    id: "purchase",
+    label: "Purchase",
+    icon: "P",
+    items: [
+      { id: "purchase_bills", label: "Purchase Bills", path: "/purchase/bills", dot: "#ea580c", roles: ["OWNER", "ADMIN", "ACCOUNTANT"] },
+    ],
+  },
+  {
+    id: "inventory",
+    label: "Inventory",
+    icon: "I",
+    items: [
+      { id: "stock_adjustments", label: "Stock Adjustments", path: "/inventory/adjustments", dot: "#dc2626", roles: ["OWNER", "ADMIN", "ACCOUNTANT"] },
+      { id: "stock_ledger", label: "Stock Ledger", path: "/inventory/stock-ledger", dot: "#0891b2", roles: ALL_ROLES },
+      { id: "item_valuation", label: "Item Valuation", path: "/inventory/valuation", dot: "#7c3aed", roles: ALL_ROLES },
     ],
   },
   {

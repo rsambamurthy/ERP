@@ -15,6 +15,7 @@ psql "$DATABASE_URL" -f ../db/migration_002_accounting.sql
 psql "$DATABASE_URL" -f ../db/migration_003_users_admin.sql
 psql "$DATABASE_URL" -f ../db/migration_004_module_subscriptions.sql
 psql "$DATABASE_URL" -f ../db/migration_005_menu_config.sql
+psql "$DATABASE_URL" -f ../db/migration_006_sales_purchase_inventory.sql
 npx prisma generate
 npx prisma db seed         # seeds domain_types, modules, coa_templates
 npm run create-admin -- --email you@example.com --password "something long"   # makes yourself a platform admin
@@ -56,6 +57,21 @@ All routes below require `Authorization: Bearer <token>` from login/verify-otp.
 | `GET /journal/cash-book?from=&to=` | Combined Cash+Bank running balance. |
 | `GET /journal/receipts-payments?from=&to=` | Same Cash+Bank movement, split by direction. |
 | `GET /journal/day-book?from=&to=` | Every posted voucher, chronological. |
+
+### Sales / Purchase / Inventory (`/items`, `/sales-invoices`, `/purchase-bills`, `/stock-adjustments`, `/inventory/*`)
+
+v1: direct invoicing only (no Sales/Purchase Order stage — see ROADMAP.md), Purchase Bill and Sales Invoice and Stock Adjustment each create-and-post atomically, same UX as `/journal`. Every org picks a stock costing method exactly once (`GET/POST /items/costing-method`) before any item can be created — `WEIGHTED_AVG` or `FIFO`, enforced immutable at the route level. Costing math lives in `lib/costing.ts` (`receiveStock`/`consumeStock`), shared by all three document routes.
+
+| Endpoint | Notes |
+|---|---|
+| `GET/POST /items/costing-method` | Read, or set-once, the org's stock valuation method. |
+| `GET /items/stock-accounts` | The org's item control accounts (Inventory / Raw Materials / Finished Goods), for the item-create form. |
+| `GET/POST /items`, `PATCH /items/:id`, `DELETE /items/:id` | Item master. Create also creates the paired `bpType = ITEM` Business Partner (never exposed separately) and, if `openingQuantity` is set, the opening stock movement. Delete only if it's never had a stock movement. |
+| `GET/POST /purchase-bills`, `GET /purchase-bills/:id` | Stock inward. Posts: Dr each line's item stock account (tagged that item's BP) + Dr GST Input, Cr Trade Payables (tagged the vendor). |
+| `GET/POST /sales-invoices`, `GET /sales-invoices/:id` | Stock outward — rejected if a branch's on-hand can't cover a line. Posts: Dr Trade Receivables (tagged the customer), Cr Sales Revenue + Cr GST Output, Dr Cost of Goods Sold, Cr each line's item stock account (tagged that item's BP). |
+| `GET/POST /stock-adjustments` | Both directions in one document — IN (found stock/opening, needs an explicit `unitCost`) and OUT (write-off/shrinkage, costed automatically). Posts to Inventory Adjustments either direction. |
+| `GET /inventory/stock-ledger?itemId=&branchId=&from=&to=` | Running quantity balance for one item — the Stock Movement equivalent of `/journal/ledger`. |
+| `GET /inventory/valuation?branchId=` | Every item currently on hand and its value — reads `ItemStock.averageCost` for weighted-avg orgs, sums remaining `StockLot`s for FIFO orgs. |
 
 ### Team / user management (`/org/users/*`, OWNER/ADMIN only)
 
@@ -150,6 +166,7 @@ real transactional endpoints are built later.
    psql "$DATABASE_URL" -f ../db/migration_003_users_admin.sql
    psql "$DATABASE_URL" -f ../db/migration_004_module_subscriptions.sql
    psql "$DATABASE_URL" -f ../db/migration_005_menu_config.sql
+   psql "$DATABASE_URL" -f ../db/migration_006_sales_purchase_inventory.sql
    npx prisma db seed
    npm run create-admin -- --email you@example.com --password "something long"
    ```

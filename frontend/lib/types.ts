@@ -192,6 +192,111 @@ export interface ReceiptsPaymentsResponse {
   totalPayments: number;
 }
 
+// ── Sales / Purchase / Inventory ────────────────────────────────────────────
+
+export type CostingMethod = "WEIGHTED_AVG" | "FIFO";
+
+export interface Item {
+  id: string;
+  sku: string;
+  name: string;
+  description: string | null;
+  uom: string;
+  hsnCode: string | null;
+  isFinishedGood: boolean;
+  isActive: boolean;
+  stockAccount: { id: string; accountCode: string; accountName: string };
+  salesRate: string | null;
+  purchaseRate: string | null;
+  taxRate: string;
+  totalQuantityOnHand: number;
+}
+
+export interface DocumentLineInput {
+  itemId: string;
+  quantity: number;
+  rate: number;
+  taxRate?: number;
+}
+
+export interface DocumentLine extends DocumentLineInput {
+  id: string;
+  item: { id: string; sku: string; name: string };
+  lineSubtotal: string;
+  taxAmount: string;
+  lineTotal: string;
+}
+
+export interface SalesInvoice {
+  id: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  narration: string;
+  businessPartner: { id: string; name: string };
+  subtotal: string;
+  taxTotal: string;
+  grandTotal: string;
+  totalCogs: string;
+  lines: DocumentLine[];
+}
+
+export interface PurchaseBill {
+  id: string;
+  billNumber: string;
+  billDate: string;
+  narration: string;
+  businessPartner: { id: string; name: string };
+  subtotal: string;
+  taxTotal: string;
+  grandTotal: string;
+  lines: DocumentLine[];
+}
+
+export interface StockAdjustmentLineInput {
+  itemId: string;
+  direction: "IN" | "OUT";
+  quantity: number;
+  unitCost?: number;
+}
+
+export interface StockAdjustment {
+  id: string;
+  adjustmentDate: string;
+  narration: string;
+  lines: (StockAdjustmentLineInput & { id: string; item: { id: string; sku: string; name: string }; lineValue: string })[];
+}
+
+export interface StockLedgerRow {
+  date: string;
+  movementType: string;
+  branch: string;
+  quantity: number;
+  unitCost: number;
+  narration: string | null;
+  referenceType: string | null;
+  balance: number;
+}
+
+export interface StockLedgerResponse {
+  item: { id: string; sku: string; name: string; uom: string };
+  openingQuantity: number;
+  rows: StockLedgerRow[];
+}
+
+export interface ValuationRow {
+  item: { id: string; sku: string; name: string; uom: string };
+  stockAccount: { accountCode: string; accountName: string };
+  quantityOnHand: number;
+  averageCost: number;
+  value: number;
+}
+
+export interface ValuationResponse {
+  costingMethod: CostingMethod | null;
+  rows: ValuationRow[];
+  totalValue: number;
+}
+
 // ── Team / user management ──────────────────────────────────────────────────
 
 export type OrgRole = "OWNER" | "ADMIN" | "ACCOUNTANT" | "VIEWER";

@@ -71,6 +71,11 @@ model Organization {
   name                String    @db.VarChar(200)
   status              String    @default("PENDING_VERIFICATION") @db.VarChar(20)
   subscriptionStatus  String    @default("ACTIVE") @map("subscription_status") @db.VarChar(20)
+  // Weighted-average or FIFO stock valuation. Null until the org's first
+  // Sales/Purchase/Inventory use — chosen once (lib/costing.ts enforces
+  // this at the route level) and never editable after, because every
+  // ItemStock/StockLot row that follows is computed under this rule.
+  costingMethod       String?   @map("costing_method") @db.VarChar(20)
   domainLockedAt      DateTime? @map("domain_locked_at")
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at")
@@ -89,6 +94,11 @@ model Organization {
   invites          OrgInvite[]
   auditLogs        AuditLog[]
   menuConfig       OrgMenuConfig[]
+  salesInvoices    SalesInvoice[]
+  purchaseBills    PurchaseBill[]
+  stockAdjustments StockAdjustment[]
+  stockMovements   StockMovement[]
+  stockLots        StockLot[]
 
   @@map("organizations")
 }
@@ -122,6 +132,11 @@ model Branch {
   orgUsers       OrgUser[]
   itemStocks     ItemStock[]
   journalEntries JournalEntry[]
+  stockLots      StockLot[]
+  stockMovements StockMovement[]
+  salesInvoices  SalesInvoice[]
+  purchaseBills  PurchaseBill[]
+  stockAdjustments StockAdjustment[]
 
   @@unique([organizationId, code])
   @@map("branches")
@@ -152,6 +167,7 @@ model Account {
   parent       Account?      @relation("AccountHierarchy", fields: [parentId], references: [id])
   children     Account[]     @relation("AccountHierarchy")
   journalLines JournalLine[]
+  itemsUsingAsStockAccount Item[]
 
   @@unique([organizationId, accountCode])
   @@map("accounts")
@@ -282,15 +298,46 @@ model Item {
   organizationId String    @map("organization_id") @db.Uuid
   sku            String    @db.VarChar(50)
   name           String    @db.VarChar(200)
+  description    String?   @db.VarChar(255)
   uom            String    @default("EA") @db.VarChar(20)
+  hsnCode        String?   @map("hsn_code") @db.VarChar(10)
   isFinishedGood Boolean   @default(false) @map("is_finished_good")
+  // Which control account this item's stock value posts to — Inventory
+  // (Trading), Raw Materials, or Finished Goods (Manufacturing). Explicit
+  // rather than inferred from isFinishedGood/domain, since an org that
+  // selected both domains has more than one candidate account.
+  stockAccountId String    @map("stock_account_id") @db.Uuid
+  // The paired sub-ledger row (business_partners.bp_type = 'ITEM') that
+  // tags every journal line against stockAccountId for this item — same
+  // pattern Trade Receivables/Payables already use for customers/vendors.
+  // Created automatically alongside the item (see routes/items.ts), never
+  // exposed as a separate thing to manage.
+  businessPartnerId String @unique @map("business_partner_id") @db.Uuid
+  salesRate      Decimal?  @map("sales_rate") @db.Decimal(14, 2)
+  purchaseRate   Decimal?  @map("purchase_rate") @db.Decimal(14, 2)
+  taxRate        Decimal   @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  // Starting balance, same convention as Account.openingBalance /
+  // BusinessPartner.openingBalance — a stored figure reports fold in
+  // mathematically, not a posted document. Seeds ItemStock.averageCost
+  // (weighted-avg orgs) or a single StockLot (FIFO orgs) the first time
+  // this item is touched by a real movement.
+  openingQuantity Decimal  @default(0) @map("opening_quantity") @db.Decimal(14, 4)
+  openingCost     Decimal  @default(0) @map("opening_cost") @db.Decimal(14, 2)
+  isActive       Boolean   @default(true) @map("is_active")
   createdAt      DateTime  @default(now()) @map("created_at")
   deletedAt      DateTime? @map("deleted_at")
 
-  organization        Organization @relation(fields: [organizationId], references: [id])
+  organization        Organization    @relation(fields: [organizationId], references: [id])
+  stockAccount         Account         @relation(fields: [stockAccountId], references: [id])
+  businessPartner       BusinessPartner @relation(fields: [businessPartnerId], references: [id])
   itemStocks           ItemStock[]
-  bomLinesAsFinished   BomLine[]   @relation("FinishedItem")
-  bomLinesAsComponent  BomLine[]   @relation("ComponentItem")
+  bomLinesAsFinished   BomLine[]       @relation("FinishedItem")
+  bomLinesAsComponent  BomLine[]       @relation("ComponentItem")
+  stockLots            StockLot[]
+  stockMovements       StockMovement[]
+  salesInvoiceLines    SalesInvoiceLine[]
+  purchaseBillLines    PurchaseBillLine[]
+  stockAdjustmentLines StockAdjustmentLine[]
 
   @@unique([organizationId, sku])
   @@map("items")
@@ -300,6 +347,10 @@ model ItemStock {
   itemId         String   @map("item_id") @db.Uuid
   branchId       String   @map("branch_id") @db.Uuid
   quantityOnHand Decimal  @default(0) @map("quantity_on_hand") @db.Decimal(14, 4)
+  // Authoritative for weighted-average orgs; kept in sync (blended) for
+  // FIFO orgs too so a quick read never has to walk StockLot, but the lots
+  // are what FIFO consumption actually uses.
+  averageCost    Decimal  @default(0) @map("average_cost") @db.Decimal(14, 4)
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
 
   item   Item   @relation(fields: [itemId], references: [id])
@@ -307,6 +358,176 @@ model ItemStock {
 
   @@id([itemId, branchId])
   @@map("item_stock")
+}
+
+// FIFO cost layers — one row per receipt (purchase, opening balance, or an
+// inward adjustment), consumed oldest-first on every sale. Unused entirely
+// for weighted-average orgs.
+model StockLot {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  branchId       String    @map("branch_id") @db.Uuid
+  itemId         String    @map("item_id") @db.Uuid
+  quantityRemaining Decimal @map("quantity_remaining") @db.Decimal(14, 4)
+  unitCost       Decimal   @map("unit_cost") @db.Decimal(14, 4)
+  receivedAt     DateTime  @map("received_at")
+  referenceType  String?   @map("reference_type") @db.VarChar(30)
+  referenceId    String?   @map("reference_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  branch       Branch       @relation(fields: [branchId], references: [id])
+  item         Item         @relation(fields: [itemId], references: [id])
+
+  @@map("stock_lots")
+}
+
+// The stock audit trail — every inward/outward movement, powers the Stock
+// Ledger report the same way JournalLine powers the accounting Ledger.
+model StockMovement {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  branchId       String   @map("branch_id") @db.Uuid
+  itemId         String   @map("item_id") @db.Uuid
+  movementType   String   @map("movement_type") @db.VarChar(20) // PURCHASE / SALE / ADJUSTMENT_IN / ADJUSTMENT_OUT
+  quantity       Decimal  @db.Decimal(14, 4) // always positive; movementType carries direction
+  unitCost       Decimal  @map("unit_cost") @db.Decimal(14, 4)
+  referenceType  String?  @map("reference_type") @db.VarChar(30)
+  referenceId    String?  @map("reference_id") @db.Uuid
+  narration      String?  @db.VarChar(255)
+  movementDate   DateTime @map("movement_date") @db.Date
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  branch       Branch       @relation(fields: [branchId], references: [id])
+  item         Item         @relation(fields: [itemId], references: [id])
+
+  @@map("stock_movements")
+}
+
+model SalesInvoice {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String   @map("organization_id") @db.Uuid
+  branchId          String?  @map("branch_id") @db.Uuid
+  businessPartnerId String   @map("business_partner_id") @db.Uuid
+  invoiceNumber     String   @map("invoice_number") @db.VarChar(30)
+  invoiceDate       DateTime @map("invoice_date") @db.Date
+  narration         String   @default("") @db.VarChar(255)
+  journalEntryId    String   @unique @map("journal_entry_id") @db.Uuid
+  subtotal          Decimal  @db.Decimal(14, 2)
+  taxTotal          Decimal  @map("tax_total") @db.Decimal(14, 2)
+  grandTotal        Decimal  @map("grand_total") @db.Decimal(14, 2)
+  totalCogs         Decimal  @map("total_cogs") @db.Decimal(14, 2)
+  createdBy         String?  @map("created_by") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  organization    Organization       @relation(fields: [organizationId], references: [id])
+  branch          Branch?            @relation(fields: [branchId], references: [id])
+  businessPartner BusinessPartner    @relation(fields: [businessPartnerId], references: [id])
+  journalEntry    JournalEntry       @relation(fields: [journalEntryId], references: [id])
+  lines           SalesInvoiceLine[]
+
+  @@unique([organizationId, invoiceNumber])
+  @@map("sales_invoices")
+}
+
+model SalesInvoiceLine {
+  id             String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  salesInvoiceId String  @map("sales_invoice_id") @db.Uuid
+  itemId         String  @map("item_id") @db.Uuid
+  quantity       Decimal @db.Decimal(14, 4)
+  rate           Decimal @db.Decimal(14, 2)
+  taxRate        Decimal @map("tax_rate") @db.Decimal(5, 2)
+  lineSubtotal   Decimal @map("line_subtotal") @db.Decimal(14, 2)
+  taxAmount      Decimal @map("tax_amount") @db.Decimal(14, 2)
+  lineTotal      Decimal @map("line_total") @db.Decimal(14, 2)
+  unitCost       Decimal @map("unit_cost") @db.Decimal(14, 4) // cost consumed for this line, snapshotted at posting
+  lineCogs       Decimal @map("line_cogs") @db.Decimal(14, 2)
+
+  salesInvoice SalesInvoice @relation(fields: [salesInvoiceId], references: [id])
+  item         Item         @relation(fields: [itemId], references: [id])
+
+  @@map("sales_invoice_lines")
+}
+
+model PurchaseBill {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String   @map("organization_id") @db.Uuid
+  branchId          String?  @map("branch_id") @db.Uuid
+  businessPartnerId String   @map("business_partner_id") @db.Uuid
+  billNumber        String   @map("bill_number") @db.VarChar(30)
+  billDate          DateTime @map("bill_date") @db.Date
+  narration         String   @default("") @db.VarChar(255)
+  journalEntryId    String   @unique @map("journal_entry_id") @db.Uuid
+  subtotal          Decimal  @db.Decimal(14, 2)
+  taxTotal          Decimal  @map("tax_total") @db.Decimal(14, 2)
+  grandTotal        Decimal  @map("grand_total") @db.Decimal(14, 2)
+  createdBy         String?  @map("created_by") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  organization    Organization       @relation(fields: [organizationId], references: [id])
+  branch          Branch?            @relation(fields: [branchId], references: [id])
+  businessPartner BusinessPartner    @relation(fields: [businessPartnerId], references: [id])
+  journalEntry    JournalEntry       @relation(fields: [journalEntryId], references: [id])
+  lines           PurchaseBillLine[]
+
+  @@unique([organizationId, billNumber])
+  @@map("purchase_bills")
+}
+
+model PurchaseBillLine {
+  id             String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  purchaseBillId String  @map("purchase_bill_id") @db.Uuid
+  itemId         String  @map("item_id") @db.Uuid
+  quantity       Decimal @db.Decimal(14, 4)
+  rate           Decimal @db.Decimal(14, 2)
+  taxRate        Decimal @map("tax_rate") @db.Decimal(5, 2)
+  lineSubtotal   Decimal @map("line_subtotal") @db.Decimal(14, 2)
+  taxAmount      Decimal @map("tax_amount") @db.Decimal(14, 2)
+  lineTotal      Decimal @map("line_total") @db.Decimal(14, 2)
+
+  purchaseBill PurchaseBill @relation(fields: [purchaseBillId], references: [id])
+  item         Item         @relation(fields: [itemId], references: [id])
+
+  @@map("purchase_bill_lines")
+}
+
+// Both directions (found stock / write-off) in one document — a single
+// signed line list, same reasoning as SmartAppt keeping one screen for a
+// two-way toggle rather than splitting it into two document types. Also
+// how opening stock gets entered: an IN line dated at go-live is
+// indistinguishable from any other correction.
+model StockAdjustment {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  branchId       String?  @map("branch_id") @db.Uuid
+  adjustmentDate DateTime @map("adjustment_date") @db.Date
+  narration      String   @default("") @db.VarChar(255)
+  journalEntryId String   @unique @map("journal_entry_id") @db.Uuid
+  createdBy      String?  @map("created_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization          @relation(fields: [organizationId], references: [id])
+  branch       Branch?               @relation(fields: [branchId], references: [id])
+  journalEntry JournalEntry          @relation(fields: [journalEntryId], references: [id])
+  lines        StockAdjustmentLine[]
+
+  @@map("stock_adjustments")
+}
+
+model StockAdjustmentLine {
+  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stockAdjustmentId String  @map("stock_adjustment_id") @db.Uuid
+  itemId            String  @map("item_id") @db.Uuid
+  direction         String  @db.VarChar(3) // IN / OUT
+  quantity          Decimal @db.Decimal(14, 4)
+  unitCost          Decimal @map("unit_cost") @db.Decimal(14, 4) // required for IN; computed from current costing for OUT
+  lineValue         Decimal @map("line_value") @db.Decimal(14, 2)
+
+  stockAdjustment StockAdjustment @relation(fields: [stockAdjustmentId], references: [id])
+  item            Item            @relation(fields: [itemId], references: [id])
+
+  @@map("stock_adjustment_lines")
 }
 
 model BomLine {
@@ -340,8 +561,11 @@ model BusinessPartner {
   createdAt          DateTime  @default(now()) @map("created_at")
   deletedAt          DateTime? @map("deleted_at")
 
-  organization Organization  @relation(fields: [organizationId], references: [id])
-  journalLines JournalLine[]
+  organization  Organization    @relation(fields: [organizationId], references: [id])
+  journalLines  JournalLine[]
+  itemLink      Item?
+  salesInvoices SalesInvoice[]
+  purchaseBills PurchaseBill[]
 
   @@map("business_partners")
 }
@@ -361,6 +585,9 @@ model JournalEntry {
   organization Organization  @relation(fields: [organizationId], references: [id])
   branch       Branch?       @relation(fields: [branchId], references: [id])
   journalLines JournalLine[]
+  salesInvoice    SalesInvoice?
+  purchaseBill    PurchaseBill?
+  stockAdjustment StockAdjustment?
 
   @@map("journal_entries")
 }

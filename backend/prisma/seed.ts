@@ -81,9 +81,12 @@ async function main() {
     { domainTypeId: null, accountCode: "1001", accountName: "Cash in Hand", accountType: "ASSET" },
     { domainTypeId: null, accountCode: "1002", accountName: "Bank Account", accountType: "ASSET" },
     { domainTypeId: null, accountCode: "4008", accountName: "Administrative", accountType: "EXPENSE" },
-    // Trading overlay
+    // Trade Receivables/Payables used to be Trading-only, but a
+    // Manufacturing org sells finished goods and buys raw materials from
+    // vendors too — every org needs them regardless of which domain(s) it
+    // selected, so they moved here from the Trading overlay below.
     {
-      domainTypeId: trading.id,
+      domainTypeId: null,
       accountCode: "1005",
       accountName: "Trade Receivables",
       accountType: "ASSET",
@@ -91,20 +94,34 @@ async function main() {
       defaultBpType: "CUSTOMER",
     },
     {
+      domainTypeId: null,
+      accountCode: "2001",
+      accountName: "Trade Payables",
+      accountType: "LIABILITY",
+      isControlAccount: true,
+      defaultBpType: "VENDOR",
+    },
+    // Sales/Purchase/Inventory v1 — see routes/salesInvoices.ts,
+    // purchaseBills.ts, stockAdjustments.ts for how these get posted to.
+    { domainTypeId: null, accountCode: "1101", accountName: "GST Input Credit", accountType: "ASSET" },
+    { domainTypeId: null, accountCode: "2101", accountName: "GST Output Payable", accountType: "LIABILITY" },
+    { domainTypeId: null, accountCode: "4001", accountName: "Cost of Goods Sold", accountType: "EXPENSE" },
+    // Both directions of Stock Adjustment post here — a write-off debits
+    // it (a real loss), a found-stock/opening correction credits it (a
+    // contra that nets the expense down). One account, either direction,
+    // same convention a lot of small-business systems use for "Inventory
+    // Shrinkage/Adjustment" rather than inventing a separate other-income
+    // account for the inward case.
+    { domainTypeId: null, accountCode: "4002", accountName: "Inventory Adjustments", accountType: "EXPENSE" },
+    { domainTypeId: null, accountCode: "5001", accountName: "Sales Revenue", accountType: "INCOME" },
+    // Trading overlay
+    {
       domainTypeId: trading.id,
       accountCode: "1201",
       accountName: "Inventory",
       accountType: "ASSET",
       isControlAccount: true,
       defaultBpType: "ITEM",
-    },
-    {
-      domainTypeId: trading.id,
-      accountCode: "2001",
-      accountName: "Trade Payables",
-      accountType: "LIABILITY",
-      isControlAccount: true,
-      defaultBpType: "VENDOR",
     },
     // Manufacturing overlay
     {
