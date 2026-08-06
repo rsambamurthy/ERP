@@ -97,6 +97,8 @@ model Organization {
   salesInvoices    SalesInvoice[]
   purchaseBills    PurchaseBill[]
   stockAdjustments StockAdjustment[]
+  salesReturns     SalesReturn[]
+  purchaseReturns  PurchaseReturn[]
   stockMovements   StockMovement[]
   stockLots        StockLot[]
 
@@ -137,6 +139,8 @@ model Branch {
   salesInvoices  SalesInvoice[]
   purchaseBills  PurchaseBill[]
   stockAdjustments StockAdjustment[]
+  salesReturns     SalesReturn[]
+  purchaseReturns  PurchaseReturn[]
 
   @@unique([organizationId, code])
   @@map("branches")
@@ -339,6 +343,8 @@ model Item {
   salesInvoiceLines    SalesInvoiceLine[]
   purchaseBillLines    PurchaseBillLine[]
   stockAdjustmentLines StockAdjustmentLine[]
+  salesReturnLines     SalesReturnLine[]
+  purchaseReturnLines  PurchaseReturnLine[]
 
   @@unique([organizationId, sku])
   @@map("items")
@@ -427,6 +433,7 @@ model SalesInvoice {
   businessPartner BusinessPartner    @relation(fields: [businessPartnerId], references: [id])
   journalEntry    JournalEntry       @relation(fields: [journalEntryId], references: [id])
   lines           SalesInvoiceLine[]
+  returns         SalesReturn[]
 
   @@unique([organizationId, invoiceNumber])
   @@map("sales_invoices")
@@ -445,8 +452,9 @@ model SalesInvoiceLine {
   unitCost       Decimal @map("unit_cost") @db.Decimal(14, 4) // cost consumed for this line, snapshotted at posting
   lineCogs       Decimal @map("line_cogs") @db.Decimal(14, 2)
 
-  salesInvoice SalesInvoice @relation(fields: [salesInvoiceId], references: [id])
-  item         Item         @relation(fields: [itemId], references: [id])
+  salesInvoice SalesInvoice      @relation(fields: [salesInvoiceId], references: [id])
+  item         Item              @relation(fields: [itemId], references: [id])
+  returnLines  SalesReturnLine[]
 
   @@map("sales_invoice_lines")
 }
@@ -471,6 +479,7 @@ model PurchaseBill {
   businessPartner BusinessPartner    @relation(fields: [businessPartnerId], references: [id])
   journalEntry    JournalEntry       @relation(fields: [journalEntryId], references: [id])
   lines           PurchaseBillLine[]
+  returns         PurchaseReturn[]
 
   @@unique([organizationId, billNumber])
   @@map("purchase_bills")
@@ -487,10 +496,121 @@ model PurchaseBillLine {
   taxAmount      Decimal @map("tax_amount") @db.Decimal(14, 2)
   lineTotal      Decimal @map("line_total") @db.Decimal(14, 2)
 
-  purchaseBill PurchaseBill @relation(fields: [purchaseBillId], references: [id])
-  item         Item         @relation(fields: [itemId], references: [id])
+  purchaseBill PurchaseBill         @relation(fields: [purchaseBillId], references: [id])
+  item         Item                 @relation(fields: [itemId], references: [id])
+  returnLines  PurchaseReturnLine[]
 
   @@map("purchase_bill_lines")
+}
+
+// ── Sales Return (Credit Note) ──────────────────────────────────────────
+// Always tied to the original Sales Invoice — never freeform — so a line
+// can never return more than (invoiced qty - already returned qty). Each
+// line carries a condition: GOOD stock re-enters sellable on-hand (new
+// FIFO lot at the original invoice line's cost, or folded into the
+// weighted average); DAMAGED reverses the sale the same way but the cost
+// posts to Inventory Adjustments instead of back to stock, and no
+// StockMovement is created — it never touches sellable on-hand, so it
+// won't appear in the Stock Ledger either. The return document itself is
+// the audit trail for that.
+model SalesReturn {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String   @map("organization_id") @db.Uuid
+  branchId          String?  @map("branch_id") @db.Uuid
+  salesInvoiceId    String   @map("sales_invoice_id") @db.Uuid
+  businessPartnerId String   @map("business_partner_id") @db.Uuid
+  returnNumber      String   @map("return_number") @db.VarChar(30)
+  returnDate        DateTime @map("return_date") @db.Date
+  narration         String   @default("") @db.VarChar(255)
+  journalEntryId    String   @unique @map("journal_entry_id") @db.Uuid
+  subtotal          Decimal  @db.Decimal(14, 2)
+  taxTotal          Decimal  @map("tax_total") @db.Decimal(14, 2)
+  grandTotal        Decimal  @map("grand_total") @db.Decimal(14, 2)
+  totalCogsReversed Decimal  @map("total_cogs_reversed") @db.Decimal(14, 2)
+  createdBy         String?  @map("created_by") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  organization    Organization      @relation(fields: [organizationId], references: [id])
+  branch          Branch?           @relation(fields: [branchId], references: [id])
+  salesInvoice    SalesInvoice      @relation(fields: [salesInvoiceId], references: [id])
+  businessPartner BusinessPartner   @relation(fields: [businessPartnerId], references: [id])
+  journalEntry    JournalEntry      @relation(fields: [journalEntryId], references: [id])
+  lines           SalesReturnLine[]
+
+  @@unique([organizationId, returnNumber])
+  @@map("sales_returns")
+}
+
+model SalesReturnLine {
+  id                 String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  salesReturnId      String  @map("sales_return_id") @db.Uuid
+  salesInvoiceLineId String  @map("sales_invoice_line_id") @db.Uuid
+  itemId             String  @map("item_id") @db.Uuid
+  quantity           Decimal @db.Decimal(14, 4)
+  condition          String  @db.VarChar(10) // GOOD | DAMAGED
+  rate               Decimal @db.Decimal(14, 2) // snapshot of the original invoice line's rate
+  taxRate            Decimal @map("tax_rate") @db.Decimal(5, 2)
+  lineSubtotal       Decimal @map("line_subtotal") @db.Decimal(14, 2)
+  taxAmount          Decimal @map("tax_amount") @db.Decimal(14, 2)
+  lineTotal          Decimal @map("line_total") @db.Decimal(14, 2)
+  unitCost           Decimal @map("unit_cost") @db.Decimal(14, 4) // snapshot of the original invoice line's cost
+  lineCogsReversed   Decimal @map("line_cogs_reversed") @db.Decimal(14, 2)
+
+  salesReturn      SalesReturn      @relation(fields: [salesReturnId], references: [id])
+  salesInvoiceLine SalesInvoiceLine @relation(fields: [salesInvoiceLineId], references: [id])
+  item             Item             @relation(fields: [itemId], references: [id])
+
+  @@map("sales_return_lines")
+}
+
+// ── Purchase Return (Debit Note) ────────────────────────────────────────
+// Always tied to the original Purchase Bill, same capped-quantity rule as
+// Sales Return. No condition split — the stock is leaving to the vendor
+// regardless of its state, so GOOD/DAMAGED doesn't apply here.
+model PurchaseReturn {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String   @map("organization_id") @db.Uuid
+  branchId          String?  @map("branch_id") @db.Uuid
+  purchaseBillId    String   @map("purchase_bill_id") @db.Uuid
+  businessPartnerId String   @map("business_partner_id") @db.Uuid
+  returnNumber      String   @map("return_number") @db.VarChar(30)
+  returnDate        DateTime @map("return_date") @db.Date
+  narration         String   @default("") @db.VarChar(255)
+  journalEntryId    String   @unique @map("journal_entry_id") @db.Uuid
+  subtotal          Decimal  @db.Decimal(14, 2)
+  taxTotal          Decimal  @map("tax_total") @db.Decimal(14, 2)
+  grandTotal        Decimal  @map("grand_total") @db.Decimal(14, 2)
+  createdBy         String?  @map("created_by") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  organization    Organization         @relation(fields: [organizationId], references: [id])
+  branch          Branch?              @relation(fields: [branchId], references: [id])
+  purchaseBill    PurchaseBill         @relation(fields: [purchaseBillId], references: [id])
+  businessPartner BusinessPartner      @relation(fields: [businessPartnerId], references: [id])
+  journalEntry    JournalEntry         @relation(fields: [journalEntryId], references: [id])
+  lines           PurchaseReturnLine[]
+
+  @@unique([organizationId, returnNumber])
+  @@map("purchase_returns")
+}
+
+model PurchaseReturnLine {
+  id                 String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  purchaseReturnId   String  @map("purchase_return_id") @db.Uuid
+  purchaseBillLineId String  @map("purchase_bill_line_id") @db.Uuid
+  itemId             String  @map("item_id") @db.Uuid
+  quantity           Decimal @db.Decimal(14, 4)
+  rate               Decimal @db.Decimal(14, 2)
+  taxRate            Decimal @map("tax_rate") @db.Decimal(5, 2)
+  lineSubtotal       Decimal @map("line_subtotal") @db.Decimal(14, 2)
+  taxAmount          Decimal @map("tax_amount") @db.Decimal(14, 2)
+  lineTotal          Decimal @map("line_total") @db.Decimal(14, 2)
+
+  purchaseReturn   PurchaseReturn   @relation(fields: [purchaseReturnId], references: [id])
+  purchaseBillLine PurchaseBillLine @relation(fields: [purchaseBillLineId], references: [id])
+  item             Item             @relation(fields: [itemId], references: [id])
+
+  @@map("purchase_return_lines")
 }
 
 // Both directions (found stock / write-off) in one document — a single
@@ -573,6 +693,8 @@ model BusinessPartner {
   itemLink      Item?
   salesInvoices SalesInvoice[]
   purchaseBills PurchaseBill[]
+  salesReturns    SalesReturn[]
+  purchaseReturns PurchaseReturn[]
 
   @@map("business_partners")
 }
@@ -595,6 +717,8 @@ model JournalEntry {
   salesInvoice    SalesInvoice?
   purchaseBill    PurchaseBill?
   stockAdjustment StockAdjustment?
+  salesReturn     SalesReturn?
+  purchaseReturn  PurchaseReturn?
 
   @@map("journal_entries")
 }

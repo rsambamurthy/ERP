@@ -17,6 +17,7 @@ psql "$DATABASE_URL" -f ../db/migration_004_module_subscriptions.sql
 psql "$DATABASE_URL" -f ../db/migration_005_menu_config.sql
 psql "$DATABASE_URL" -f ../db/migration_006_sales_purchase_inventory.sql
 psql "$DATABASE_URL" -f ../db/migration_007_user_name_and_bp_code.sql
+psql "$DATABASE_URL" -f ../db/migration_008_sales_purchase_returns.sql
 npx prisma generate
 npx prisma db seed         # seeds domain_types, modules, coa_templates
 npm run create-admin -- --email you@example.com --password "something long"   # makes yourself a platform admin
@@ -77,6 +78,10 @@ v1: direct invoicing only (no Sales/Purchase Order stage — see ROADMAP.md), Pu
 ### Bulk upload (`/accounts`, `/items`, `/business-partners` — `/bulk-upload/*`)
 
 Same three-step flow on all three, ported from SmartAppt Gold's vendor/bank upload pattern (`lib/xlsxTemplate.ts` + `lib/upload.ts` are the shared pieces): `GET .../bulk-upload/template` downloads a styled `.xlsx` (header row, inline hints, dropdown validation on enum columns); `POST .../bulk-upload/preview` (multipart, field name `file`) parses it server-side and returns every row tagged `create` / `update` / `error` — nothing is written yet; `POST .../bulk-upload/apply` takes back only the rows the user confirmed (body `{ rows: [...] }`) and commits them. Matching an uploaded row to an existing record: Chart of Accounts by Account Code, Items by SKU, Business Partners by the optional `code` field (blank code always creates new — see `migration_007`). Requires `db/migration_007_user_name_and_bp_code.sql`.
+
+### Sales / Purchase Returns (`/sales-returns`, `/purchase-returns`)
+
+Always tied to an existing Sales Invoice / Purchase Bill — `GET .../invoice/:id/lines` (sales) or `GET .../bill/:id/lines` (purchase) returns each original line annotated with `alreadyReturned`/`remaining`, so the create form can cap quantities client-side (the server re-validates the cap regardless). `POST /sales-returns` line input is `{ salesInvoiceLineId, quantity, condition }` where condition is `GOOD` (re-enters sellable stock at the original line's cost, reverses Sales Revenue/GST Output/COGS/Trade Receivables normally) or `DAMAGED` (same revenue/GST/receivable reversal, but the cost writes off to Inventory Adjustments (4002) instead of back to stock, with no stock movement at all). `POST /purchase-returns` line input is `{ purchaseBillLineId, quantity }` — no condition; stock leaves via `returnStockToVendor()` (`lib/costing.ts`) at the original bill line's rate, preferring to deplete that exact bill's own stock lot before falling back to oldest-first FIFO. Voucher types `SR`/`PR`, movement types `SALES_RETURN_IN`/`PURCHASE_RETURN_OUT`. Requires `db/migration_008_sales_purchase_returns.sql`.
 
 ### Team / user management (`/org/users/*`, OWNER/ADMIN only)
 
@@ -173,6 +178,7 @@ real transactional endpoints are built later.
    psql "$DATABASE_URL" -f ../db/migration_005_menu_config.sql
    psql "$DATABASE_URL" -f ../db/migration_006_sales_purchase_inventory.sql
 psql "$DATABASE_URL" -f ../db/migration_007_user_name_and_bp_code.sql
+psql "$DATABASE_URL" -f ../db/migration_008_sales_purchase_returns.sql
    npx prisma db seed
    npm run create-admin -- --email you@example.com --password "something long"
    ```

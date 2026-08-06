@@ -11,7 +11,7 @@ interface ReceiveArgs {
   quantity: number;
   unitCost: number;
   costingMethod: string; // "WEIGHTED_AVG" | "FIFO"
-  movementType: "PURCHASE" | "ADJUSTMENT_IN";
+  movementType: "PURCHASE" | "ADJUSTMENT_IN" | "SALES_RETURN_IN";
   referenceType: string;
   referenceId: string;
   movementDate: Date;
@@ -129,4 +129,78 @@ export async function consumeStock(tx: Tx, args: ConsumeArgs): Promise<{ unitCos
   });
 
   return { unitCost, totalCost };
+}
+
+interface ReturnToVendorArgs {
+  organizationId: string;
+  branchId: string;
+  itemId: string;
+  quantity: number;
+  unitCost: number; // fixed — the original Purchase Bill line's rate, not recomputed
+  costingMethod: string;
+  referenceType: string;
+  referenceId: string;
+  originalPurchaseBillId?: string; // FIFO: drain lots this exact bill created first
+  movementDate: Date;
+  narration?: string | null;
+}
+
+// Stock going back out to a vendor (Purchase Return). Deliberately not
+// consumeStock: a Purchase Bill brings stock in at an explicit rate
+// (receiveStock's unitCost param, not a computed one), so reversing it
+// should credit that same fixed rate back — mirroring the original entry —
+// rather than whatever consumeStock's FIFO/weighted-average engine would
+// currently compute, which could drift from what was actually paid. For
+// FIFO, prefers depleting the lot(s) this exact bill created (the literal
+// units being sent back) before falling back to oldest-first for any
+// shortfall — e.g. if some of this bill's own stock already sold through.
+export async function returnStockToVendor(tx: Tx, args: ReturnToVendorArgs) {
+  const { organizationId, branchId, itemId, quantity, unitCost, costingMethod, referenceType, referenceId, originalPurchaseBillId, movementDate, narration } = args;
+
+  const stock = await tx.itemStock.findUnique({ where: { itemId_branchId: { itemId, branchId } } });
+  const onHand = Number(stock?.quantityOnHand ?? 0);
+  if (onHand < quantity) {
+    throw new InsufficientStockError(`Only ${onHand} in stock at this branch — cannot return ${quantity} to the vendor.`);
+  }
+
+  await tx.itemStock.update({
+    where: { itemId_branchId: { itemId, branchId } },
+    data: { quantityOnHand: onHand - quantity }, // averageCost unchanged, same convention as consumeStock
+  });
+
+  if (costingMethod === "FIFO") {
+    const preferredLots = originalPurchaseBillId
+      ? await tx.stockLot.findMany({
+          where: { itemId, branchId, referenceId: originalPurchaseBillId, quantityRemaining: { gt: 0 } },
+          orderBy: { receivedAt: "asc" },
+        })
+      : [];
+    const otherLots = await tx.stockLot.findMany({
+      where: {
+        itemId, branchId, quantityRemaining: { gt: 0 },
+        ...(originalPurchaseBillId ? { NOT: { referenceId: originalPurchaseBillId } } : {}),
+      },
+      orderBy: { receivedAt: "asc" },
+    });
+
+    let remaining = quantity;
+    for (const lot of [...preferredLots, ...otherLots]) {
+      if (remaining <= 0) break;
+      const available = Number(lot.quantityRemaining);
+      const take = Math.min(available, remaining);
+      remaining -= take;
+      await tx.stockLot.update({ where: { id: lot.id }, data: { quantityRemaining: available - take } });
+    }
+    // If remaining > 0.0001 here the lots didn't cover it — same data
+    // inconsistency case consumeStock guards against — but the onHand
+    // check above already caught any real shortfall, so this is
+    // unreachable in practice rather than worth a second throw.
+  }
+
+  await tx.stockMovement.create({
+    data: {
+      organizationId, branchId, itemId, movementType: "PURCHASE_RETURN_OUT", quantity, unitCost,
+      referenceType, referenceId, movementDate, narration: narration ?? null,
+    },
+  });
 }

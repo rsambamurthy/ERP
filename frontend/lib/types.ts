@@ -253,6 +253,70 @@ export interface PurchaseBill {
   lines: DocumentLine[];
 }
 
+// ── Sales / Purchase Returns ─────────────────────────────────────────────
+// Always tied to an original Sales Invoice / Purchase Bill — the "pick
+// lines to return" screen reads a ReturnableLine per original line, capped
+// by `remaining` (quantity - alreadyReturned across all prior returns).
+
+export interface ReturnableLine {
+  id: string; // the original SalesInvoiceLine / PurchaseBillLine id
+  item: { id: string; sku: string; name: string; uom: string };
+  quantity: number;
+  rate: number;
+  taxRate: number;
+  unitCost?: number; // sales lines only — what COGS reversal will use
+  alreadyReturned: number;
+  remaining: number;
+}
+
+export interface SalesReturnableResponse {
+  invoice: { id: string; invoiceNumber: string; businessPartner: { id: string; name: string } };
+  lines: ReturnableLine[];
+}
+
+export interface PurchaseReturnableResponse {
+  bill: { id: string; billNumber: string; businessPartner: { id: string; name: string } };
+  lines: ReturnableLine[];
+}
+
+export interface SalesReturnLineInput {
+  salesInvoiceLineId: string;
+  quantity: number;
+  condition: "GOOD" | "DAMAGED";
+}
+
+export interface PurchaseReturnLineInput {
+  purchaseBillLineId: string;
+  quantity: number;
+}
+
+export interface SalesReturn {
+  id: string;
+  returnNumber: string;
+  returnDate: string;
+  narration: string;
+  businessPartner: { id: string; name: string };
+  salesInvoice: { id: string; invoiceNumber: string };
+  subtotal: string;
+  taxTotal: string;
+  grandTotal: string;
+  totalCogsReversed: string;
+  lines: (SalesReturnLineInput & { id: string; item: { id: string; sku: string; name: string }; lineTotal: string })[];
+}
+
+export interface PurchaseReturn {
+  id: string;
+  returnNumber: string;
+  returnDate: string;
+  narration: string;
+  businessPartner: { id: string; name: string };
+  purchaseBill: { id: string; billNumber: string };
+  subtotal: string;
+  taxTotal: string;
+  grandTotal: string;
+  lines: (PurchaseReturnLineInput & { id: string; item: { id: string; sku: string; name: string }; lineTotal: string })[];
+}
+
 export interface StockAdjustmentLineInput {
   itemId: string;
   direction: "IN" | "OUT";

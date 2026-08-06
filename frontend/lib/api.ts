@@ -22,10 +22,16 @@ import type {
   OrgUsersResponse,
   PnLResponse,
   PurchaseBill,
+  PurchaseReturn,
+  PurchaseReturnableResponse,
+  PurchaseReturnLineInput,
   ReceiptsPaymentsResponse,
   RegisterPayload,
   RegisterResponse,
   SalesInvoice,
+  SalesReturn,
+  SalesReturnableResponse,
+  SalesReturnLineInput,
   StockAdjustment,
   StockAdjustmentLineInput,
   StockLedgerResponse,
@@ -300,6 +306,38 @@ export function createSalesInvoice(body: {
   businessPartnerId: string; invoiceDate: string; branchId?: string; narration?: string; lines: DocumentLineInput[];
 }) {
   return request<{ data: SalesInvoice }>("/sales-invoices", { method: "POST", body: JSON.stringify(body) });
+}
+
+// ── Sales Returns ────────────────────────────────────────────────────────
+
+export function getSalesReturns() {
+  return request<{ data: SalesReturn[] }>("/sales-returns");
+}
+
+export function getSalesReturnableLines(invoiceId: string) {
+  return request<{ data: SalesReturnableResponse }>(`/sales-returns/invoice/${invoiceId}/lines`);
+}
+
+export function createSalesReturn(body: {
+  salesInvoiceId: string; returnDate: string; branchId?: string; narration?: string; lines: SalesReturnLineInput[];
+}) {
+  return request<{ data: SalesReturn }>("/sales-returns", { method: "POST", body: JSON.stringify(body) });
+}
+
+// ── Purchase Returns ─────────────────────────────────────────────────────
+
+export function getPurchaseReturns() {
+  return request<{ data: PurchaseReturn[] }>("/purchase-returns");
+}
+
+export function getPurchaseReturnableLines(billId: string) {
+  return request<{ data: PurchaseReturnableResponse }>(`/purchase-returns/bill/${billId}/lines`);
+}
+
+export function createPurchaseReturn(body: {
+  purchaseBillId: string; returnDate: string; branchId?: string; narration?: string; lines: PurchaseReturnLineInput[];
+}) {
+  return request<{ data: PurchaseReturn }>("/purchase-returns", { method: "POST", body: JSON.stringify(body) });
 }
 
 export function getStockAdjustments() {

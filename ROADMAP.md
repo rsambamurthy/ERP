@@ -28,12 +28,6 @@ Deferred out of that scope:
   2-3x the build of v1 (more screens, more states, more edge cases), so it
   waits until direct invoicing is proven out.
 
-- **Sales Return / Credit Note** (stock inward, tied to an original
-  invoice) and **Purchase Return / Debit Note** (stock outward, tied to an
-  original bill). Structurally just a signed Stock Adjustment with a
-  reference back to the original document for traceability — additive once
-  Stock Adjustment exists.
-
 - **Inter-branch Stock Transfer.** Moves quantity between branches without
   touching accounting the way a sale or purchase does (same org's
   inventory, no P&L impact) — its own document type, not a variant of
@@ -49,6 +43,28 @@ Deferred out of that scope:
   where a Finished Good has no stock of its own and selling it explodes the
   BOM into raw-material movements on the spot. Would have required BOM
   logic inside Sales Invoice from day one.)
+
+## Sales Return / Purchase Return (built)
+
+Always tied to the original Sales Invoice / Purchase Bill — never freeform
+— so a line can never return more than (originally invoiced/billed qty -
+already returned across prior returns). Each posts a Journal Entry and, for
+Sales Return, a Stock Movement, in one transaction (same pattern as
+Sales/Purchase/Inventory v1).
+
+Sales Return lines carry a **GOOD / DAMAGED condition**: GOOD re-enters
+sellable stock at the original invoice line's cost (a new FIFO lot, or
+folded into the weighted average) and reverses Sales Revenue/GST
+Output/COGS/Trade Receivables normally; DAMAGED still credits the customer
+and reverses revenue/GST the same way, but the cost writes off to Inventory
+Adjustments (4002) instead of back to stock, and creates no stock movement
+at all — it never re-enters sellable on-hand, so it doesn't appear in the
+Stock Ledger either. Purchase Return has no condition split (stock is
+leaving to the vendor regardless of its state) and costs the returned
+quantity at the original bill line's rate, preferring to deplete the exact
+stock lot that bill created (falls back to oldest-first FIFO for any
+shortfall) — see `returnStockToVendor()` in `lib/costing.ts`. Requires
+`db/migration_008_sales_purchase_returns.sql`.
 
 ## From the earlier "what's next" review
 

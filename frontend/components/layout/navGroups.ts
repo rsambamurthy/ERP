@@ -52,6 +52,7 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: "S",
     items: [
       { id: "sales_invoices", label: "Sales Invoices", path: "/sales/invoices", dot: "#16a34a", roles: ["OWNER", "ADMIN", "ACCOUNTANT"] },
+      { id: "sales_returns", label: "Sales Returns", path: "/sales/returns", dot: "#65a30d", roles: ["OWNER", "ADMIN", "ACCOUNTANT"] },
     ],
   },
   {
@@ -60,6 +61,7 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: "P",
     items: [
       { id: "purchase_bills", label: "Purchase Bills", path: "/purchase/bills", dot: "#ea580c", roles: ["OWNER", "ADMIN", "ACCOUNTANT"] },
+      { id: "purchase_returns", label: "Purchase Returns", path: "/purchase/returns", dot: "#c2410c", roles: ["OWNER", "ADMIN", "ACCOUNTANT"] },
     ],
   },
   {

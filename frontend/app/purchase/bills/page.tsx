@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import { ApiError, createPurchaseBill, getBusinessPartners, getItems, getPurchaseBills } from "@/lib/api";
@@ -159,16 +160,19 @@ function PurchaseBillsInner() {
 
       <div className="ent-page-table">
         <table>
-          <thead><tr><th>Bill #</th><th>Date</th><th>Vendor</th><th style={{ textAlign: "right" }}>Amount</th></tr></thead>
+          <thead><tr><th>Bill #</th><th>Date</th><th>Vendor</th><th style={{ textAlign: "right" }}>Amount</th><th /></tr></thead>
           <tbody>
-            {loading && <tr><td colSpan={4} className="ent-empty">Loading…</td></tr>}
-            {!loading && bills.length === 0 && <tr><td colSpan={4} className="ent-empty">No bills yet.</td></tr>}
+            {loading && <tr><td colSpan={5} className="ent-empty">Loading…</td></tr>}
+            {!loading && bills.length === 0 && <tr><td colSpan={5} className="ent-empty">No bills yet.</td></tr>}
             {bills.map((b) => (
               <tr key={b.id}>
                 <td style={{ fontWeight: 500 }}>{b.billNumber}</td>
                 <td style={{ color: "var(--color-muted)" }}>{new Date(b.billDate).toLocaleDateString()}</td>
                 <td>{b.businessPartner.name}</td>
                 <td style={{ textAlign: "right" }}>{Number(b.grandTotal).toFixed(2)}</td>
+                <td style={{ textAlign: "right" }}>
+                  <Link className="ent-ia ent-ia-edit" href={`/purchase/returns?billId=${b.id}`}>Return</Link>
+                </td>
               </tr>
             ))}
           </tbody>
