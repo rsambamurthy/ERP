@@ -1,5 +1,7 @@
 import type {
   Account,
+  AdminOrganization,
+  AuditLogEntry,
   BalanceSheetResponse,
   BusinessPartner,
   CashBookResponse,
@@ -9,6 +11,8 @@ import type {
   JournalLineInput,
   LedgerResponse,
   OnboardingStatus,
+  OrgRole,
+  OrgUsersResponse,
   PnLResponse,
   ReceiptsPaymentsResponse,
   RegisterPayload,
@@ -72,9 +76,17 @@ export function verifyOtp(organizationId: string, otp: string) {
 
 // POST /auth/login
 export function login(payload: { email?: string; phone?: string; password: string }) {
-  return request<{ token: string; organizationId: string; role: string }>("/auth/login", {
+  return request<{ token: string; organizationId: string | null; role: string | null; isPlatformAdmin: boolean }>(
+    "/auth/login",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+// POST /auth/accept-invite
+export function acceptInvite(token: string, password: string) {
+  return request<{ token: string; organizationId: string; role: string }>("/auth/accept-invite", {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ token, password }),
   });
 }
 
@@ -217,4 +229,50 @@ export function getReceiptsPayments(params?: { from?: string; to?: string }) {
 export function getDayBook(params?: { from?: string; to?: string }) {
   const qs = new URLSearchParams(cleanParams(params)).toString();
   return request<{ data: JournalEntry[] }>(`/journal/day-book${qs ? `?${qs}` : ""}`);
+}
+
+// ── Team / user management ──────────────────────────────────────────────────
+
+export function getOrgUsers() {
+  return request<{ data: OrgUsersResponse }>("/org/users");
+}
+
+export function inviteUser(body: { email?: string; phone?: string; role: OrgRole }) {
+  return request<{ data: { id: string }; devInviteToken?: string }>("/org/users/invite", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function cancelInvite(id: string) {
+  return request<{ data: { deleted: true } }>(`/org/users/invites/${id}`, { method: "DELETE" });
+}
+
+export function updateMemberRole(userId: string, role: OrgRole) {
+  return request<{ data: { userId: string; role: OrgRole } }>(`/org/users/${userId}/role`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+}
+
+export function removeMember(userId: string) {
+  return request<{ data: { deleted: true } }>(`/org/users/${userId}`, { method: "DELETE" });
+}
+
+// ── Platform admin ───────────────────────────────────────────────────────────
+
+export function getAdminOrganizations() {
+  return request<{ data: AdminOrganization[] }>("/admin/organizations");
+}
+
+export function setOrgSubscription(id: string, status: "ACTIVE" | "SUSPENDED") {
+  return request<{ data: { id: string; subscriptionStatus: string } }>(`/admin/organizations/${id}/subscription`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+}
+
+export function getAdminAuditLogs(organizationId?: string) {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : "";
+  return request<{ data: AuditLogEntry[] }>(`/admin/audit-logs${qs}`);
 }

@@ -191,3 +191,54 @@ export interface ReceiptsPaymentsResponse {
   totalReceipts: number;
   totalPayments: number;
 }
+
+// ── Team / user management ──────────────────────────────────────────────────
+
+export type OrgRole = "OWNER" | "ADMIN" | "ACCOUNTANT" | "VIEWER";
+
+export interface OrgMember {
+  userId: string;
+  role: OrgRole;
+  branchId: string | null;
+  email: string | null;
+  phone: string | null;
+  isVerified: boolean;
+}
+
+export interface OrgInvite {
+  id: string;
+  email: string | null;
+  phone: string | null;
+  role: OrgRole;
+  expiresAt: string;
+}
+
+export interface OrgUsersResponse {
+  members: OrgMember[];
+  invites: OrgInvite[];
+}
+
+// ── Platform admin ───────────────────────────────────────────────────────────
+
+export interface AdminOrganization {
+  id: string;
+  name: string;
+  status: string;
+  subscriptionStatus: "ACTIVE" | "SUSPENDED";
+  domains: string[];
+  branchCount: number;
+  userCount: number;
+  journalEntryCount: number;
+  createdAt: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  summary: string | null;
+  createdAt: string;
+  organization: { id: string; name: string } | null;
+  actor: { id: string; email: string | null; phone: string | null } | null;
+}

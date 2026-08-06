@@ -63,7 +63,7 @@ export default function RegisterPage() {
       setError(null);
       try {
         const res = await verifyOtp(organizationId, otp);
-        if (res.token) setSession(res.token, organizationId);
+        if (res.token) setSession(res.token, organizationId, "OWNER", false);
         setWizardStep(3);
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "Verification failed.");

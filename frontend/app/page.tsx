@@ -13,12 +13,20 @@ export default function Home() {
         MSME accounting, inventory &amp; production for Trading and
         Manufacturing businesses. Create your workspace to get started.
       </p>
-      <Link
-        href="/register"
-        className="rounded-xl bg-terracotta-500 px-6 py-3 text-sm font-semibold text-white hover:bg-terracotta-600"
-      >
-        Create your workspace
-      </Link>
+      <div className="flex gap-3">
+        <Link
+          href="/register"
+          className="rounded-xl bg-terracotta-500 px-6 py-3 text-sm font-semibold text-white hover:bg-terracotta-600"
+        >
+          Create your workspace
+        </Link>
+        <Link
+          href="/login"
+          className="rounded-xl border border-cream-300 bg-white px-6 py-3 text-sm font-semibold text-navy-800 hover:bg-cream-50"
+        >
+          Log in
+        </Link>
+      </div>
     </main>
   );
 }

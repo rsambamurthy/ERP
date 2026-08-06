@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { NAV_GROUPS } from "./navGroups";
-import { clearSession, isLoggedIn } from "@/lib/auth";
+import { canManageTeam, clearSession, getRole, isLoggedIn, isPlatformAdmin } from "@/lib/auth";
 
 // Structure ported from SmartAppt Gold's authenticated app shell
 // (frontend/src/components/organisms/Layout.tsx — WebLayout) — sa-shell /
@@ -22,6 +22,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!isLoggedIn()) {
       router.replace("/login");
+      return;
+    }
+    if (isPlatformAdmin()) {
+      router.replace("/admin");
       return;
     }
     setReady(true);
@@ -46,7 +50,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     router.push("/login");
   };
 
-  const activeGroupId = NAV_GROUPS.find((g) =>
+  const allowedGroups = NAV_GROUPS.map((g) => ({
+    ...g,
+    items: g.items.filter((i) => !i.ownerAdminOnly || canManageTeam()),
+  })).filter((g) => g.items.length > 0);
+
+  const activeGroupId = allowedGroups.find((g) =>
     g.items.some((i) => pathname === i.path || pathname?.startsWith(i.path + "/"))
   )?.id;
 
@@ -74,7 +83,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </button>
 
         <div className="sa-user-chip">
-          <div className="sa-avatar">Me</div>
+          <div className="sa-avatar">{(getRole() ?? "U").slice(0, 2)}</div>
+          <div className="sa-user-role">{getRole()}</div>
         </div>
       </header>
 
@@ -91,7 +101,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             Dashboard
           </Link>
 
-          {NAV_GROUPS.map((group) => (
+          {allowedGroups.map((group) => (
             <div key={group.id} className="sa-mg">
               <button
                 className={`sa-mg-h${openGroups.has(group.id) ? " open" : ""}${activeGroupId === group.id ? " active-group" : ""}`}

@@ -8,6 +8,9 @@ export interface NavItem {
   label: string;
   path: string;
   dot: string;
+  /** OWNER/ADMIN-only items (e.g. Team) — filtered out client-side for
+   * other roles. The backend enforces this independently either way. */
+  ownerAdminOnly?: boolean;
 }
 
 export interface NavGroup {
@@ -25,6 +28,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: "chart_of_accounts", label: "Chart of Accounts", path: "/accounting/chart-of-accounts", dot: "#2563eb" },
       { id: "business_partners", label: "Business Partners", path: "/accounting/business-partners", dot: "#0891b2" },
+      { id: "team", label: "Team", path: "/settings/team", dot: "#a855f7", ownerAdminOnly: true },
     ],
   },
   {
