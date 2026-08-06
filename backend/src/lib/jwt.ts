@@ -2,9 +2,11 @@ import jwt from "jsonwebtoken";
 
 export interface AuthTokenPayload {
   userId: string;
-  organizationId: string;
-  role: string;
+  // Platform admins aren't a member of any organization.
+  organizationId: string | null;
+  role: string | null;
   branchId: string | null;
+  isPlatformAdmin: boolean;
 }
 
 // MVP: shared secret from env. Rotate via JWT_SECRET in Railway if it ever

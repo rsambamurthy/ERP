@@ -67,13 +67,14 @@ model CoaTemplate {
 }
 
 model Organization {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name           String    @db.VarChar(200)
-  status         String    @default("PENDING_VERIFICATION") @db.VarChar(20)
-  domainLockedAt DateTime? @map("domain_locked_at")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
-  deletedAt      DateTime? @map("deleted_at")
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String    @db.VarChar(200)
+  status              String    @default("PENDING_VERIFICATION") @db.VarChar(20)
+  subscriptionStatus  String    @default("ACTIVE") @map("subscription_status") @db.VarChar(20)
+  domainLockedAt      DateTime? @map("domain_locked_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at")
+  deletedAt           DateTime? @map("deleted_at")
 
   orgDomains       OrgDomain[]
   branches         Branch[]
@@ -85,6 +86,8 @@ model Organization {
   bomLines         BomLine[]
   businessPartners BusinessPartner[]
   journalEntries   JournalEntry[]
+  invites          OrgInvite[]
+  auditLogs        AuditLog[]
 
   @@map("organizations")
 }
@@ -154,18 +157,55 @@ model Account {
 }
 
 model User {
-  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email        String?   @unique @db.VarChar(255)
-  phone        String?   @unique @db.VarChar(20)
-  passwordHash String    @map("password_hash")
-  isVerified   Boolean   @default(false) @map("is_verified")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at")
-  deletedAt    DateTime? @map("deleted_at")
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email            String?   @unique @db.VarChar(255)
+  phone            String?   @unique @db.VarChar(20)
+  passwordHash     String    @map("password_hash")
+  isVerified       Boolean   @default(false) @map("is_verified")
+  isPlatformAdmin  Boolean   @default(false) @map("is_platform_admin")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at")
+  deletedAt        DateTime? @map("deleted_at")
 
-  orgUsers OrgUser[]
+  orgUsers     OrgUser[]
+  invitesSent  OrgInvite[]  @relation("InvitedBy")
+  auditLogs    AuditLog[]
 
   @@map("users")
+}
+
+model OrgInvite {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  email          String?   @db.VarChar(255)
+  phone          String?   @db.VarChar(20)
+  role           String    @db.VarChar(20)
+  invitedBy      String    @map("invited_by") @db.Uuid
+  token          String    @unique @db.VarChar(64)
+  expiresAt      DateTime  @map("expires_at")
+  acceptedAt     DateTime? @map("accepted_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  inviter      User         @relation("InvitedBy", fields: [invitedBy], references: [id])
+
+  @@map("org_invites")
+}
+
+model AuditLog {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String?  @map("organization_id") @db.Uuid
+  actorUserId    String?  @map("actor_user_id") @db.Uuid
+  action         String   @db.VarChar(50)
+  entityType     String   @map("entity_type") @db.VarChar(50)
+  entityId       String?  @map("entity_id") @db.Uuid
+  summary        String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  actor        User?         @relation(fields: [actorUserId], references: [id])
+
+  @@map("audit_logs")
 }
 
 model OrgUser {

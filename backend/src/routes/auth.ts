@@ -101,6 +101,7 @@ router.post("/verify-otp", async (req, res) => {
         organizationId,
         role: orgUser.role,
         branchId: orgUser.branchId,
+        isPlatformAdmin: false,
       })
     : null;
 
@@ -123,6 +124,20 @@ router.post("/login", async (req, res) => {
   const ok = await verifyPassword(password, user.passwordHash);
   if (!ok) return res.status(401).json({ message: "Incorrect email/phone or password." });
 
+  // Platform admins aren't members of any organization — they don't need
+  // isVerified (they never go through the OTP wizard) and route straight to
+  // the /admin area on the frontend.
+  if (user.isPlatformAdmin) {
+    const token = signToken({
+      userId: user.id,
+      organizationId: null,
+      role: null,
+      branchId: null,
+      isPlatformAdmin: true,
+    });
+    return res.json({ token, organizationId: null, role: null, isPlatformAdmin: true });
+  }
+
   if (!user.isVerified) {
     return res.status(403).json({ message: "Account not verified yet — complete OTP verification first." });
   }
@@ -135,9 +150,62 @@ router.post("/login", async (req, res) => {
     organizationId: orgUser.organizationId,
     role: orgUser.role,
     branchId: orgUser.branchId,
+    isPlatformAdmin: false,
   });
 
-  res.json({ token, organizationId: orgUser.organizationId, role: orgUser.role });
+  res.json({ token, organizationId: orgUser.organizationId, role: orgUser.role, isPlatformAdmin: false });
+});
+
+// POST /auth/accept-invite — the link an invited teammate gets. Creates
+// their login and org membership in one step.
+router.post("/accept-invite", async (req, res) => {
+  const { token, password } = req.body ?? {};
+  if (!token || !password) {
+    return res.status(400).json({ message: "token and password are required." });
+  }
+
+  const invite = await prisma.orgInvite.findUnique({ where: { token } });
+  if (!invite) return res.status(404).json({ message: "Invite not found." });
+  if (invite.acceptedAt) return res.status(409).json({ message: "This invite has already been used." });
+  if (invite.expiresAt < new Date()) return res.status(410).json({ message: "This invite has expired — ask for a new one." });
+
+  const existingUser = await prisma.user.findFirst({
+    where: {
+      OR: [invite.email ? { email: invite.email } : undefined, invite.phone ? { phone: invite.phone } : undefined].filter(Boolean) as any,
+    },
+  });
+
+  if (existingUser) {
+    const alreadyMember = await prisma.orgUser.findUnique({
+      where: { organizationId_userId: { organizationId: invite.organizationId, userId: existingUser.id } },
+    });
+    if (alreadyMember) {
+      return res.status(409).json({ message: "This person is already part of the organization." });
+    }
+  }
+
+  const passwordHash = await hashPassword(password);
+
+  const user = await prisma.$transaction(async (tx) => {
+    const u = existingUser ?? await tx.user.create({
+      data: { email: invite.email, phone: invite.phone, passwordHash, isVerified: true },
+    });
+    await tx.orgUser.create({
+      data: { organizationId: invite.organizationId, userId: u.id, role: invite.role },
+    });
+    await tx.orgInvite.update({ where: { id: invite.id }, data: { acceptedAt: new Date() } });
+    return u;
+  });
+
+  const token2 = signToken({
+    userId: user.id,
+    organizationId: invite.organizationId,
+    role: invite.role,
+    branchId: null,
+    isPlatformAdmin: false,
+  });
+
+  res.json({ token: token2, organizationId: invite.organizationId, role: invite.role });
 });
 
 export default router;

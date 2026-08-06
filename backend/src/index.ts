@@ -8,6 +8,8 @@ import branchesRoutes from "./routes/branches";
 import accountsRoutes from "./routes/accounts";
 import businessPartnersRoutes from "./routes/businessPartners";
 import journalRoutes from "./routes/journal";
+import orgUsersRoutes from "./routes/orgUsers";
+import adminRoutes from "./routes/admin";
 
 const app = express();
 app.use(cors());
@@ -22,6 +24,8 @@ app.use("/branches", branchesRoutes);
 app.use("/accounts", accountsRoutes);
 app.use("/business-partners", businessPartnersRoutes);
 app.use("/journal", journalRoutes);
+app.use("/org/users", orgUsersRoutes);
+app.use("/admin", adminRoutes);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

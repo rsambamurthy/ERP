@@ -12,8 +12,10 @@ npm install
 cp .env.example .env      # set DATABASE_URL to your Postgres instance, and JWT_SECRET
 psql "$DATABASE_URL" -f ../db/registration_schema_v2.sql
 psql "$DATABASE_URL" -f ../db/migration_002_accounting.sql
+psql "$DATABASE_URL" -f ../db/migration_003_users_admin.sql
 npx prisma generate
 npx prisma db seed         # seeds domain_types, modules, coa_templates
+npm run create-admin -- --email you@example.com --password "something long"   # makes yourself a platform admin
 npm run dev
 ```
 
@@ -47,6 +49,34 @@ All routes below require `Authorization: Bearer <token>` from login/verify-otp.
 | `GET/POST /journal` | List (most recent 200) / post a balanced double-entry voucher. Control-account lines require a `businessPartnerId`. Posting locks the org's domain selection (DB trigger). |
 | `GET /journal/ledger?accountId=&businessPartnerId=&from=&to=` | Running balance for one account, or one partner's cut of a control account. |
 | `GET /journal/trial-balance?asOf=&branchId=` | Net debit/credit per account as of a date. |
+| `GET /journal/pnl?from=&to=` | Income vs expense for a period. |
+| `GET /journal/balance-sheet?asOf=` | Assets vs liabilities+equity as of a date, with current earnings folded into equity. |
+| `GET /journal/cash-book?from=&to=` | Combined Cash+Bank running balance. |
+| `GET /journal/receipts-payments?from=&to=` | Same Cash+Bank movement, split by direction. |
+| `GET /journal/day-book?from=&to=` | Every posted voucher, chronological. |
+
+### Team / user management (`/org/users/*`, OWNER/ADMIN only)
+
+| Endpoint | Notes |
+|---|---|
+| `GET /org/users` | Current members + pending invites. |
+| `POST /org/users/invite` | `{ email\|phone, role }` → creates an invite, returns `devInviteToken` (until a real email/SMS provider exists) to build the accept-invite link from. |
+| `DELETE /org/users/invites/:id` | Cancel a pending invite. |
+| `PATCH /org/users/:userId/role` | Change a teammate's role. Can't touch the OWNER. |
+| `DELETE /org/users/:userId` | Revoke access. Can't remove the OWNER or yourself. |
+| `POST /auth/accept-invite` | `{ token, password }` → creates the login, joins the org, returns a session token. |
+
+Roles: **OWNER** (one per org, set at registration, full access) · **ADMIN** (same minus touching the OWNER) · **ACCOUNTANT** (post transactions, manage business partners) · **VIEWER** (read-only). Enforced server-side via `requireRole()` in `middleware/auth.ts` — not just hidden UI.
+
+### Platform admin (`/admin/*`, platform-admin accounts only)
+
+Not a member of any org — created via `npm run create-admin`, never through the public signup. Logs in through the same `/auth/login`.
+
+| Endpoint | Notes |
+|---|---|
+| `GET /admin/organizations` | Every org: domains, branch/user counts, status, subscription. |
+| `PATCH /admin/organizations/:id/subscription` | `{ status: "ACTIVE" \| "SUSPENDED" }` — a suspended org's accounting endpoints (`/accounts`, `/business-partners`, `/journal/*`) start returning 402 until reactivated. |
+| `GET /admin/audit-logs?organizationId=` | Platform-wide (or one org's) activity log — every account/business-partner/journal/user-management mutation writes here via `lib/audit.ts`. |
 
 `domain_locked_at` itself is set by the database trigger the moment a
 `journal_entries` row is inserted, not by any of these endpoints — none of

@@ -1,7 +1,8 @@
 import { Router } from "express";
 import type { Account } from "@prisma/client";
 import { prisma } from "../db";
-import { authenticate } from "../middleware/auth";
+import { authenticate, requireRole, requireActiveSubscription } from "../middleware/auth";
+import { logAudit } from "../lib/audit";
 
 // Every org's core COA (seeded at provisioning, see prisma/seed.ts +
 // lib/provisioning.ts) always includes these two codes — Cash in Hand and
@@ -11,7 +12,7 @@ import { authenticate } from "../middleware/auth";
 const CASH_BANK_CODES = ["1001", "1002"];
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSubscription);
 
 interface LineInput {
   accountId: string;
@@ -23,7 +24,7 @@ interface LineInput {
 
 // POST /journal — post a balanced entry. This is the one write path that
 // locks an org's domain selection (trg_lock_org_domains fires on INSERT).
-router.post("/", async (req, res) => {
+router.post("/", requireRole("OWNER", "ADMIN", "ACCOUNTANT"), async (req, res) => {
   const { entryDate, narration, voucherType, branchId, lines } = req.body ?? {};
 
   if (!entryDate || !narration) {
@@ -56,7 +57,7 @@ router.post("/", async (req, res) => {
     });
   }
 
-  const organizationId = req.user!.organizationId;
+  const organizationId = req.user!.organizationId!;
 
   // Control-account lines (e.g. Trade Receivables) must be tagged with a
   // business partner — that's what makes the sub-ledger work.
@@ -105,6 +106,11 @@ router.post("/", async (req, res) => {
     where: { id: entry.id },
     include: { journalLines: { include: { account: true, businessPartner: true } } },
   });
+  logAudit({
+    organizationId, actorUserId: req.user!.userId,
+    action: "CREATE", entityType: "journal_entry", entityId: entry.id,
+    summary: `Posted ${voucherType ?? "JV"} — ${narration} (${totalDebit.toFixed(2)})`,
+  });
   res.status(201).json({ data: full });
 });
 
@@ -113,7 +119,7 @@ router.get("/", async (req, res) => {
   const { from, to, branchId } = req.query;
   const entries = await prisma.journalEntry.findMany({
     where: {
-      organizationId: req.user!.organizationId,
+      organizationId: req.user!.organizationId!,
       ...(branchId ? { branchId: String(branchId) } : {}),
       ...(from || to
         ? {
@@ -139,7 +145,7 @@ router.get("/ledger", async (req, res) => {
   if (!accountId) return res.status(400).json({ message: "accountId is required." });
 
   const account = await prisma.account.findFirst({
-    where: { id: String(accountId), organizationId: req.user!.organizationId },
+    where: { id: String(accountId), organizationId: req.user!.organizationId! },
   });
   if (!account) return res.status(404).json({ message: "Account not found." });
 
@@ -148,7 +154,7 @@ router.get("/ledger", async (req, res) => {
       accountId: String(accountId),
       ...(businessPartnerId ? { businessPartnerId: String(businessPartnerId) } : {}),
       journalEntry: {
-        organizationId: req.user!.organizationId,
+        organizationId: req.user!.organizationId!,
         ...(from || to
           ? {
               entryDate: {
@@ -188,7 +194,7 @@ router.get("/ledger", async (req, res) => {
 // GET /journal/trial-balance?asOf=&branchId=
 router.get("/trial-balance", async (req, res) => {
   const { asOf, branchId } = req.query;
-  const organizationId = req.user!.organizationId;
+  const organizationId = req.user!.organizationId!;
 
   const accounts = await prisma.account.findMany({
     where: { organizationId, deletedAt: null, isGroup: false },
@@ -239,7 +245,7 @@ router.get("/trial-balance", async (req, res) => {
 // balance sheet / trial balance which are "as of a date").
 router.get("/pnl", async (req, res) => {
   const { from, to, branchId } = req.query;
-  const organizationId = req.user!.organizationId;
+  const organizationId = req.user!.organizationId!;
 
   const accounts = await prisma.account.findMany({
     where: { organizationId, deletedAt: null, isGroup: false, accountType: { in: ["INCOME", "EXPENSE"] } },
@@ -293,7 +299,7 @@ router.get("/pnl", async (req, res) => {
 // "Current Earnings" so the two sides actually balance.
 router.get("/balance-sheet", async (req, res) => {
   const { asOf, branchId } = req.query;
-  const organizationId = req.user!.organizationId;
+  const organizationId = req.user!.organizationId!;
 
   const accounts = await prisma.account.findMany({
     where: { organizationId, deletedAt: null, isGroup: false, accountType: { in: ["ASSET", "LIABILITY", "EQUITY", "INCOME", "EXPENSE"] } },
@@ -354,7 +360,7 @@ router.get("/balance-sheet", async (req, res) => {
 // accounts together, one combined running balance.
 router.get("/cash-book", async (req, res) => {
   const { from, to, branchId } = req.query;
-  const organizationId = req.user!.organizationId;
+  const organizationId = req.user!.organizationId!;
 
   const cashAccounts = await prisma.account.findMany({
     where: { organizationId, deletedAt: null, accountCode: { in: CASH_BANK_CODES } },
@@ -402,7 +408,7 @@ router.get("/cash-book", async (req, res) => {
 // movement, split into money-in (Receipts) and money-out (Payments).
 router.get("/receipts-payments", async (req, res) => {
   const { from, to, branchId } = req.query;
-  const organizationId = req.user!.organizationId;
+  const organizationId = req.user!.organizationId!;
 
   const cashAccounts = await prisma.account.findMany({
     where: { organizationId, deletedAt: null, accountCode: { in: CASH_BANK_CODES } },
@@ -449,7 +455,7 @@ router.get("/receipts-payments", async (req, res) => {
 // GET /journal/day-book?from=&to=&branchId= — every posted line, chronological.
 router.get("/day-book", async (req, res) => {
   const { from, to, branchId } = req.query;
-  const organizationId = req.user!.organizationId;
+  const organizationId = req.user!.organizationId!;
 
   const entries = await prisma.journalEntry.findMany({
     where: {
