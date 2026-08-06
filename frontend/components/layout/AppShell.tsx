@@ -19,7 +19,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [ready, setReady] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set(NAV_GROUPS.map((g) => g.id)));
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [menuConfig, setMenuConfig] = useState<MenuConfigMap>({});
 
   useEffect(() => {
