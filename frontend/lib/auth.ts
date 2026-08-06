@@ -5,12 +5,14 @@ const TOKEN_KEY = "smarterp_token";
 const ORG_KEY = "smarterp_org";
 const ROLE_KEY = "smarterp_role";
 const ADMIN_KEY = "smarterp_admin";
+const NAME_KEY = "smarterp_name";
 
 export function setSession(
   token: string,
   organizationId: string | null,
   role?: string | null,
-  isPlatformAdmin?: boolean
+  isPlatformAdmin?: boolean,
+  name?: string | null
 ) {
   if (typeof window === "undefined") return;
   localStorage.setItem(TOKEN_KEY, token);
@@ -18,7 +20,14 @@ export function setSession(
   else localStorage.removeItem(ORG_KEY);
   if (role) localStorage.setItem(ROLE_KEY, role);
   else localStorage.removeItem(ROLE_KEY);
+  if (name) localStorage.setItem(NAME_KEY, name);
+  else localStorage.removeItem(NAME_KEY);
   localStorage.setItem(ADMIN_KEY, isPlatformAdmin ? "1" : "0");
+}
+
+export function getName(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(NAME_KEY);
 }
 
 export function getToken(): string | null {
@@ -61,6 +70,7 @@ export function clearSession() {
   localStorage.removeItem(ORG_KEY);
   localStorage.removeItem(ROLE_KEY);
   localStorage.removeItem(ADMIN_KEY);
+  localStorage.removeItem(NAME_KEY);
 }
 
 export function isLoggedIn(): boolean {

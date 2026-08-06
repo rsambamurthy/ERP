@@ -25,6 +25,7 @@ export type DomainDetailsMap = {
 
 export interface RegisterPayload {
   businessName: string;
+  name: string;
   email: string;
   phone: string;
   password: string;
@@ -305,6 +306,7 @@ export interface OrgMember {
   userId: string;
   role: OrgRole;
   branchId: string | null;
+  name: string | null;
   email: string | null;
   phone: string | null;
   isVerified: boolean;
@@ -413,4 +415,56 @@ export interface AuditLogEntry {
   createdAt: string;
   organization: { id: string; name: string } | null;
   actor: { id: string; email: string | null; phone: string | null } | null;
+}
+
+// ── Bulk upload (Template Download + Bulk Upload) ───────────────────────────
+// One shared shape (BulkUploadPanel renders generically off `status`/`error`
+// plus whatever columns each page tells it to show); each entity's row adds
+// its own fields on top, mirroring the backend's *PreviewRow interfaces.
+
+export interface BulkUploadRowBase {
+  rowNum: number;
+  status: "create" | "update" | "error";
+  error?: string;
+}
+
+export interface CoaUploadRow extends BulkUploadRowBase {
+  accountCode: string;
+  accountName: string;
+  accountType: string | null;
+  subType: string | null;
+  parentCode: string | null;
+  isGroup: boolean;
+  description: string | null;
+  openingBalance: number | null;
+  openingBalanceType: "DEBIT" | "CREDIT" | null;
+  openingBalanceDate: string | null;
+  isSystem?: boolean;
+}
+
+export interface ItemUploadRow extends BulkUploadRowBase {
+  sku: string;
+  name: string;
+  description: string | null;
+  uom: string;
+  hsnCode: string | null;
+  stockAccountCode: string | null;
+  salesRate: number | null;
+  purchaseRate: number | null;
+  taxRate: number;
+  openingQuantity: number;
+  openingCost: number;
+}
+
+export interface BpUploadRow extends BulkUploadRowBase {
+  bpType: "CUSTOMER" | "VENDOR" | null;
+  code: string | null;
+  name: string;
+  gstin: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  openingBalance: number | null;
+  openingBalanceType: "DEBIT" | "CREDIT" | null;
+  openingBalanceDate: string | null;
 }

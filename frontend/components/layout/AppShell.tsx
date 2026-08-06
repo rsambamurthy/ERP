@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { NAV_GROUPS } from "./navGroups";
-import { clearSession, getRole, isLoggedIn, isPlatformAdmin } from "@/lib/auth";
+import { clearSession, getName, getRole, isLoggedIn, isPlatformAdmin } from "@/lib/auth";
 import { getMenuConfig } from "@/lib/api";
 import type { MenuConfigMap } from "@/lib/types";
 
@@ -102,8 +102,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </button>
 
         <div className="sa-user-chip">
-          <div className="sa-avatar">{(getRole() ?? "U").slice(0, 2)}</div>
-          <div className="sa-user-role">{getRole()}</div>
+          <div className="sa-avatar">{(getName() ?? getRole() ?? "U").slice(0, 2).toUpperCase()}</div>
+          <div>
+            <div className="sa-user-name">{getName() ?? getRole()}</div>
+            {getName() && <div className="sa-user-role">{getRole()}</div>}
+          </div>
         </div>
       </header>
 

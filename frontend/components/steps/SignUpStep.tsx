@@ -14,6 +14,7 @@ interface Props {
 export default function SignUpStep({ loading, error, onSubmit }: Props) {
   const [form, setForm] = useState<RegisterPayload>({
     businessName: "",
+    name: "",
     email: "",
     phone: "",
     password: "",
@@ -40,6 +41,12 @@ export default function SignUpStep({ loading, error, onSubmit }: Props) {
         required
         value={form.businessName}
         onChange={(e) => update("businessName", e.target.value)}
+      />
+      <Input
+        label="Your name"
+        required
+        value={form.name}
+        onChange={(e) => update("name", e.target.value)}
       />
       <Input
         label="Email"

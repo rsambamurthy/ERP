@@ -8,10 +8,10 @@ const router = Router();
 
 // POST /auth/register — create user + org shell (status PENDING_VERIFICATION)
 router.post("/register", async (req, res) => {
-  const { businessName, email, phone, password } = req.body ?? {};
-  if (!businessName || !password || (!email && !phone)) {
+  const { businessName, name, email, phone, password } = req.body ?? {};
+  if (!businessName || !name || !password || (!email && !phone)) {
     return res.status(400).json({
-      message: "businessName, password, and at least one of email/phone are required.",
+      message: "businessName, name, password, and at least one of email/phone are required.",
     });
   }
 
@@ -30,7 +30,7 @@ router.post("/register", async (req, res) => {
       data: { name: businessName, status: "PENDING_VERIFICATION" },
     });
     const user = await tx.user.create({
-      data: { email: email || null, phone: phone || null, passwordHash },
+      data: { name, email: email || null, phone: phone || null, passwordHash },
     });
     await tx.orgUser.create({
       data: { organizationId: organization.id, userId: user.id, role: "OWNER" },
@@ -135,7 +135,7 @@ router.post("/login", async (req, res) => {
       branchId: null,
       isPlatformAdmin: true,
     });
-    return res.json({ token, organizationId: null, role: null, isPlatformAdmin: true });
+    return res.json({ token, organizationId: null, role: null, isPlatformAdmin: true, name: user.name });
   }
 
   if (!user.isVerified) {
@@ -153,15 +153,15 @@ router.post("/login", async (req, res) => {
     isPlatformAdmin: false,
   });
 
-  res.json({ token, organizationId: orgUser.organizationId, role: orgUser.role, isPlatformAdmin: false });
+  res.json({ token, organizationId: orgUser.organizationId, role: orgUser.role, isPlatformAdmin: false, name: user.name });
 });
 
 // POST /auth/accept-invite — the link an invited teammate gets. Creates
 // their login and org membership in one step.
 router.post("/accept-invite", async (req, res) => {
-  const { token, password } = req.body ?? {};
-  if (!token || !password) {
-    return res.status(400).json({ message: "token and password are required." });
+  const { token, name, password } = req.body ?? {};
+  if (!token || !name || !password) {
+    return res.status(400).json({ message: "token, name, and password are required." });
   }
 
   const invite = await prisma.orgInvite.findUnique({ where: { token } });
@@ -187,9 +187,11 @@ router.post("/accept-invite", async (req, res) => {
   const passwordHash = await hashPassword(password);
 
   const user = await prisma.$transaction(async (tx) => {
-    const u = existingUser ?? await tx.user.create({
-      data: { email: invite.email, phone: invite.phone, passwordHash, isVerified: true },
-    });
+    const u = existingUser
+      ? (existingUser.name ? existingUser : await tx.user.update({ where: { id: existingUser.id }, data: { name } }))
+      : await tx.user.create({
+          data: { name, email: invite.email, phone: invite.phone, passwordHash, isVerified: true },
+        });
     await tx.orgUser.create({
       data: { organizationId: invite.organizationId, userId: u.id, role: invite.role },
     });
@@ -205,7 +207,7 @@ router.post("/accept-invite", async (req, res) => {
     isPlatformAdmin: false,
   });
 
-  res.json({ token: token2, organizationId: invite.organizationId, role: invite.role });
+  res.json({ token: token2, organizationId: invite.organizationId, role: invite.role, name: user.name });
 });
 
 export default router;

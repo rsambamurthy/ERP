@@ -4,7 +4,16 @@ import { useEffect, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import { ApiError, createItem, getItems, getStockAccounts } from "@/lib/api";
-import type { Account, Item } from "@/lib/types";
+import { useBulkUpload } from "@/components/shared/BulkUpload";
+import type { Account, Item, ItemUploadRow } from "@/lib/types";
+
+const ITEM_UPLOAD_COLUMNS: { key: keyof ItemUploadRow; label: string }[] = [
+  { key: "sku", label: "SKU" },
+  { key: "name", label: "Name" },
+  { key: "stockAccountCode", label: "Stock Account" },
+  { key: "openingQuantity", label: "Opening Qty" },
+  { key: "openingCost", label: "Opening Cost" },
+];
 
 const emptyForm = () => ({
   sku: "", name: "", description: "", uom: "EA", hsnCode: "", isFinishedGood: false,
@@ -35,6 +44,8 @@ function ItemsPageInner() {
   }
 
   useEffect(() => { loadAll(); }, []);
+
+  const bulk = useBulkUpload<ItemUploadRow>("items", "SmartERP_Items_Template.xlsx", ITEM_UPLOAD_COLUMNS, loadAll);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -70,8 +81,11 @@ function ItemsPageInner() {
 
       <div className="ent-toolbar">
         <div style={{ flex: 1 }} />
+        {bulk.buttons}
         <button className="ent-btn-add" onClick={() => setShowForm((s) => !s)}>{showForm ? "Cancel" : "+ New Item"}</button>
       </div>
+
+      {bulk.panel}
 
       {showForm && (
         <form onSubmit={handleCreate} className="ent-section">

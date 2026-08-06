@@ -122,7 +122,10 @@ export default function TeamPage() {
             {loading && <tr><td colSpan={4} className="ent-empty">Loading…</td></tr>}
             {data?.members.map((m) => (
               <tr key={m.userId}>
-                <td style={{ fontWeight: 500 }}>{m.email || m.phone}</td>
+                <td style={{ fontWeight: 500 }}>
+                  {m.name || m.email || m.phone}
+                  {m.name && <div style={{ fontWeight: 400, fontSize: 12, color: "var(--color-muted)" }}>{m.email || m.phone}</div>}
+                </td>
                 <td>
                   {m.role === "OWNER" ? (
                     <span className="badge badge-purple">OWNER</span>

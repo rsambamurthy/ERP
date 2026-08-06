@@ -16,6 +16,7 @@ psql "$DATABASE_URL" -f ../db/migration_003_users_admin.sql
 psql "$DATABASE_URL" -f ../db/migration_004_module_subscriptions.sql
 psql "$DATABASE_URL" -f ../db/migration_005_menu_config.sql
 psql "$DATABASE_URL" -f ../db/migration_006_sales_purchase_inventory.sql
+psql "$DATABASE_URL" -f ../db/migration_007_user_name_and_bp_code.sql
 npx prisma generate
 npx prisma db seed         # seeds domain_types, modules, coa_templates
 npm run create-admin -- --email you@example.com --password "something long"   # makes yourself a platform admin
@@ -72,6 +73,10 @@ v1: direct invoicing only (no Sales/Purchase Order stage — see ROADMAP.md), Pu
 | `GET/POST /stock-adjustments` | Both directions in one document — IN (found stock/opening, needs an explicit `unitCost`) and OUT (write-off/shrinkage, costed automatically). Posts to Inventory Adjustments either direction. |
 | `GET /inventory/stock-ledger?itemId=&branchId=&from=&to=` | Running quantity balance for one item — the Stock Movement equivalent of `/journal/ledger`. |
 | `GET /inventory/valuation?branchId=` | Every item currently on hand and its value — reads `ItemStock.averageCost` for weighted-avg orgs, sums remaining `StockLot`s for FIFO orgs. |
+
+### Bulk upload (`/accounts`, `/items`, `/business-partners` — `/bulk-upload/*`)
+
+Same three-step flow on all three, ported from SmartAppt Gold's vendor/bank upload pattern (`lib/xlsxTemplate.ts` + `lib/upload.ts` are the shared pieces): `GET .../bulk-upload/template` downloads a styled `.xlsx` (header row, inline hints, dropdown validation on enum columns); `POST .../bulk-upload/preview` (multipart, field name `file`) parses it server-side and returns every row tagged `create` / `update` / `error` — nothing is written yet; `POST .../bulk-upload/apply` takes back only the rows the user confirmed (body `{ rows: [...] }`) and commits them. Matching an uploaded row to an existing record: Chart of Accounts by Account Code, Items by SKU, Business Partners by the optional `code` field (blank code always creates new — see `migration_007`). Requires `db/migration_007_user_name_and_bp_code.sql`.
 
 ### Team / user management (`/org/users/*`, OWNER/ADMIN only)
 
@@ -167,6 +172,7 @@ real transactional endpoints are built later.
    psql "$DATABASE_URL" -f ../db/migration_004_module_subscriptions.sql
    psql "$DATABASE_URL" -f ../db/migration_005_menu_config.sql
    psql "$DATABASE_URL" -f ../db/migration_006_sales_purchase_inventory.sql
+psql "$DATABASE_URL" -f ../db/migration_007_user_name_and_bp_code.sql
    npx prisma db seed
    npm run create-admin -- --email you@example.com --password "something long"
    ```

@@ -36,6 +36,7 @@ export default function RegisterPage() {
 
   const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [contact, setContact] = useState<string>("");
+  const [ownerName, setOwnerName] = useState<string>("");
   const [devOtp, setDevOtp] = useState<string | null>(null);
   const [domains, setDomains] = useState<DomainCode[]>([]);
   const [provisionStatus, setProvisionStatus] = useState<OnboardingStep>("SIGNUP");
@@ -47,6 +48,7 @@ export default function RegisterPage() {
       const res = await registerUser(payload);
       setOrganizationId(res.organizationId);
       setContact(payload.email || payload.phone);
+      setOwnerName(payload.name);
       setDevOtp(res.devOtp ?? null);
       setWizardStep(2);
     } catch (err) {
@@ -63,7 +65,7 @@ export default function RegisterPage() {
       setError(null);
       try {
         const res = await verifyOtp(organizationId, otp);
-        if (res.token) setSession(res.token, organizationId, "OWNER", false);
+        if (res.token) setSession(res.token, organizationId, "OWNER", false, ownerName);
         setWizardStep(3);
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "Verification failed.");
@@ -71,7 +73,7 @@ export default function RegisterPage() {
         setLoading(false);
       }
     },
-    [organizationId]
+    [organizationId, ownerName]
   );
 
   function toggleDomain(code: DomainCode) {

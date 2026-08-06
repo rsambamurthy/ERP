@@ -26,7 +26,7 @@ router.get("/", canManageUsers, async (req, res) => {
 
   const members = await prisma.orgUser.findMany({
     where: { organizationId },
-    include: { user: { select: { id: true, email: true, phone: true, isVerified: true } } },
+    include: { user: { select: { id: true, name: true, email: true, phone: true, isVerified: true } } },
   });
 
   const invites = await prisma.orgInvite.findMany({
@@ -38,7 +38,7 @@ router.get("/", canManageUsers, async (req, res) => {
     data: {
       members: members.map((m) => ({
         userId: m.userId, role: m.role, branchId: m.branchId,
-        email: m.user.email, phone: m.user.phone, isVerified: m.user.isVerified,
+        name: m.user.name, email: m.user.email, phone: m.user.phone, isVerified: m.user.isVerified,
       })),
       invites: invites.map((i) => ({ id: i.id, email: i.email, phone: i.phone, role: i.role, expiresAt: i.expiresAt })),
     },

@@ -3,9 +3,18 @@
 import { useEffect, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
 import { ApiError, createAccount, getAccounts, toggleAccount } from "@/lib/api";
-import type { Account, AccountType } from "@/lib/types";
+import { useBulkUpload } from "@/components/shared/BulkUpload";
+import type { Account, AccountType, CoaUploadRow } from "@/lib/types";
 
 const ACCOUNT_TYPES: AccountType[] = ["ASSET", "LIABILITY", "EQUITY", "INCOME", "EXPENSE"];
+
+const COA_UPLOAD_COLUMNS: { key: keyof CoaUploadRow; label: string }[] = [
+  { key: "accountCode", label: "Code" },
+  { key: "accountName", label: "Name" },
+  { key: "accountType", label: "Type" },
+  { key: "openingBalance", label: "Opening Balance" },
+  { key: "openingBalanceType", label: "DR/CR" },
+];
 
 export default function ChartOfAccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -36,6 +45,8 @@ export default function ChartOfAccountsPage() {
   }
 
   useEffect(() => { load(); }, []);
+
+  const bulk = useBulkUpload<CoaUploadRow>("accounts", "SmartERP_ChartOfAccounts_Template.xlsx", COA_UPLOAD_COLUMNS, load);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -74,10 +85,13 @@ export default function ChartOfAccountsPage() {
 
       <div className="ent-toolbar">
         <div style={{ flex: 1 }} />
+        {bulk.buttons}
         <button className="ent-btn-add" onClick={() => setShowForm((s) => !s)}>
           {showForm ? "Cancel" : "+ Add Account"}
         </button>
       </div>
+
+      {bulk.panel}
 
       {showForm && (
         <form onSubmit={handleCreate} className="ent-section">

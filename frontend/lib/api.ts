@@ -89,17 +89,17 @@ export function verifyOtp(organizationId: string, otp: string) {
 
 // POST /auth/login
 export function login(payload: { email?: string; phone?: string; password: string }) {
-  return request<{ token: string; organizationId: string | null; role: string | null; isPlatformAdmin: boolean }>(
+  return request<{ token: string; organizationId: string | null; role: string | null; isPlatformAdmin: boolean; name: string | null }>(
     "/auth/login",
     { method: "POST", body: JSON.stringify(payload) }
   );
 }
 
 // POST /auth/accept-invite
-export function acceptInvite(token: string, password: string) {
-  return request<{ token: string; organizationId: string; role: string }>("/auth/accept-invite", {
+export function acceptInvite(token: string, name: string, password: string) {
+  return request<{ token: string; organizationId: string; role: string; name: string | null }>("/auth/accept-invite", {
     method: "POST",
-    body: JSON.stringify({ token, password }),
+    body: JSON.stringify({ token, name, password }),
   });
 }
 
@@ -426,4 +426,62 @@ export function cancelModule(organizationId: string, moduleCode: string) {
 export function getAdminAuditLogs(organizationId?: string) {
   const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : "";
   return request<{ data: AuditLogEntry[] }>(`/admin/audit-logs${qs}`);
+}
+
+// ── Bulk upload (Template Download + Bulk Upload) — shared across Chart of
+// Accounts, Items, and Business Partners. Template download and preview-file
+// upload both bypass request<T>() on purpose: a template response is binary
+// (not JSON), and a preview request's body is FormData, which needs the
+// browser to set its own multipart Content-Type — request<T>() always
+// forces "application/json".
+export type BulkUploadEntity = "accounts" | "items" | "business-partners";
+
+export async function downloadBulkTemplate(entity: BulkUploadEntity, filename: string): Promise<void> {
+  const token = getToken();
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/${entity}/bulk-upload/template`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch {
+    throw new ApiError("Could not reach the backend to download the template.");
+  }
+  if (!res.ok) throw new ApiError(`Could not download the template (${res.status}).`, res.status);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export async function previewBulkUpload<Row>(entity: BulkUploadEntity, file: File): Promise<{ data: Row[] }> {
+  const token = getToken();
+  const fd = new FormData();
+  fd.append("file", file);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/${entity}/bulk-upload/preview`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: fd,
+    });
+  } catch {
+    throw new ApiError("Could not reach the backend to parse the file.");
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(body.message ?? `Could not parse the file (${res.status}).`, res.status);
+  }
+  return res.json();
+}
+
+export function applyBulkUpload<Row>(entity: BulkUploadEntity, rows: Row[]) {
+  return request<{ data: { created: number; updated: number } }>(`/${entity}/bulk-upload/apply`, {
+    method: "POST",
+    body: JSON.stringify({ rows }),
+  });
 }

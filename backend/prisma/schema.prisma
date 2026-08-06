@@ -175,6 +175,7 @@ model Account {
 
 model User {
   id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String?   @db.VarChar(150)
   email            String?   @unique @db.VarChar(255)
   phone            String?   @unique @db.VarChar(20)
   passwordHash     String    @map("password_hash")
@@ -550,6 +551,12 @@ model BusinessPartner {
   organizationId     String    @map("organization_id") @db.Uuid
   bpType             String    @map("bp_type") @db.VarChar(20)
   refId              String?   @map("ref_id") @db.Uuid
+  // Optional stable key for bulk-upload matching (create-vs-update). Never
+  // required for manual create — only set when the org wants reliable
+  // re-import. Unique per org when present (see migration_007's partial
+  // index; NULLs are unconstrained so most manually-created partners never
+  // need one).
+  code               String?   @db.VarChar(30)
   name               String    @db.VarChar(200)
   gstin              String?   @db.VarChar(15)
   phone              String?   @db.VarChar(20)

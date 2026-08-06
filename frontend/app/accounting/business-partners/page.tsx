@@ -3,7 +3,16 @@
 import { useEffect, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
 import { ApiError, createBusinessPartner, getBusinessPartners, toggleBusinessPartner } from "@/lib/api";
-import type { BusinessPartner } from "@/lib/types";
+import { useBulkUpload } from "@/components/shared/BulkUpload";
+import type { BpUploadRow, BusinessPartner } from "@/lib/types";
+
+const BP_UPLOAD_COLUMNS: { key: keyof BpUploadRow; label: string }[] = [
+  { key: "bpType", label: "Type" },
+  { key: "code", label: "Code" },
+  { key: "name", label: "Name" },
+  { key: "openingBalance", label: "Opening Balance" },
+  { key: "openingBalanceType", label: "DR/CR" },
+];
 
 export default function BusinessPartnersPage() {
   const [bpType, setBpType] = useState<"CUSTOMER" | "VENDOR">("CUSTOMER");
@@ -31,6 +40,8 @@ export default function BusinessPartnersPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bpType]);
+
+  const bulk = useBulkUpload<BpUploadRow>("business-partners", "SmartERP_BusinessPartners_Template.xlsx", BP_UPLOAD_COLUMNS, load);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -73,10 +84,13 @@ export default function BusinessPartnersPage() {
 
       <div className="ent-toolbar">
         <div style={{ flex: 1 }} />
+        {bulk.buttons}
         <button className="ent-btn-add" onClick={() => setShowForm((s) => !s)}>
           {showForm ? "Cancel" : `+ Add ${bpType === "CUSTOMER" ? "Customer" : "Vendor"}`}
         </button>
       </div>
+
+      {bulk.panel}
 
       {showForm && (
         <form onSubmit={handleCreate} className="ent-section">
