@@ -6,6 +6,7 @@ import type {
   AdminSubscriptionsResponse,
   AuditLogEntry,
   BalanceSheetResponse,
+  Branch,
   BranchSummary,
   BusinessPartner,
   CashBookResponse,
@@ -423,7 +424,27 @@ export function updateMemberStatus(userId: string, status: MemberStatus) {
 }
 
 export function getBranches() {
-  return request<{ data: BranchSummary[] }>("/branches");
+  return request<{ data: Branch[] }>("/branches");
+}
+
+export function createBranch(body: {
+  code: string; name: string; gstin?: string; phone?: string; email?: string; address?: unknown; isHeadOffice?: boolean;
+}) {
+  return request<{ data: Branch }>("/branches", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function updateBranch(id: string, body: Partial<{
+  code: string; name: string; gstin: string; phone: string; email: string; address: unknown; isHeadOffice: boolean;
+}>) {
+  return request<{ data: Branch }>(`/branches/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function toggleBranch(id: string) {
+  return request<{ data: Branch }>(`/branches/${id}/toggle`, { method: "PATCH" });
+}
+
+export function deleteBranch(id: string) {
+  return request<{ data: { deleted: true } }>(`/branches/${id}`, { method: "DELETE" });
 }
 
 // ── Own profile / password ──────────────────────────────────────────────────

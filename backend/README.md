@@ -22,6 +22,7 @@ psql "$DATABASE_URL" -f ../db/migration_009_custom_roles.sql
 psql "$DATABASE_URL" -f ../db/migration_010_user_management.sql
 psql "$DATABASE_URL" -f ../db/migration_011_custom_role_access_control.sql
 psql "$DATABASE_URL" -f ../db/migration_012_employee_details.sql
+psql "$DATABASE_URL" -f ../db/migration_013_branch_crud.sql
 npx prisma generate
 npx prisma db seed         # seeds domain_types, modules, coa_templates
 npm run create-admin -- --email you@example.com --password "something long"   # makes yourself a platform admin
@@ -49,9 +50,6 @@ doesn't need a DB connection.
 | `POST /onboarding/domain` | Upserts `org_domains` (one or more). Rejects with 409 once `domain_locked_at` is set. |
 | `POST /onboarding/provision` | Seeds `accounts` from core + selected domains' `coa_templates` (flagged `is_system`), enables modules, creates the head-office `branches` row. |
 | `GET /onboarding/status` | Returns `onboarding_state.step`. |
-| `GET /branches` | Authenticated — the caller's own org's branches (or, for a platform admin, `?organizationId=`). |
-| `POST /branches` | Not domain-locked — add a location any time. Pre-existing, unauthenticated, not currently called from any screen. |
-
 All routes below require `Authorization: Bearer <token>` from login/verify-otp.
 
 | Endpoint | Notes |
@@ -66,6 +64,27 @@ All routes below require `Authorization: Bearer <token>` from login/verify-otp.
 | `GET /journal/cash-book?from=&to=` | Combined Cash+Bank running balance. |
 | `GET /journal/receipts-payments?from=&to=` | Same Cash+Bank movement, split by direction. |
 | `GET /journal/day-book?from=&to=` | Every posted voucher, chronological. |
+
+### Branches (`/branches`)
+
+Full CRUD, not just the read-only list + unauthenticated onboarding create it
+used to be. Reads are open to any org member (same as Chart of Accounts);
+writes need `branches.manage` — a grantable custom-role permission, same
+tier as `coa.manage`/`items.manage` (not hardcoded OWNER/ADMIN-only like
+Team/Access Control — see Custom Roles below for why those two are
+different).
+
+| Endpoint | Notes |
+|---|---|
+| `GET /branches` | This org's branches (or, for a platform admin, `?organizationId=`). |
+| `POST /branches` | `{ code, name, gstin?, phone?, email?, address?, isHeadOffice? }`. `gstin` is validated against the standard 15-character format if provided. Setting `isHeadOffice: true` un-flags whichever branch had it before — at most one head office per org, always reassignable. |
+| `PATCH /branches/:id` | Same fields, all optional — only what's sent changes. |
+| `PATCH /branches/:id/toggle` | Active/Inactive. Refuses on the head office branch (reassign head office first). |
+| `DELETE /branches/:id` | Soft-delete (`deleted_at`) — refuses (409) if the branch is the head office, has any team member assigned (`org_users.branch_id`), or has any `journal_entries`/`stock_movements` — every transactional document already pairs those two per branch, so checking them covers Sales/Purchase/Adjustments/Returns without checking each document type individually. Deactivate instead if it's ever been used. |
+
+Requires `db/migration_013_branch_crud.sql` (adds `phone`/`email`; `code`,
+`name`, `gstin`, `address`, `is_head_office`, `status` already existed but
+had no real CRUD around them).
 
 ### Sales / Purchase / Inventory (`/items`, `/sales-invoices`, `/purchase-bills`, `/stock-adjustments`, `/inventory/*`)
 
@@ -117,8 +136,8 @@ Roles: **OWNER** (one per org, set at registration, full access) · **ADMIN** (s
 ### Custom Roles (`/org-roles`, OWNER/ADMIN only)
 
 An org can define its own named roles on top of the four fixed ones, each a
-subset of a fixed seven-permission catalogue (`lib/permissions.ts`):
-`coa.manage`, `items.manage`, `businessPartners.manage`, `sales.post`,
+subset of a fixed permission catalogue (`lib/permissions.ts`): `coa.manage`,
+`items.manage`, `businessPartners.manage`, `branches.manage`, `sales.post`,
 `purchase.post`, `inventory.post`, `journal.post`. A member/invite holding a
 custom role has `role = "CUSTOM"` plus `customRoleId` pointing at the role
 row (`org_users`/`org_invites`, `migration_009_custom_roles.sql`).

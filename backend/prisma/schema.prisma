@@ -125,6 +125,8 @@ model Branch {
   code           String    @db.VarChar(20)
   name           String    @db.VarChar(200)
   gstin          String?   @db.VarChar(15)
+  phone          String?   @db.VarChar(20)
+  email          String?   @db.VarChar(255)
   address        Json?
   isHeadOffice   Boolean   @default(false) @map("is_head_office")
   status         String    @default("ACTIVE") @db.VarChar(20)

@@ -31,7 +31,15 @@ Deferred out of that scope:
 - **Inter-branch Stock Transfer.** Moves quantity between branches without
   touching accounting the way a sale or purchase does (same org's
   inventory, no P&L impact) — its own document type, not a variant of
-  Adjustment.
+  Adjustment. Designed shape: no Journal Entry at all (first document type
+  that's stock-only), a `TRANSFER_OUT`/`TRANSFER_IN` pair of
+  `StockMovement`s, costed by calling `consumeStock()` at the source branch
+  and `receiveStock()` at the destination with that exact same unit cost —
+  reusing the two `lib/costing.ts` primitives Sales Invoice/Purchase
+  Return already use, so a transfer can't manufacture or destroy value.
+  Gated by the (now-existing) `inventory.post` permission. Blocked on
+  needing a real second branch to transfer *to* — see Branch Master below,
+  now built, so this is unblocked whenever it's picked up.
 
 - **Manufacturing / Production (BOM explosion).** Confirmed model: **Model
   A — make-to-stock**. A Production step consumes raw materials via
@@ -91,6 +99,30 @@ production Aadhar capture, until proper encryption is built. Requires
 `db/migration_012_employee_details.sql`. The full separate Employee master
 (if ever needed — designation/DOJ/independent-of-login-access employees)
 is still an open, unbuilt idea, not this.
+
+## Branch Master (built)
+
+Branches existed in the schema from day one (auto-created head office at
+signup, referenced by every transactional document) but had no real CRUD —
+just an unauthenticated `POST /branches` nothing actually called, and a
+`GET /branches` added later purely to feed the Team page's branch-assignment
+dropdown. Filled in: full `GET/POST /branches`, `PATCH /branches/:id`,
+`PATCH /branches/:id/toggle` (Active/Inactive), `DELETE /branches/:id`
+(only if unused — no team member assigned, no journal entry, no stock
+movement at that branch; deactivate otherwise), all behind a new
+`branches.manage` permission (grantable to a custom role, same tier as
+`coa.manage`/`items.manage` — not hardcoded OWNER/ADMIN-only, since
+managing branches isn't the same self-escalation risk as team/role
+management). New Branches screen under Settings.
+
+Fields: code (unique per org), name, GSTIN (validated against the standard
+15-character format), phone, email, address (kept as an unstructured
+blob — same convention Business Partner already uses — rather than
+structured line1/city/state/pincode, since nothing in the app needs to
+query by state yet; revisit if/when GST returns gets built), and Head
+Office (exactly one per org, freely reassignable — toggling it on for one
+branch automatically un-flags whichever branch had it before). Requires
+`db/migration_013_branch_crud.sql`.
 
 ## Custom Roles (built)
 

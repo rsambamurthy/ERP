@@ -396,6 +396,22 @@ export interface BranchSummary {
   isHeadOffice: boolean;
 }
 
+export type BranchStatus = "ACTIVE" | "INACTIVE";
+
+export interface Branch {
+  id: string;
+  organizationId: string;
+  code: string;
+  name: string;
+  gstin: string | null;
+  phone: string | null;
+  email: string | null;
+  address: unknown;
+  isHeadOffice: boolean;
+  status: BranchStatus;
+  createdAt: string;
+}
+
 // ── Own profile / password ──────────────────────────────────────────────────
 
 export interface MyProfile {
@@ -432,6 +448,7 @@ export const PERMISSIONS = [
   "coa.manage",
   "items.manage",
   "businessPartners.manage",
+  "branches.manage",
   "sales.post",
   "purchase.post",
   "inventory.post",
@@ -444,6 +461,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "coa.manage": "Manage Chart of Accounts",
   "items.manage": "Manage Items",
   "businessPartners.manage": "Manage Business Partners (Customers/Vendors)",
+  "branches.manage": "Manage Branches",
   "sales.post": "Post Sales Invoices & Sales Returns",
   "purchase.post": "Post Purchase Bills & Purchase Returns",
   "inventory.post": "Post Stock Adjustments",
