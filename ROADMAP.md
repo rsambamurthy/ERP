@@ -44,6 +44,38 @@ Deferred out of that scope:
   BOM into raw-material movements on the spot. Would have required BOM
   logic inside Sales Invoice from day one.)
 
+## Basic User Management (built)
+
+The original registration wizard never asked for the OWNER's name (fixed
+earlier — see git history — but flagged again as evidence "user management"
+was thin overall), and beyond invite/role-change/remove there was no
+self-service profile editing, no password reset, no use of the
+already-existing `org_users.branch_id` column, and no way to suspend a
+member short of fully removing them. Filled in:
+
+- **My Profile** (`/me`, any authenticated user) — view/edit your own
+  name/email/phone, change your own password.
+- **Forgot/reset password** (`/auth/forgot-password` + `/auth/reset-password`)
+  — logged-out OTP flow, same shape as signup's OTP verification. Generic
+  response either way so it can't be used to enumerate accounts.
+- **Branch assignment** (`PATCH /org/users/:userId/branch`) — the Team
+  screen can now actually set the branch a member belongs to. Informational
+  only for now — nothing else in the app scopes reads/writes by it yet, so
+  assigning someone to a branch doesn't currently restrict what they see.
+- **Member suspension** (`PATCH /org/users/:userId/status`) — distinct from
+  removal: a suspended member keeps their `org_users` row (role, branch,
+  audit trail) but is refused at login, and an already-issued token is
+  re-checked on every request via `requireActiveSubscription()` so
+  suspension takes effect immediately, not just on next login.
+
+Requires `db/migration_010_user_management.sql`.
+
+Still not here: branch assignment doesn't yet restrict anything (an
+org-wide role still sees org-wide data regardless of its `branchId`) — that
+would need every module route to filter by the caller's branch, a bigger
+change than this pass. If per-branch data scoping is wanted, that's the
+next layer on top of this.
+
 ## Custom Roles (built)
 
 Layered on top of the fixed OWNER/ADMIN/ACCOUNTANT/VIEWER four, which stay

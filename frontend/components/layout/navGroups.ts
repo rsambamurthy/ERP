@@ -48,6 +48,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Configuration",
     icon: "⚙",
     items: [
+      { id: "my_profile", label: "My Profile", path: "/settings/profile", dot: "#64748b", roles: ALL_ROLES },
       { id: "chart_of_accounts", label: "Chart of Accounts", path: "/accounting/chart-of-accounts", dot: "#2563eb", roles: ALL_ROLES },
       { id: "business_partners", label: "Business Partners", path: "/accounting/business-partners", dot: "#0891b2", roles: ALL_ROLES },
       { id: "items", label: "Items", path: "/inventory/items", dot: "#0d9488", roles: ALL_ROLES },

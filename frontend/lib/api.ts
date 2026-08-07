@@ -6,10 +6,13 @@ import type {
   AdminSubscriptionsResponse,
   AuditLogEntry,
   BalanceSheetResponse,
+  BranchSummary,
   BusinessPartner,
   CashBookResponse,
   CostingMethod,
   CustomRole,
+  MemberStatus,
+  MyProfile,
   Permission,
   DocumentLineInput,
   DomainDetailsMap,
@@ -396,6 +399,49 @@ export function updateMemberRole(userId: string, role: OrgRole, customRoleId?: s
 
 export function removeMember(userId: string) {
   return request<{ data: { deleted: true } }>(`/org/users/${userId}`, { method: "DELETE" });
+}
+
+export function updateMemberBranch(userId: string, branchId: string | null) {
+  return request<{ data: { userId: string; branchId: string | null } }>(`/org/users/${userId}/branch`, {
+    method: "PATCH",
+    body: JSON.stringify({ branchId }),
+  });
+}
+
+export function updateMemberStatus(userId: string, status: MemberStatus) {
+  return request<{ data: { userId: string; status: MemberStatus } }>(`/org/users/${userId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+}
+
+export function getBranches() {
+  return request<{ data: BranchSummary[] }>("/branches");
+}
+
+// ── Own profile / password ──────────────────────────────────────────────────
+
+export function getMe() {
+  return request<{ data: MyProfile }>("/me");
+}
+
+export function updateMe(body: { name?: string; email?: string; phone?: string }) {
+  return request<{ data: MyProfile }>("/me", { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function changePassword(body: { currentPassword: string; newPassword: string }) {
+  return request<{ data: { ok: true } }>("/me/change-password", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function forgotPassword(body: { email?: string; phone?: string }) {
+  return request<{ message: string; devOtp?: string }>("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function resetPassword(body: { email?: string; phone?: string; otp: string; newPassword: string }) {
+  return request<{ data: { ok: true } }>("/auth/reset-password", { method: "POST", body: JSON.stringify(body) });
 }
 
 // ── Custom roles ─────────────────────────────────────────────────────────────

@@ -19,6 +19,7 @@ psql "$DATABASE_URL" -f ../db/migration_006_sales_purchase_inventory.sql
 psql "$DATABASE_URL" -f ../db/migration_007_user_name_and_bp_code.sql
 psql "$DATABASE_URL" -f ../db/migration_008_sales_purchase_returns.sql
 psql "$DATABASE_URL" -f ../db/migration_009_custom_roles.sql
+psql "$DATABASE_URL" -f ../db/migration_010_user_management.sql
 npx prisma generate
 npx prisma db seed         # seeds domain_types, modules, coa_templates
 npm run create-admin -- --email you@example.com --password "something long"   # makes yourself a platform admin
@@ -39,12 +40,15 @@ doesn't need a DB connection.
 |---|---|
 | `POST /auth/register` | Creates `organizations` + `users` + `org_users` (OWNER) + `onboarding_state`. Returns `devOtp` in the response (until a real SMS/email provider is wired up — set `EXPOSE_DEV_OTP=false` to turn that off). |
 | `POST /auth/verify-otp` | Checks the OTP, advances org to `PENDING_DOMAIN`, and returns a JWT (`token`) — the wizard and every screen after it use this. |
-| `POST /auth/login` | Returning users: email/phone + password → JWT. |
+| `POST /auth/login` | Returning users: email/phone + password → JWT. Rejects (403) a `SUSPENDED` member — see Team / user management below. |
+| `POST /auth/forgot-password` | `{ email\|phone }` → generates a reset OTP if the account exists, returns the same generic message either way (no account enumeration). Returns `devOtp` until a real provider exists. |
+| `POST /auth/reset-password` | `{ email\|phone, otp, newPassword }` → verifies the OTP and sets a new password. Logged-out flow — distinct from `POST /me/change-password` below. |
 | `GET /domain-types` | Reads from the `domain_types` seed. |
 | `POST /onboarding/domain` | Upserts `org_domains` (one or more). Rejects with 409 once `domain_locked_at` is set. |
 | `POST /onboarding/provision` | Seeds `accounts` from core + selected domains' `coa_templates` (flagged `is_system`), enables modules, creates the head-office `branches` row. |
 | `GET /onboarding/status` | Returns `onboarding_state.step`. |
-| `POST /branches` | Not domain-locked — add a location any time. |
+| `GET /branches` | Authenticated — the caller's own org's branches (or, for a platform admin, `?organizationId=`). |
+| `POST /branches` | Not domain-locked — add a location any time. Pre-existing, unauthenticated, not currently called from any screen. |
 
 All routes below require `Authorization: Bearer <token>` from login/verify-otp.
 
@@ -92,10 +96,20 @@ Always tied to an existing Sales Invoice / Purchase Bill — `GET .../invoice/:i
 | `POST /org/users/invite` | `{ email\|phone, role, customRoleId? }` → creates an invite, returns `devInviteToken` (until a real email/SMS provider exists) to build the accept-invite link from. `role` is one of `ADMIN\|ACCOUNTANT\|VIEWER\|CUSTOM`; `CUSTOM` requires `customRoleId`. |
 | `DELETE /org/users/invites/:id` | Cancel a pending invite. |
 | `PATCH /org/users/:userId/role` | Change a teammate's role (`{ role, customRoleId? }`, same shape as invite). Can't touch the OWNER. |
-| `DELETE /org/users/:userId` | Revoke access. Can't remove the OWNER or yourself. |
+| `PATCH /org/users/:userId/branch` | `{ branchId }` (or `null` to clear) — which branch a member belongs to. Informational only today; nothing else in the app scopes reads/writes by it yet. |
+| `PATCH /org/users/:userId/status` | `{ status: "ACTIVE" \| "SUSPENDED" }` — suspend/reactivate without removing membership. Can't touch the OWNER or yourself. A suspended member is refused at `/auth/login`, and `requireActiveSubscription()` re-checks it on every request against an already-issued token (a token issued before suspension is otherwise valid for 30 days). |
+| `DELETE /org/users/:userId` | Revoke access — removes the `org_users` row entirely (distinct from suspend, which keeps it). Can't remove the OWNER or yourself. |
 | `POST /auth/accept-invite` | `{ token, password }` → creates the login, joins the org, returns a session token + resolved `permissions`. |
 
 Roles: **OWNER** (one per org, set at registration, full access) · **ADMIN** (same minus touching the OWNER) · **ACCOUNTANT** (post transactions, manage business partners) · **VIEWER** (read-only) · **CUSTOM** (org-defined, see below). Module-level write access is enforced server-side via `requirePermission()` in `middleware/auth.ts` — not just hidden UI. Team/role management and Access Control config stay on `requireRole("OWNER", "ADMIN")` specifically, never `requirePermission()` — see Custom Roles below for why.
+
+### My Profile (`/me`, any authenticated user)
+
+| Endpoint | Notes |
+|---|---|
+| `GET /me` | Your own `id/name/email/phone/isPlatformAdmin/createdAt`. |
+| `PATCH /me` | `{ name?, email?, phone? }` — checked against the row the update would produce (not written first, then checked): email/phone uniqueness, and refuses to leave an account with neither email nor phone. |
+| `POST /me/change-password` | `{ currentPassword, newPassword }` — logged-in password change. Distinct from `/auth/forgot-password` + `/auth/reset-password` above (the logged-out OTP flow). |
 
 ### Custom Roles (`/org-roles`, OWNER/ADMIN only)
 

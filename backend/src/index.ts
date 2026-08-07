@@ -29,6 +29,7 @@ import inventoryRoutes from "./routes/inventory";
 import salesReturnsRoutes from "./routes/salesReturns";
 import purchaseReturnsRoutes from "./routes/purchaseReturns";
 import orgRolesRoutes from "./routes/orgRoles";
+import meRoutes from "./routes/me";
 
 // Last-resort net for anything outside Express's request cycle entirely
 // (a rejected promise with no .catch anywhere, a timer callback that
@@ -67,6 +68,7 @@ app.use("/inventory", inventoryRoutes);
 app.use("/sales-returns", salesReturnsRoutes);
 app.use("/purchase-returns", purchaseReturnsRoutes);
 app.use("/org-roles", orgRolesRoutes);
+app.use("/me", meRoutes);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

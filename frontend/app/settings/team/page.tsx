@@ -3,11 +3,11 @@
 import { useEffect, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
 import {
-  ApiError, cancelInvite, createOrgRole, deleteOrgRole, getOrgRoles, getOrgUsers,
-  inviteUser, removeMember, updateMemberRole, updateOrgRole,
+  ApiError, cancelInvite, createOrgRole, deleteOrgRole, getBranches, getOrgRoles, getOrgUsers,
+  inviteUser, removeMember, updateMemberBranch, updateMemberRole, updateMemberStatus, updateOrgRole,
 } from "@/lib/api";
 import { PERMISSIONS, PERMISSION_LABELS } from "@/lib/types";
-import type { CustomRole, OrgRole, OrgUsersResponse, Permission } from "@/lib/types";
+import type { BranchSummary, CustomRole, MemberStatus, OrgRole, OrgUsersResponse, Permission } from "@/lib/types";
 
 const FIXED_ROLES: OrgRole[] = ["ADMIN", "ACCOUNTANT", "VIEWER"];
 
@@ -26,6 +26,7 @@ function parseRoleValue(value: string): { role: OrgRole; customRoleId?: string }
 export default function TeamPage() {
   const [data, setData] = useState<OrgUsersResponse | null>(null);
   const [customRoles, setCustomRoles] = useState<CustomRole[]>([]);
+  const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -46,9 +47,10 @@ export default function TeamPage() {
   async function load() {
     setLoading(true);
     try {
-      const [users, roles] = await Promise.all([getOrgUsers(), getOrgRoles()]);
+      const [users, roles, branchList] = await Promise.all([getOrgUsers(), getOrgRoles(), getBranches()]);
       setData(users.data);
       setCustomRoles(roles.data);
+      setBranches(branchList.data);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load team.");
     } finally {
@@ -91,6 +93,16 @@ export default function TeamPage() {
   async function handleRoleChange(userId: string, value: string) {
     const { role, customRoleId } = parseRoleValue(value);
     await updateMemberRole(userId, role, customRoleId);
+    await load();
+  }
+
+  async function handleBranchChange(userId: string, branchId: string) {
+    await updateMemberBranch(userId, branchId || null);
+    await load();
+  }
+
+  async function handleStatusToggle(userId: string, current: MemberStatus) {
+    await updateMemberStatus(userId, current === "ACTIVE" ? "SUSPENDED" : "ACTIVE");
     await load();
   }
 
@@ -279,9 +291,9 @@ export default function TeamPage() {
 
       <div className="ent-page-table" style={{ marginBottom: 20 }}>
         <table>
-          <thead><tr><th>Member</th><th>Role</th><th>Status</th><th /></tr></thead>
+          <thead><tr><th>Member</th><th>Role</th><th>Branch</th><th>Verification</th><th>Access</th><th /></tr></thead>
           <tbody>
-            {loading && <tr><td colSpan={4} className="ent-empty">Loading…</td></tr>}
+            {loading && <tr><td colSpan={6} className="ent-empty">Loading…</td></tr>}
             {data?.members.map((m) => (
               <tr key={m.userId}>
                 <td style={{ fontWeight: 500 }}>
@@ -302,10 +314,35 @@ export default function TeamPage() {
                     </select>
                   )}
                 </td>
-                <td><span className={m.isVerified ? "badge badge-green" : "badge badge-yellow"}>{m.isVerified ? "Active" : "Pending verification"}</span></td>
-                <td style={{ textAlign: "right" }}>
+                <td>
+                  {m.role === "OWNER" ? (
+                    <span style={{ color: "var(--color-muted)", fontSize: 13 }}>All branches</span>
+                  ) : (
+                    <select
+                      className="ent-fc"
+                      style={{ height: 30, width: 150 }}
+                      value={m.branchId ?? ""}
+                      onChange={(e) => handleBranchChange(m.userId, e.target.value)}
+                    >
+                      <option value="">All branches</option>
+                      {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    </select>
+                  )}
+                </td>
+                <td><span className={m.isVerified ? "badge badge-green" : "badge badge-yellow"}>{m.isVerified ? "Verified" : "Pending"}</span></td>
+                <td>
+                  <span className={m.status === "ACTIVE" ? "badge badge-green" : "badge badge-gray"}>
+                    {m.status === "ACTIVE" ? "Active" : "Suspended"}
+                  </span>
+                </td>
+                <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                   {m.role !== "OWNER" && (
-                    <button className="ent-ia ent-ia-del" onClick={() => handleRemove(m.userId)}>Remove</button>
+                    <>
+                      <button className="ent-ia ent-ia-edit" onClick={() => handleStatusToggle(m.userId, m.status)}>
+                        {m.status === "ACTIVE" ? "Suspend" : "Reactivate"}
+                      </button>
+                      <button className="ent-ia ent-ia-del" onClick={() => handleRemove(m.userId)}>Remove</button>
+                    </>
                   )}
                 </td>
               </tr>

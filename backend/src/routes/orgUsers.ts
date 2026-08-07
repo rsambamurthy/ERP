@@ -63,7 +63,7 @@ router.get("/", canManageUsers, async (req, res) => {
   res.json({
     data: {
       members: members.map((m) => ({
-        userId: m.userId, role: m.role, branchId: m.branchId,
+        userId: m.userId, role: m.role, branchId: m.branchId, status: m.status,
         customRoleId: m.customRoleId, customRoleName: m.customRole?.name ?? null,
         name: m.user.name, email: m.user.email, phone: m.user.phone, isVerified: m.user.isVerified,
       })),
@@ -172,6 +172,70 @@ router.patch("/:userId/role", canManageUsers, async (req, res) => {
     summary: `Changed a team member's role from ${member.role} to ${resolved.role}`,
   });
   res.json({ data: { userId: updated.userId, role: updated.role, customRoleId: updated.customRoleId } });
+});
+
+// PATCH /org/users/:userId/branch — assign/clear which branch a member
+// belongs to. null clears it (org-wide access, the default for everyone
+// today since nothing enforced branch scoping before this).
+router.patch("/:userId/branch", canManageUsers, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const { branchId } = req.body ?? {};
+
+  if (branchId) {
+    const branch = await prisma.branch.findFirst({ where: { id: branchId, organizationId } });
+    if (!branch) return res.status(404).json({ message: "Branch not found." });
+  }
+
+  const member = await prisma.orgUser.findUnique({
+    where: { organizationId_userId: { organizationId, userId: req.params.userId } },
+  });
+  if (!member) return res.status(404).json({ message: "Team member not found." });
+
+  const updated = await prisma.orgUser.update({
+    where: { organizationId_userId: { organizationId, userId: member.userId } },
+    data: { branchId: branchId || null },
+  });
+  logAudit({
+    organizationId, actorUserId: req.user!.userId,
+    action: "UPDATE", entityType: "org_user", entityId: member.userId,
+    summary: branchId ? "Assigned a team member to a branch" : "Cleared a team member's branch assignment",
+  });
+  res.json({ data: { userId: updated.userId, branchId: updated.branchId } });
+});
+
+// PATCH /org/users/:userId/status — suspend/reactivate a member without
+// removing them (see migration_010's note: distinct from DELETE, which
+// drops org_users entirely). Can't touch the OWNER or yourself — the same
+// self-lock concern as role changes, but sharper here since suspending
+// yourself with no other OWNER/ADMIN around would be unrecoverable without
+// a platform admin.
+router.patch("/:userId/status", canManageUsers, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const { status } = req.body ?? {};
+
+  if (status !== "ACTIVE" && status !== "SUSPENDED") {
+    return res.status(400).json({ message: "status must be ACTIVE or SUSPENDED." });
+  }
+
+  const member = await prisma.orgUser.findUnique({
+    where: { organizationId_userId: { organizationId, userId: req.params.userId } },
+  });
+  if (!member) return res.status(404).json({ message: "Team member not found." });
+  if (member.role === "OWNER") return res.status(403).json({ message: "The owner can't be suspended." });
+  if (member.userId === req.user!.userId) return res.status(400).json({ message: "You can't suspend your own access." });
+
+  const updated = await prisma.orgUser.update({
+    where: { organizationId_userId: { organizationId, userId: member.userId } },
+    data: { status },
+  });
+  logAudit({
+    organizationId, actorUserId: req.user!.userId,
+    action: "UPDATE", entityType: "org_user", entityId: member.userId,
+    summary: status === "SUSPENDED" ? "Suspended a team member's access" : "Reactivated a team member's access",
+  });
+  res.json({ data: { userId: updated.userId, status: updated.status } });
 });
 
 // DELETE /org/users/:userId — revoke access. Can't remove the OWNER, or

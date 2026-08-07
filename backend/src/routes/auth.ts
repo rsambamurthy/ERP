@@ -164,6 +164,9 @@ router.post("/login", async (req, res) => {
 
   const orgUser = user.orgUsers[0];
   if (!orgUser) return res.status(409).json({ message: "This account isn't linked to an organization." });
+  if (orgUser.status === "SUSPENDED") {
+    return res.status(403).json({ message: "Your access has been suspended. Contact your organization admin." });
+  }
 
   const token = signToken({
     userId: user.id,
@@ -238,6 +241,70 @@ router.post("/accept-invite", async (req, res) => {
   const permissions = await resolvePermissions(invite.role, invite.customRoleId);
 
   res.json({ token: token2, organizationId: invite.organizationId, role: invite.role, name: user.name, permissions });
+});
+
+// POST /auth/forgot-password — logged-out password reset, step 1. Always
+// returns the same generic message regardless of whether the account
+// exists, so this can't be used to enumerate registered emails/phones (the
+// OTP itself is only ever generated/sent — or exposed as devOtp — when a
+// matching account is actually found).
+router.post("/forgot-password", async (req, res) => {
+  const { email, phone } = req.body ?? {};
+  if (!email && !phone) return res.status(400).json({ message: "email or phone is required." });
+
+  const user = await prisma.user.findFirst({
+    where: { OR: [email ? { email } : undefined, phone ? { phone } : undefined].filter(Boolean) as any },
+  });
+
+  const exposeDevOtp = process.env.EXPOSE_DEV_OTP !== "false";
+  let devOtp: string | undefined;
+
+  if (user) {
+    const otp = generateOtp();
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { resetOtpCode: otp, resetOtpExpiresAt: otpExpiry() },
+    });
+    sendOtp(email || phone, otp);
+    if (exposeDevOtp) devOtp = otp;
+  }
+
+  res.json({
+    message: "If an account exists, a reset code has been sent.",
+    ...(devOtp ? { devOtp } : {}),
+  });
+});
+
+// POST /auth/reset-password — logged-out password reset, step 2.
+router.post("/reset-password", async (req, res) => {
+  const { email, phone, otp, newPassword } = req.body ?? {};
+  if ((!email && !phone) || !otp || !newPassword) {
+    return res.status(400).json({ message: "email or phone, otp, and newPassword are required." });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ message: "New password must be at least 8 characters." });
+  }
+
+  const user = await prisma.user.findFirst({
+    where: { OR: [email ? { email } : undefined, phone ? { phone } : undefined].filter(Boolean) as any },
+  });
+  if (!user || !user.resetOtpCode || user.resetOtpCode !== otp) {
+    return res.status(400).json({ message: "Incorrect or expired code." });
+  }
+  if (!user.resetOtpExpiresAt || user.resetOtpExpiresAt < new Date()) {
+    return res.status(400).json({ message: "Incorrect or expired code." });
+  }
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      passwordHash: await hashPassword(newPassword),
+      resetOtpCode: null,
+      resetOtpExpiresAt: null,
+    },
+  });
+
+  res.json({ data: { ok: true } });
 });
 
 export default router;

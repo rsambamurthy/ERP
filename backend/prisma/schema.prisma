@@ -186,6 +186,9 @@ model User {
   passwordHash     String    @map("password_hash")
   isVerified       Boolean   @default(false) @map("is_verified")
   isPlatformAdmin  Boolean   @default(false) @map("is_platform_admin")
+  // Forgot-password flow — see /auth/forgot-password and /auth/reset-password.
+  resetOtpCode      String?   @map("reset_otp_code") @db.VarChar(10)
+  resetOtpExpiresAt DateTime? @map("reset_otp_expires_at")
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at")
   deletedAt        DateTime? @map("deleted_at")
@@ -243,6 +246,9 @@ model OrgUser {
   // org-defined role rather than one of the four fixed ones.
   customRoleId   String? @map("custom_role_id") @db.Uuid
   branchId       String? @map("branch_id") @db.Uuid
+  // SUSPENDED blocks login/API use for this org without removing
+  // membership — see PATCH /org/users/:userId/status.
+  status         String  @default("ACTIVE") @db.VarChar(20)
 
   organization Organization @relation(fields: [organizationId], references: [id])
   user         User         @relation(fields: [userId], references: [id])

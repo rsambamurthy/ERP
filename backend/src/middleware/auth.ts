@@ -94,15 +94,27 @@ export function requirePlatformAdmin(req: Request, res: Response, next: NextFunc
 // a platform admin flips it back. Platform admins themselves are exempt —
 // same as SmartAppt's entitlement.service.ts: "SUPER_USER is exempt: they
 // administer every association" and always resolve to FULL access.
+//
+// Also rejects a SUSPENDED *member* (org_users.status, PATCH
+// /org/users/:userId/status) — /auth/login already refuses to issue a new
+// token for a suspended member, but a token issued before the suspension
+// stays valid for 30 days otherwise, so this is the per-request check that
+// actually cuts off an already-logged-in session.
 export async function requireActiveSubscription(req: Request, res: Response, next: NextFunction) {
   if (req.user?.isPlatformAdmin) return next();
   if (!req.user?.organizationId) return next();
   const org = await prisma.organization.findUnique({
     where: { id: req.user.organizationId },
-    select: { subscriptionStatus: true },
+    select: {
+      subscriptionStatus: true,
+      orgUsers: { where: { userId: req.user.userId }, select: { status: true } },
+    },
   });
   if (org?.subscriptionStatus === "SUSPENDED") {
     return res.status(402).json({ message: "This organization's subscription is suspended. Contact support." });
+  }
+  if (org?.orgUsers[0]?.status === "SUSPENDED") {
+    return res.status(403).json({ message: "Your access has been suspended. Contact your organization admin." });
   }
   next();
 }

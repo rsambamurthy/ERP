@@ -368,16 +368,37 @@ export interface ValuationResponse {
 // ACCOUNTANT/VIEWER stay fixed; their permissions aren't editable.
 export type OrgRole = "OWNER" | "ADMIN" | "ACCOUNTANT" | "VIEWER" | "CUSTOM";
 
+export type MemberStatus = "ACTIVE" | "SUSPENDED";
+
 export interface OrgMember {
   userId: string;
   role: OrgRole;
   customRoleId: string | null;
   customRoleName: string | null;
   branchId: string | null;
+  status: MemberStatus;
   name: string | null;
   email: string | null;
   phone: string | null;
   isVerified: boolean;
+}
+
+export interface BranchSummary {
+  id: string;
+  code: string;
+  name: string;
+  isHeadOffice: boolean;
+}
+
+// ── Own profile / password ──────────────────────────────────────────────────
+
+export interface MyProfile {
+  id: string;
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  isPlatformAdmin: boolean;
+  createdAt: string;
 }
 
 export interface OrgInvite {

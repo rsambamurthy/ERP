@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AuthCard from "@/components/ui/AuthCard";
 import Input from "@/components/ui/Input";
@@ -52,6 +53,9 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
             required
           />
+          <Link href="/forgot-password" className="self-end text-sm text-navy-600 hover:underline">
+            Forgot password?
+          </Link>
           {error && <p className="text-sm text-red-600">{error}</p>}
           <Button type="submit" loading={loading}>
             Log in
