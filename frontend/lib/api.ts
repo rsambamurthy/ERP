@@ -9,6 +9,8 @@ import type {
   BusinessPartner,
   CashBookResponse,
   CostingMethod,
+  CustomRole,
+  Permission,
   DocumentLineInput,
   DomainDetailsMap,
   DomainType,
@@ -87,7 +89,7 @@ export function registerUser(payload: RegisterPayload) {
 
 // POST /auth/verify-otp
 export function verifyOtp(organizationId: string, otp: string) {
-  return request<{ ok: true; token: string | null }>("/auth/verify-otp", {
+  return request<{ ok: true; token: string | null; permissions: Permission[] }>("/auth/verify-otp", {
     method: "POST",
     body: JSON.stringify({ organizationId, otp }),
   });
@@ -95,18 +97,18 @@ export function verifyOtp(organizationId: string, otp: string) {
 
 // POST /auth/login
 export function login(payload: { email?: string; phone?: string; password: string }) {
-  return request<{ token: string; organizationId: string | null; role: string | null; isPlatformAdmin: boolean; name: string | null }>(
-    "/auth/login",
-    { method: "POST", body: JSON.stringify(payload) }
-  );
+  return request<{
+    token: string; organizationId: string | null; role: string | null;
+    isPlatformAdmin: boolean; name: string | null; permissions?: Permission[];
+  }>("/auth/login", { method: "POST", body: JSON.stringify(payload) });
 }
 
 // POST /auth/accept-invite
 export function acceptInvite(token: string, name: string, password: string) {
-  return request<{ token: string; organizationId: string; role: string; name: string | null }>("/auth/accept-invite", {
-    method: "POST",
-    body: JSON.stringify({ token, name, password }),
-  });
+  return request<{ token: string; organizationId: string; role: string; name: string | null; permissions: Permission[] }>(
+    "/auth/accept-invite",
+    { method: "POST", body: JSON.stringify({ token, name, password }) }
+  );
 }
 
 // GET /domain-types
@@ -374,7 +376,7 @@ export function getOrgUsers() {
   return request<{ data: OrgUsersResponse }>("/org/users");
 }
 
-export function inviteUser(body: { email?: string; phone?: string; role: OrgRole }) {
+export function inviteUser(body: { email?: string; phone?: string; role: OrgRole; customRoleId?: string }) {
   return request<{ data: { id: string }; devInviteToken?: string }>("/org/users/invite", {
     method: "POST",
     body: JSON.stringify(body),
@@ -385,15 +387,39 @@ export function cancelInvite(id: string) {
   return request<{ data: { deleted: true } }>(`/org/users/invites/${id}`, { method: "DELETE" });
 }
 
-export function updateMemberRole(userId: string, role: OrgRole) {
-  return request<{ data: { userId: string; role: OrgRole } }>(`/org/users/${userId}/role`, {
+export function updateMemberRole(userId: string, role: OrgRole, customRoleId?: string) {
+  return request<{ data: { userId: string; role: OrgRole; customRoleId: string | null } }>(`/org/users/${userId}/role`, {
     method: "PATCH",
-    body: JSON.stringify({ role }),
+    body: JSON.stringify({ role, customRoleId }),
   });
 }
 
 export function removeMember(userId: string) {
   return request<{ data: { deleted: true } }>(`/org/users/${userId}`, { method: "DELETE" });
+}
+
+// ── Custom roles ─────────────────────────────────────────────────────────────
+
+export function getOrgRoles() {
+  return request<{ data: CustomRole[]; permissionCatalogue: Permission[] }>("/org-roles");
+}
+
+export function createOrgRole(body: { name: string; permissions: Permission[] }) {
+  return request<{ data: CustomRole }>("/org-roles", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateOrgRole(id: string, body: { name?: string; permissions?: Permission[] }) {
+  return request<{ data: CustomRole }>(`/org-roles/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteOrgRole(id: string) {
+  return request<{ data: { deleted: true } }>(`/org-roles/${id}`, { method: "DELETE" });
 }
 
 // ── Access control (menu visibility by role) ────────────────────────────────

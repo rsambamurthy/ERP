@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../db";
-import { authenticate, requireRole, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
+import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { receiveStock } from "../lib/costing";
 import { upload } from "../lib/upload";
@@ -12,7 +12,7 @@ router.use(authenticate, requireActiveSubscription);
 // Same gate as Chart of Accounts — Items are master data, structurally the
 // same kind of decision (what account does this post to) as an Account
 // itself.
-const canManageItems = requireRole("OWNER", "ADMIN");
+const canManageItems = requirePermission("items.manage");
 
 function orgIdOr400(req: import("express").Request, res: import("express").Response): string | null {
   const organizationId = resolveOrgId(req);

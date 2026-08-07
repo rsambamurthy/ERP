@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { Account } from "@prisma/client";
 import { prisma } from "../db";
-import { authenticate, requireRole, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
+import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 
 function orgIdOr400(req: import("express").Request, res: import("express").Response): string | null {
@@ -33,7 +33,7 @@ interface LineInput {
 
 // POST /journal — post a balanced entry. This is the one write path that
 // locks an org's domain selection (trg_lock_org_domains fires on INSERT).
-router.post("/", requireRole("OWNER", "ADMIN", "ACCOUNTANT"), async (req, res) => {
+router.post("/", requirePermission("journal.post"), async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
   const { entryDate, narration, voucherType, branchId, lines } = req.body ?? {};

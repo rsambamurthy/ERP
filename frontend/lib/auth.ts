@@ -6,13 +6,15 @@ const ORG_KEY = "smarterp_org";
 const ROLE_KEY = "smarterp_role";
 const ADMIN_KEY = "smarterp_admin";
 const NAME_KEY = "smarterp_name";
+const PERMISSIONS_KEY = "smarterp_permissions";
 
 export function setSession(
   token: string,
   organizationId: string | null,
   role?: string | null,
   isPlatformAdmin?: boolean,
-  name?: string | null
+  name?: string | null,
+  permissions?: string[]
 ) {
   if (typeof window === "undefined") return;
   localStorage.setItem(TOKEN_KEY, token);
@@ -23,6 +25,9 @@ export function setSession(
   if (name) localStorage.setItem(NAME_KEY, name);
   else localStorage.removeItem(NAME_KEY);
   localStorage.setItem(ADMIN_KEY, isPlatformAdmin ? "1" : "0");
+  // Only meaningful for role === "CUSTOM" — a snapshot from login, used to
+  // decide what the sidebar shows. Real enforcement is always server-side.
+  localStorage.setItem(PERMISSIONS_KEY, JSON.stringify(permissions ?? []));
 }
 
 export function getName(): string | null {
@@ -50,15 +55,33 @@ export function isPlatformAdmin(): boolean {
   return localStorage.getItem(ADMIN_KEY) === "1";
 }
 
+// Only populated (and only meaningful) for role === "CUSTOM" — the
+// permission list resolved at login time. See setSession()'s note.
+export function getPermissions(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(localStorage.getItem(PERMISSIONS_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
 // OWNER/ADMIN can manage the Chart of Accounts, business partners, and
-// team. ACCOUNTANT can post transactions. VIEWER is read-only. Mirrors the
-// backend's requireRole() gates — this is UI-only convenience (hide buttons
-// the API would reject anyway), not the actual enforcement.
+// team. ACCOUNTANT can post transactions. VIEWER is read-only. A CUSTOM
+// role falls back to its granted permissions. Mirrors the backend's
+// requirePermission() gates — this is UI-only convenience (hide buttons the
+// API would reject anyway), not the actual enforcement.
 export function canManageCoa(): boolean {
-  return ["OWNER", "ADMIN"].includes(getRole() ?? "");
+  const role = getRole() ?? "";
+  if (role === "CUSTOM") return getPermissions().includes("coa.manage");
+  return ["OWNER", "ADMIN"].includes(role);
 }
 export function canPostTransactions(): boolean {
-  return ["OWNER", "ADMIN", "ACCOUNTANT"].includes(getRole() ?? "");
+  const role = getRole() ?? "";
+  if (role === "CUSTOM") {
+    return getPermissions().some((p) => ["sales.post", "purchase.post", "inventory.post", "journal.post"].includes(p));
+  }
+  return ["OWNER", "ADMIN", "ACCOUNTANT"].includes(role);
 }
 export function canManageTeam(): boolean {
   return ["OWNER", "ADMIN"].includes(getRole() ?? "");
@@ -71,6 +94,7 @@ export function clearSession() {
   localStorage.removeItem(ROLE_KEY);
   localStorage.removeItem(ADMIN_KEY);
   localStorage.removeItem(NAME_KEY);
+  localStorage.removeItem(PERMISSIONS_KEY);
 }
 
 export function isLoggedIn(): boolean {

@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { verifyToken, AuthTokenPayload } from "../lib/jwt";
 import { prisma } from "../db";
+import { Permission, builtInPermissions } from "../lib/permissions";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -44,6 +45,35 @@ export function requireRole(...roles: string[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (req.user?.isPlatformAdmin) return next();
     if (!req.user || !req.user.role || !roles.includes(req.user.role)) {
+      return res.status(403).json({ message: "You don't have permission to do that." });
+    }
+    next();
+  };
+}
+
+// Module-level gate for the seven custom-role-assignable permissions (see
+// lib/permissions.ts). Unlike requireRole(), a "CUSTOM" role isn't resolved
+// from the token alone — its permission set lives in org_roles and is
+// looked up per request, so editing a custom role's permissions takes
+// effect on the holder's very next request rather than needing to log out.
+// Any-of semantics, same as requireRole(...roles).
+export function requirePermission(...perms: Permission[]) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (req.user?.isPlatformAdmin) return next();
+    if (!req.user?.role) {
+      return res.status(403).json({ message: "You don't have permission to do that." });
+    }
+
+    let granted = builtInPermissions(req.user.role);
+    if (granted === null) {
+      if (req.user.role !== "CUSTOM" || !req.user.customRoleId) {
+        return res.status(403).json({ message: "You don't have permission to do that." });
+      }
+      const customRole = await prisma.orgRole.findUnique({ where: { id: req.user.customRoleId } });
+      granted = (customRole?.permissions as Permission[] | undefined) ?? [];
+    }
+
+    if (!perms.some((p) => granted!.includes(p))) {
       return res.status(403).json({ message: "You don't have permission to do that." });
     }
     next();

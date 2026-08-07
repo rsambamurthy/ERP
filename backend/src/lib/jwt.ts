@@ -5,6 +5,8 @@ export interface AuthTokenPayload {
   // Platform admins aren't a member of any organization.
   organizationId: string | null;
   role: string | null;
+  // Set only when role === "CUSTOM" — points at the org's OrgRole row.
+  customRoleId: string | null;
   branchId: string | null;
   isPlatformAdmin: boolean;
 }

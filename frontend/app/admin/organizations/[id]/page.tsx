@@ -177,7 +177,7 @@ export default function AdminOrganizationDetailPage() {
             {org.users.map((u) => (
               <tr key={u.userId}>
                 <td>{u.email || u.phone}</td>
-                <td><span className={u.role === "OWNER" ? "badge badge-purple" : "badge badge-blue"}>{u.role}</span></td>
+                <td><span className={u.role === "OWNER" ? "badge badge-purple" : "badge badge-blue"}>{u.role === "CUSTOM" ? u.customRoleName ?? "Custom" : u.role}</span></td>
                 <td><span className={u.isVerified ? "badge badge-green" : "badge badge-yellow"}>{u.isVerified ? "Active" : "Pending"}</span></td>
               </tr>
             ))}

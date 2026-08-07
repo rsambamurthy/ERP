@@ -44,6 +44,27 @@ Deferred out of that scope:
   BOM into raw-material movements on the spot. Would have required BOM
   logic inside Sales Invoice from day one.)
 
+## Custom Roles (built)
+
+Layered on top of the fixed OWNER/ADMIN/ACCOUNTANT/VIEWER four, which stay
+hardcoded exactly as before (OWNER un-demotable, ADMIN self-lock protection
+on menu config unchanged). An org can additionally define its own named
+roles, each a subset of a fixed seven-permission catalogue — Manage Chart of
+Accounts, Manage Items, Manage Business Partners, Post Sales, Post Purchase,
+Post Inventory Adjustments, Post Journal Entries. `requireRole()` (hardcoded
+role-name checks) was replaced with `requirePermission()` (checks a
+resolved permission set — fixed for the four built-in roles, looked up from
+the role's DB row for a custom one) on every module route it used to gate;
+the built-in roles' actual access didn't change, this only made the
+authorization model support more than four roles.
+
+Deliberately excluded from the grantable catalogue: team/role management
+and menu-visibility config. Both stay `requireRole("OWNER", "ADMIN")` —
+handing either one to a custom role would let that role holder define a
+more powerful role and assign it to themselves, the standard
+self-escalation hole in any permissions-that-can-grant-permissions model.
+Requires `db/migration_009_custom_roles.sql`.
+
 ## Sales Return / Purchase Return (built)
 
 Always tied to the original Sales Invoice / Purchase Bill — never freeform
@@ -70,6 +91,19 @@ shortfall) — see `returnStockToVendor()` in `lib/costing.ts`. Requires
 
 Flagged as gaps before Sales/Purchase/Inventory was chosen as the next
 priority; still open.
+
+- **Invoice-level payment/receipt matching.** Today a customer/vendor
+  payment is just a plain Journal Entry (`BV`/`CV`, posted via `POST
+  /journal`) whose only link to the customer/vendor is the shared
+  `businessPartnerId` tag on the Trade Receivables/Payables line — it nets
+  against that party's overall running balance in the Ledger report, with no
+  allocation to a specific Sales Invoice or Purchase Bill. So there's no
+  per-invoice paid/partial/outstanding status and no invoice-level aging
+  report, only an overall customer/vendor balance. When built: a dedicated
+  Receipt/Payment document tied to one or more specific Sales
+  Invoices/Purchase Bills, each allocation capped at what's still owed on
+  that document — structurally similar to how Sales Return/Purchase Return
+  are tied to and capped against their original documents.
 
 - **FY Closure.** Year-end closing entries — carry forward account
   balances into the new financial year, lock the prior year against further

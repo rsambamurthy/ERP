@@ -364,11 +364,15 @@ export interface ValuationResponse {
 
 // ── Team / user management ──────────────────────────────────────────────────
 
-export type OrgRole = "OWNER" | "ADMIN" | "ACCOUNTANT" | "VIEWER";
+// "CUSTOM" means an org-defined role — see CustomRole below. OWNER/ADMIN/
+// ACCOUNTANT/VIEWER stay fixed; their permissions aren't editable.
+export type OrgRole = "OWNER" | "ADMIN" | "ACCOUNTANT" | "VIEWER" | "CUSTOM";
 
 export interface OrgMember {
   userId: string;
   role: OrgRole;
+  customRoleId: string | null;
+  customRoleName: string | null;
   branchId: string | null;
   name: string | null;
   email: string | null;
@@ -381,12 +385,51 @@ export interface OrgInvite {
   email: string | null;
   phone: string | null;
   role: OrgRole;
+  customRoleId: string | null;
+  customRoleName: string | null;
   expiresAt: string;
 }
 
 export interface OrgUsersResponse {
   members: OrgMember[];
   invites: OrgInvite[];
+}
+
+// ── Custom roles (module-level permissions) ─────────────────────────────────
+
+// Mirrors backend/src/lib/permissions.ts's PERMISSIONS catalogue exactly.
+// Deliberately excludes team/role management and menu-visibility config —
+// see migration_009's note on why those two stay OWNER/ADMIN-only rather
+// than being grantable to a custom role.
+export const PERMISSIONS = [
+  "coa.manage",
+  "items.manage",
+  "businessPartners.manage",
+  "sales.post",
+  "purchase.post",
+  "inventory.post",
+  "journal.post",
+] as const;
+
+export type Permission = (typeof PERMISSIONS)[number];
+
+export const PERMISSION_LABELS: Record<Permission, string> = {
+  "coa.manage": "Manage Chart of Accounts",
+  "items.manage": "Manage Items",
+  "businessPartners.manage": "Manage Business Partners (Customers/Vendors)",
+  "sales.post": "Post Sales Invoices & Sales Returns",
+  "purchase.post": "Post Purchase Bills & Purchase Returns",
+  "inventory.post": "Post Stock Adjustments",
+  "journal.post": "Post Journal Entries",
+};
+
+export interface CustomRole {
+  id: string;
+  organizationId: string;
+  name: string;
+  permissions: Permission[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ── Access control (menu visibility by role) ────────────────────────────────
@@ -428,6 +471,7 @@ export interface AdminOrganization {
 export interface AdminOrgDetailUser {
   userId: string;
   role: string;
+  customRoleName: string | null;
   email: string | null;
   phone: string | null;
   isVerified: boolean;

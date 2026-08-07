@@ -5,8 +5,12 @@ import { ApiError, getMenuConfigForOrg, saveMenuConfig } from "@/lib/api";
 import { NAV_GROUPS } from "@/components/layout/navGroups";
 import type { MenuConfigMap, OrgRole } from "@/lib/types";
 
+// CUSTOM never actually appears here — editableRoles only ever returns the
+// four fixed roles (see backend's ORG_ROLES / editableRolesFor()), custom
+// roles aren't configurable on this screen at all. Included only so this
+// Record's type checks against the now-five-value OrgRole union.
 const ROLE_LABEL: Record<OrgRole, string> = {
-  OWNER: "Owner", ADMIN: "Admin", ACCOUNTANT: "Accountant", VIEWER: "Viewer",
+  OWNER: "Owner", ADMIN: "Admin", ACCOUNTANT: "Accountant", VIEWER: "Viewer", CUSTOM: "Custom",
 };
 const ROLE_ORDER: OrgRole[] = ["OWNER", "ADMIN", "ACCOUNTANT", "VIEWER"];
 

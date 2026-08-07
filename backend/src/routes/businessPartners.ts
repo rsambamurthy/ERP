@@ -1,13 +1,13 @@
 import { Router } from "express";
 import { prisma } from "../db";
-import { authenticate, requireRole, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
+import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { upload } from "../lib/upload";
 import { buildTemplateWorkbook, loadUploadedWorksheet, cellText, cellDateIso } from "../lib/xlsxTemplate";
 
 const router = Router();
 router.use(authenticate, requireActiveSubscription);
-const canManageBp = requireRole("OWNER", "ADMIN", "ACCOUNTANT");
+const canManageBp = requirePermission("businessPartners.manage");
 
 function orgIdOr400(req: import("express").Request, res: import("express").Response): string | null {
   const organizationId = resolveOrgId(req);

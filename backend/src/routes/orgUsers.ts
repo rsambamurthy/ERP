@@ -19,6 +19,28 @@ function orgIdOr400(req: import("express").Request, res: import("express").Respo
   return organizationId;
 }
 
+// A request targets either a fixed role ({role: "ADMIN"}) or a custom one
+// ({role: "CUSTOM", customRoleId}). Resolves to {role, customRoleId} or an
+// error message — doesn't touch the DB itself, callers check existence.
+async function resolveRoleInput(
+  organizationId: string,
+  role: unknown,
+  customRoleId: unknown
+): Promise<{ ok: true; role: string; customRoleId: string | null } | { ok: false; message: string }> {
+  if (role === "CUSTOM") {
+    if (!customRoleId || typeof customRoleId !== "string") {
+      return { ok: false, message: "customRoleId is required when role is CUSTOM." };
+    }
+    const found = await prisma.orgRole.findFirst({ where: { id: customRoleId, organizationId } });
+    if (!found) return { ok: false, message: "Custom role not found." };
+    return { ok: true, role: "CUSTOM", customRoleId };
+  }
+  if (typeof role !== "string" || !ORG_ROLES.includes(role)) {
+    return { ok: false, message: `role must be CUSTOM (with customRoleId) or one of ${ORG_ROLES.join(", ")}.` };
+  }
+  return { ok: true, role, customRoleId: null };
+}
+
 // GET /org/users — current members + pending invites, for the Team settings screen.
 router.get("/", canManageUsers, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
@@ -26,21 +48,30 @@ router.get("/", canManageUsers, async (req, res) => {
 
   const members = await prisma.orgUser.findMany({
     where: { organizationId },
-    include: { user: { select: { id: true, name: true, email: true, phone: true, isVerified: true } } },
+    include: {
+      user: { select: { id: true, name: true, email: true, phone: true, isVerified: true } },
+      customRole: { select: { id: true, name: true } },
+    },
   });
 
   const invites = await prisma.orgInvite.findMany({
     where: { organizationId, acceptedAt: null, expiresAt: { gt: new Date() } },
     orderBy: { createdAt: "desc" },
+    include: { customRole: { select: { id: true, name: true } } },
   });
 
   res.json({
     data: {
       members: members.map((m) => ({
         userId: m.userId, role: m.role, branchId: m.branchId,
+        customRoleId: m.customRoleId, customRoleName: m.customRole?.name ?? null,
         name: m.user.name, email: m.user.email, phone: m.user.phone, isVerified: m.user.isVerified,
       })),
-      invites: invites.map((i) => ({ id: i.id, email: i.email, phone: i.phone, role: i.role, expiresAt: i.expiresAt })),
+      invites: invites.map((i) => ({
+        id: i.id, email: i.email, phone: i.phone, role: i.role,
+        customRoleId: i.customRoleId, customRoleName: i.customRole?.name ?? null,
+        expiresAt: i.expiresAt,
+      })),
     },
   });
 });
@@ -49,14 +80,13 @@ router.get("/", canManageUsers, async (req, res) => {
 router.post("/invite", canManageUsers, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
-  const { email, phone, role } = req.body ?? {};
+  const { email, phone, role, customRoleId } = req.body ?? {};
 
   if ((!email && !phone) || !role) {
     return res.status(400).json({ message: "email or phone, and role, are required." });
   }
-  if (!ORG_ROLES.includes(role)) {
-    return res.status(400).json({ message: `role must be one of ${ORG_ROLES.join(", ")}.` });
-  }
+  const resolved = await resolveRoleInput(organizationId, role, customRoleId);
+  if (!resolved.ok) return res.status(400).json({ message: resolved.message });
 
   const existingUser = await prisma.user.findFirst({
     where: { OR: [email ? { email } : undefined, phone ? { phone } : undefined].filter(Boolean) as any },
@@ -71,7 +101,8 @@ router.post("/invite", canManageUsers, async (req, res) => {
   const token = randomBytes(24).toString("hex");
   const invite = await prisma.orgInvite.create({
     data: {
-      organizationId, email: email ?? null, phone: phone ?? null, role,
+      organizationId, email: email ?? null, phone: phone ?? null,
+      role: resolved.role, customRoleId: resolved.customRoleId,
       invitedBy: req.user!.userId,
       token,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
@@ -81,14 +112,17 @@ router.post("/invite", canManageUsers, async (req, res) => {
   logAudit({
     organizationId, actorUserId: req.user!.userId,
     action: "INVITE", entityType: "org_invite", entityId: invite.id,
-    summary: `Invited ${email || phone} as ${role}`,
+    summary: `Invited ${email || phone} as ${resolved.role}`,
   });
 
   // Dev convenience: no email/SMS provider wired up yet, so hand back the
   // accept-invite link directly (same pattern as devOtp in /auth/register).
   const exposeInviteLink = process.env.EXPOSE_DEV_OTP !== "false";
   res.status(201).json({
-    data: { id: invite.id, email: invite.email, phone: invite.phone, role: invite.role, expiresAt: invite.expiresAt },
+    data: {
+      id: invite.id, email: invite.email, phone: invite.phone,
+      role: invite.role, customRoleId: invite.customRoleId, expiresAt: invite.expiresAt,
+    },
     ...(exposeInviteLink ? { devInviteToken: token } : {}),
   });
 });
@@ -117,11 +151,10 @@ router.delete("/invites/:id", canManageUsers, async (req, res) => {
 router.patch("/:userId/role", canManageUsers, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
-  const { role } = req.body ?? {};
+  const { role, customRoleId } = req.body ?? {};
 
-  if (!ORG_ROLES.includes(role)) {
-    return res.status(400).json({ message: `role must be one of ${ORG_ROLES.join(", ")}.` });
-  }
+  const resolved = await resolveRoleInput(organizationId, role, customRoleId);
+  if (!resolved.ok) return res.status(400).json({ message: resolved.message });
 
   const member = await prisma.orgUser.findUnique({
     where: { organizationId_userId: { organizationId, userId: req.params.userId } },
@@ -131,14 +164,14 @@ router.patch("/:userId/role", canManageUsers, async (req, res) => {
 
   const updated = await prisma.orgUser.update({
     where: { organizationId_userId: { organizationId, userId: member.userId } },
-    data: { role },
+    data: { role: resolved.role, customRoleId: resolved.customRoleId },
   });
   logAudit({
     organizationId, actorUserId: req.user!.userId,
     action: "UPDATE", entityType: "org_user", entityId: member.userId,
-    summary: `Changed a team member's role from ${member.role} to ${role}`,
+    summary: `Changed a team member's role from ${member.role} to ${resolved.role}`,
   });
-  res.json({ data: { userId: updated.userId, role: updated.role } });
+  res.json({ data: { userId: updated.userId, role: updated.role, customRoleId: updated.customRoleId } });
 });
 
 // DELETE /org/users/:userId — revoke access. Can't remove the OWNER, or

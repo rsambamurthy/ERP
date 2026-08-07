@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { Router } from "express";
 import { prisma } from "../db";
-import { authenticate, requireRole, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
+import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { consumeStock, receiveStock, InsufficientStockError } from "../lib/costing";
 
@@ -11,7 +11,7 @@ const router = Router();
 router.use(authenticate, requireActiveSubscription);
 // Same gate as posting a journal entry directly — an adjustment is a real
 // accounting event, not a data-entry convenience.
-const canPost = requireRole("OWNER", "ADMIN", "ACCOUNTANT");
+const canPost = requirePermission("inventory.post");
 
 function orgIdOr400(req: import("express").Request, res: import("express").Response): string | null {
   const organizationId = resolveOrgId(req);

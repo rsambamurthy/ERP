@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { NAV_GROUPS } from "./navGroups";
-import { clearSession, getName, getRole, isLoggedIn, isPlatformAdmin } from "@/lib/auth";
+import { NAV_GROUPS, NavItem } from "./navGroups";
+import { clearSession, getName, getPermissions, getRole, isLoggedIn, isPlatformAdmin } from "@/lib/auth";
 import { getMenuConfig } from "@/lib/api";
 import type { MenuConfigMap } from "@/lib/types";
 
@@ -63,15 +63,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   const role = getRole();
-  const isVisible = (itemId: string, defaultRoles: string[]) => {
-    const override = role ? menuConfig[role]?.[itemId] : undefined;
+  // A CUSTOM role never has org_menu_config overrides (accessControl.ts's
+  // editableRolesFor only offers the four fixed roles) and isn't in any
+  // item's default `roles` list either — its visibility is decided purely
+  // by whether its permission set covers the item's `permission` (undefined
+  // = universal, every custom role sees it, same as every fixed role does
+  // for read-only screens).
+  const isVisible = (item: NavItem) => {
+    if (role === "CUSTOM") {
+      return item.permission === undefined || getPermissions().includes(item.permission);
+    }
+    const override = role ? menuConfig[role]?.[item.id] : undefined;
     if (override !== undefined) return override;
-    return role ? defaultRoles.includes(role) : false;
+    return role ? item.roles.includes(role as any) : false;
   };
 
   const allowedGroups = NAV_GROUPS.map((g) => ({
     ...g,
-    items: g.items.filter((i) => isVisible(i.id, i.roles)),
+    items: g.items.filter((i) => isVisible(i)),
   })).filter((g) => g.items.length > 0);
 
   const activeGroupId = allowedGroups.find((g) =>

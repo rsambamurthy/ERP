@@ -53,7 +53,12 @@ router.get("/organizations/:id", async (req, res) => {
     include: {
       orgDomains: { include: { domainType: true } },
       branches: true,
-      orgUsers: { include: { user: { select: { id: true, email: true, phone: true, isVerified: true } } } },
+      orgUsers: {
+        include: {
+          user: { select: { id: true, email: true, phone: true, isVerified: true } },
+          customRole: { select: { name: true } },
+        },
+      },
       orgModules: { include: { module: true } },
       _count: { select: { journalEntries: true, accounts: true, businessPartners: true } },
     },
@@ -70,7 +75,7 @@ router.get("/organizations/:id", async (req, res) => {
       domains: org.orgDomains.map((d) => ({ code: d.domainType.code, name: d.domainType.name, addedAt: d.addedAt })),
       branches: org.branches.map((b) => ({ id: b.id, code: b.code, name: b.name, isHeadOffice: b.isHeadOffice, status: b.status })),
       users: org.orgUsers.map((u) => ({
-        userId: u.userId, role: u.role,
+        userId: u.userId, role: u.role, customRoleName: u.customRole?.name ?? null,
         email: u.user.email, phone: u.user.phone, isVerified: u.user.isVerified,
       })),
       modules: org.orgModules.map((m) => ({

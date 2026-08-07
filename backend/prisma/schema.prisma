@@ -85,6 +85,7 @@ model Organization {
   branches         Branch[]
   accounts         Account[]
   orgUsers         OrgUser[]
+  orgRoles         OrgRole[]
   onboardingState  OnboardingState?
   orgModules       OrgModule[]
   items            Item[]
@@ -202,6 +203,9 @@ model OrgInvite {
   email          String?   @db.VarChar(255)
   phone          String?   @db.VarChar(20)
   role           String    @db.VarChar(20)
+  // Set together with role = "CUSTOM" when the invite targets a
+  // custom-defined role rather than one of the four fixed ones.
+  customRoleId   String?   @map("custom_role_id") @db.Uuid
   invitedBy      String    @map("invited_by") @db.Uuid
   token          String    @unique @db.VarChar(64)
   expiresAt      DateTime  @map("expires_at")
@@ -210,6 +214,7 @@ model OrgInvite {
 
   organization Organization @relation(fields: [organizationId], references: [id])
   inviter      User         @relation("InvitedBy", fields: [invitedBy], references: [id])
+  customRole   OrgRole?     @relation(fields: [customRoleId], references: [id])
 
   @@map("org_invites")
 }
@@ -234,14 +239,40 @@ model OrgUser {
   organizationId String  @map("organization_id") @db.Uuid
   userId         String  @map("user_id") @db.Uuid
   role           String  @default("OWNER") @db.VarChar(20)
+  // Set together with role = "CUSTOM" when this member holds an
+  // org-defined role rather than one of the four fixed ones.
+  customRoleId   String? @map("custom_role_id") @db.Uuid
   branchId       String? @map("branch_id") @db.Uuid
 
   organization Organization @relation(fields: [organizationId], references: [id])
   user         User         @relation(fields: [userId], references: [id])
   branch       Branch?      @relation(fields: [branchId], references: [id])
+  customRole   OrgRole?     @relation(fields: [customRoleId], references: [id])
 
   @@id([organizationId, userId])
   @@map("org_users")
+}
+
+// Org-defined roles layered on top of the fixed OWNER/ADMIN/ACCOUNTANT/VIEWER
+// four — see middleware/auth.ts's requirePermission() and
+// lib/permissions.ts for how `permissions` (a subset of the fixed catalogue)
+// gets enforced. Creating/editing/deleting these is OWNER/ADMIN-only
+// (requireRole, not requirePermission) — see migration_009's note on why
+// that's not itself a grantable permission.
+model OrgRole {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String   @db.VarChar(50)
+  permissions    String[]
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  orgUsers     OrgUser[]
+  orgInvites   OrgInvite[]
+
+  @@unique([organizationId, name])
+  @@map("org_roles")
 }
 
 // Sparse per-org, per-role menu overrides — see db/migration_005_menu_config.sql.

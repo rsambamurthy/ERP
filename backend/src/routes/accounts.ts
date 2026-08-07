@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../db";
-import { authenticate, requireRole, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
+import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { upload } from "../lib/upload";
 import { buildTemplateWorkbook, loadUploadedWorksheet, cellText, cellDateIso } from "../lib/xlsxTemplate";
@@ -24,7 +24,7 @@ const ACCOUNT_TYPES = ["ASSET", "LIABILITY", "EQUITY", "INCOME", "EXPENSE"];
 const BP_TYPES = ["CUSTOMER", "VENDOR", "ITEM"];
 // Restructuring the Chart of Accounts is an OWNER/ADMIN action — ACCOUNTANT
 // and VIEWER can read it but not add, edit, or deactivate accounts.
-const canManageCoa = requireRole("OWNER", "ADMIN");
+const canManageCoa = requirePermission("coa.manage");
 
 // GET /accounts — full chart of accounts for the org, ordered like a COA
 // screen expects (by type, then sort order, then code).

@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { Router } from "express";
 import { prisma } from "../db";
-import { authenticate, requireRole, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
+import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { consumeStock, InsufficientStockError } from "../lib/costing";
 
@@ -12,7 +12,7 @@ const COGS_CODE = "4001";
 
 const router = Router();
 router.use(authenticate, requireActiveSubscription);
-const canPost = requireRole("OWNER", "ADMIN", "ACCOUNTANT");
+const canPost = requirePermission("sales.post");
 
 function orgIdOr400(req: import("express").Request, res: import("express").Response): string | null {
   const organizationId = resolveOrgId(req);

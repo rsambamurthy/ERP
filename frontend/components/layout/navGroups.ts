@@ -1,4 +1,4 @@
-import type { OrgRole } from "@/lib/types";
+import type { OrgRole, Permission } from "@/lib/types";
 
 // SmartERP's menu structure — same shape SmartAppt's Financial Accounting
 // module uses (NAV_GROUPS: id/label/items[]), scoped down to what an MSME
@@ -24,6 +24,15 @@ export interface NavItem {
   dot: string;
   /** Roles that see this item out of the box, before any org override. */
   roles: OrgRole[];
+  /**
+   * For a role === "CUSTOM" user, visibility isn't decided by `roles`
+   * (that list is only ever the four fixed roles) — it's decided by
+   * whether their custom role was granted this permission. Undefined means
+   * "universal" — every custom role sees it, same as every fixed role does
+   * (read-only screens, mostly). Team/Access Control are never given a
+   * permission here since custom roles can't be granted those at all.
+   */
+  permission?: Permission;
 }
 
 export interface NavGroup {
@@ -51,8 +60,8 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Sales",
     icon: "S",
     items: [
-      { id: "sales_invoices", label: "Sales Invoices", path: "/sales/invoices", dot: "#16a34a", roles: ["OWNER", "ADMIN", "ACCOUNTANT"] },
-      { id: "sales_returns", label: "Sales Returns", path: "/sales/returns", dot: "#65a30d", roles: ["OWNER", "ADMIN", "ACCOUNTANT"] },
+      { id: "sales_invoices", label: "Sales Invoices", path: "/sales/invoices", dot: "#16a34a", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "sales.post" },
+      { id: "sales_returns", label: "Sales Returns", path: "/sales/returns", dot: "#65a30d", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "sales.post" },
     ],
   },
   {
@@ -60,8 +69,8 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Purchase",
     icon: "P",
     items: [
-      { id: "purchase_bills", label: "Purchase Bills", path: "/purchase/bills", dot: "#ea580c", roles: ["OWNER", "ADMIN", "ACCOUNTANT"] },
-      { id: "purchase_returns", label: "Purchase Returns", path: "/purchase/returns", dot: "#c2410c", roles: ["OWNER", "ADMIN", "ACCOUNTANT"] },
+      { id: "purchase_bills", label: "Purchase Bills", path: "/purchase/bills", dot: "#ea580c", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "purchase.post" },
+      { id: "purchase_returns", label: "Purchase Returns", path: "/purchase/returns", dot: "#c2410c", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "purchase.post" },
     ],
   },
   {
@@ -69,7 +78,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Inventory",
     icon: "I",
     items: [
-      { id: "stock_adjustments", label: "Stock Adjustments", path: "/inventory/adjustments", dot: "#dc2626", roles: ["OWNER", "ADMIN", "ACCOUNTANT"] },
+      { id: "stock_adjustments", label: "Stock Adjustments", path: "/inventory/adjustments", dot: "#dc2626", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "inventory.post" },
       { id: "stock_ledger", label: "Stock Ledger", path: "/inventory/stock-ledger", dot: "#0891b2", roles: ALL_ROLES },
       { id: "item_valuation", label: "Item Valuation", path: "/inventory/valuation", dot: "#7c3aed", roles: ALL_ROLES },
     ],

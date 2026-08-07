@@ -3,8 +3,25 @@ import { prisma } from "../db";
 import { hashPassword, verifyPassword } from "../lib/password";
 import { generateOtp, otpExpiry, sendOtp } from "../lib/otp";
 import { signToken } from "../lib/jwt";
+import { builtInPermissions, Permission } from "../lib/permissions";
 
 const router = Router();
+
+// Resolves the permission list to hand back in the login/verify/accept
+// response — built-in roles resolve locally, a "CUSTOM" role needs its
+// org_roles row. The frontend stores this alongside role/name (see
+// lib/auth.ts) purely to decide what to show in the sidebar; the backend
+// re-checks the real thing on every write via requirePermission().
+async function resolvePermissions(role: string | null, customRoleId: string | null): Promise<Permission[]> {
+  if (!role) return [];
+  const builtIn = builtInPermissions(role);
+  if (builtIn !== null) return builtIn;
+  if (role === "CUSTOM" && customRoleId) {
+    const customRole = await prisma.orgRole.findUnique({ where: { id: customRoleId } });
+    return (customRole?.permissions as Permission[] | undefined) ?? [];
+  }
+  return [];
+}
 
 // POST /auth/register — create user + org shell (status PENDING_VERIFICATION)
 router.post("/register", async (req, res) => {
@@ -100,12 +117,14 @@ router.post("/verify-otp", async (req, res) => {
         userId: orgUser.userId,
         organizationId,
         role: orgUser.role,
+        customRoleId: orgUser.customRoleId,
         branchId: orgUser.branchId,
         isPlatformAdmin: false,
       })
     : null;
+  const permissions = orgUser ? await resolvePermissions(orgUser.role, orgUser.customRoleId) : [];
 
-  res.json({ ok: true, token });
+  res.json({ ok: true, token, permissions });
 });
 
 // POST /auth/login — for returning users (registration already happened).
@@ -132,6 +151,7 @@ router.post("/login", async (req, res) => {
       userId: user.id,
       organizationId: null,
       role: null,
+      customRoleId: null,
       branchId: null,
       isPlatformAdmin: true,
     });
@@ -149,11 +169,16 @@ router.post("/login", async (req, res) => {
     userId: user.id,
     organizationId: orgUser.organizationId,
     role: orgUser.role,
+    customRoleId: orgUser.customRoleId,
     branchId: orgUser.branchId,
     isPlatformAdmin: false,
   });
+  const permissions = await resolvePermissions(orgUser.role, orgUser.customRoleId);
 
-  res.json({ token, organizationId: orgUser.organizationId, role: orgUser.role, isPlatformAdmin: false, name: user.name });
+  res.json({
+    token, organizationId: orgUser.organizationId, role: orgUser.role, isPlatformAdmin: false, name: user.name,
+    permissions,
+  });
 });
 
 // POST /auth/accept-invite — the link an invited teammate gets. Creates
@@ -193,7 +218,10 @@ router.post("/accept-invite", async (req, res) => {
           data: { name, email: invite.email, phone: invite.phone, passwordHash, isVerified: true },
         });
     await tx.orgUser.create({
-      data: { organizationId: invite.organizationId, userId: u.id, role: invite.role },
+      data: {
+        organizationId: invite.organizationId, userId: u.id,
+        role: invite.role, customRoleId: invite.customRoleId,
+      },
     });
     await tx.orgInvite.update({ where: { id: invite.id }, data: { acceptedAt: new Date() } });
     return u;
@@ -203,11 +231,13 @@ router.post("/accept-invite", async (req, res) => {
     userId: user.id,
     organizationId: invite.organizationId,
     role: invite.role,
+    customRoleId: invite.customRoleId,
     branchId: null,
     isPlatformAdmin: false,
   });
+  const permissions = await resolvePermissions(invite.role, invite.customRoleId);
 
-  res.json({ token: token2, organizationId: invite.organizationId, role: invite.role, name: user.name });
+  res.json({ token: token2, organizationId: invite.organizationId, role: invite.role, name: user.name, permissions });
 });
 
 export default router;

@@ -18,6 +18,7 @@ psql "$DATABASE_URL" -f ../db/migration_005_menu_config.sql
 psql "$DATABASE_URL" -f ../db/migration_006_sales_purchase_inventory.sql
 psql "$DATABASE_URL" -f ../db/migration_007_user_name_and_bp_code.sql
 psql "$DATABASE_URL" -f ../db/migration_008_sales_purchase_returns.sql
+psql "$DATABASE_URL" -f ../db/migration_009_custom_roles.sql
 npx prisma generate
 npx prisma db seed         # seeds domain_types, modules, coa_templates
 npm run create-admin -- --email you@example.com --password "something long"   # makes yourself a platform admin
@@ -88,13 +89,41 @@ Always tied to an existing Sales Invoice / Purchase Bill — `GET .../invoice/:i
 | Endpoint | Notes |
 |---|---|
 | `GET /org/users` | Current members + pending invites. |
-| `POST /org/users/invite` | `{ email\|phone, role }` → creates an invite, returns `devInviteToken` (until a real email/SMS provider exists) to build the accept-invite link from. |
+| `POST /org/users/invite` | `{ email\|phone, role, customRoleId? }` → creates an invite, returns `devInviteToken` (until a real email/SMS provider exists) to build the accept-invite link from. `role` is one of `ADMIN\|ACCOUNTANT\|VIEWER\|CUSTOM`; `CUSTOM` requires `customRoleId`. |
 | `DELETE /org/users/invites/:id` | Cancel a pending invite. |
-| `PATCH /org/users/:userId/role` | Change a teammate's role. Can't touch the OWNER. |
+| `PATCH /org/users/:userId/role` | Change a teammate's role (`{ role, customRoleId? }`, same shape as invite). Can't touch the OWNER. |
 | `DELETE /org/users/:userId` | Revoke access. Can't remove the OWNER or yourself. |
-| `POST /auth/accept-invite` | `{ token, password }` → creates the login, joins the org, returns a session token. |
+| `POST /auth/accept-invite` | `{ token, password }` → creates the login, joins the org, returns a session token + resolved `permissions`. |
 
-Roles: **OWNER** (one per org, set at registration, full access) · **ADMIN** (same minus touching the OWNER) · **ACCOUNTANT** (post transactions, manage business partners) · **VIEWER** (read-only). Enforced server-side via `requireRole()` in `middleware/auth.ts` — not just hidden UI.
+Roles: **OWNER** (one per org, set at registration, full access) · **ADMIN** (same minus touching the OWNER) · **ACCOUNTANT** (post transactions, manage business partners) · **VIEWER** (read-only) · **CUSTOM** (org-defined, see below). Module-level write access is enforced server-side via `requirePermission()` in `middleware/auth.ts` — not just hidden UI. Team/role management and Access Control config stay on `requireRole("OWNER", "ADMIN")` specifically, never `requirePermission()` — see Custom Roles below for why.
+
+### Custom Roles (`/org-roles`, OWNER/ADMIN only)
+
+An org can define its own named roles on top of the four fixed ones, each a
+subset of a fixed seven-permission catalogue (`lib/permissions.ts`):
+`coa.manage`, `items.manage`, `businessPartners.manage`, `sales.post`,
+`purchase.post`, `inventory.post`, `journal.post`. A member/invite holding a
+custom role has `role = "CUSTOM"` plus `customRoleId` pointing at the role
+row (`org_users`/`org_invites`, `migration_009_custom_roles.sql`).
+
+Deliberately **not** in that catalogue: managing team members/roles and
+configuring menu visibility. Either one, made grantable, would let a custom
+role holder define a more powerful role (or edit their own role's
+permissions) and assign it to themselves — defining/editing/deleting roles
+and assigning them to people both stay hardcoded `requireRole("OWNER",
+"ADMIN")`, never `requirePermission()`.
+
+| Endpoint | Notes |
+|---|---|
+| `GET /org-roles` | This org's custom roles, plus the permission catalogue. |
+| `POST /org-roles` | `{ name, permissions: [...] }` — name can't reuse a built-in role name. |
+| `PATCH /org-roles/:id` | Rename and/or change permissions — takes effect on the holder's next request (permissions aren't cached in the JWT, just resolved per-request in `requirePermission()`). |
+| `DELETE /org-roles/:id` | Refuses (409) if any member or pending invite still holds the role. |
+
+`OWNER`/`ADMIN`/`ACCOUNTANT` keep their exact pre-existing permission sets
+(re-expressed as fixed entries in `builtInPermissions()`, not stored in the
+DB) — this was a re-expression of `requireRole()`'s old behavior across
+every route, not a behavior change.
 
 ### Access control (`/access-control/*`) — which sidebar items a role sees
 
