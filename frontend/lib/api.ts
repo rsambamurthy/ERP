@@ -35,6 +35,8 @@ import type {
   RegisterPayload,
   RegisterResponse,
   SalesInvoice,
+  SalesLineInput,
+  DiscountType,
   SalesReturn,
   SalesReturnableResponse,
   SalesReturnLineInput,
@@ -289,6 +291,7 @@ export function getItems() {
 export function createItem(body: {
   sku: string; name: string; description?: string; uom?: string; hsnCode?: string;
   isFinishedGood?: boolean; stockAccountId: string; salesRate?: number; purchaseRate?: number; taxRate?: number;
+  defaultDiscountPct?: number;
   openingQuantity?: number; openingCost?: number; openingBranchId?: string; openingDate?: string;
 }) {
   return request<{ data: Item }>("/items", { method: "POST", body: JSON.stringify(body) });
@@ -306,6 +309,10 @@ export function getPurchaseBills() {
   return request<{ data: PurchaseBill[] }>("/purchase-bills");
 }
 
+export function getPurchaseBill(id: string) {
+  return request<{ data: PurchaseBill }>(`/purchase-bills/${id}`);
+}
+
 export function createPurchaseBill(body: {
   businessPartnerId: string; billDate: string; branchId?: string; narration?: string; lines: DocumentLineInput[];
 }) {
@@ -316,8 +323,13 @@ export function getSalesInvoices() {
   return request<{ data: SalesInvoice[] }>("/sales-invoices");
 }
 
+export function getSalesInvoice(id: string) {
+  return request<{ data: SalesInvoice }>(`/sales-invoices/${id}`);
+}
+
 export function createSalesInvoice(body: {
-  businessPartnerId: string; invoiceDate: string; branchId?: string; narration?: string; lines: DocumentLineInput[];
+  businessPartnerId: string; invoiceDate: string; branchId?: string; narration?: string; lines: SalesLineInput[];
+  discountType?: DiscountType | null; discountValue?: number;
 }) {
   return request<{ data: SalesInvoice }>("/sales-invoices", { method: "POST", body: JSON.stringify(body) });
 }
@@ -428,13 +440,13 @@ export function getBranches() {
 }
 
 export function createBranch(body: {
-  code: string; name: string; gstin?: string; phone?: string; email?: string; address?: unknown; isHeadOffice?: boolean;
+  code: string; name: string; gstin?: string; stateCode?: string; phone?: string; email?: string; address?: unknown; isHeadOffice?: boolean;
 }) {
   return request<{ data: Branch }>("/branches", { method: "POST", body: JSON.stringify(body) });
 }
 
 export function updateBranch(id: string, body: Partial<{
-  code: string; name: string; gstin: string; phone: string; email: string; address: unknown; isHeadOffice: boolean;
+  code: string; name: string; gstin: string; stateCode: string; phone: string; email: string; address: unknown; isHeadOffice: boolean;
 }>) {
   return request<{ data: Branch }>(`/branches/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 }

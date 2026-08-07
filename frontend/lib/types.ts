@@ -78,6 +78,9 @@ export interface BusinessPartner {
   bpType: "CUSTOMER" | "VENDOR" | "ITEM";
   name: string;
   gstin: string | null;
+  // GST state code — auto-filled from gstin's first 2 characters when set,
+  // independently editable. See Branch.stateCode for what it feeds.
+  stateCode: string | null;
   phone: string | null;
   email: string | null;
   openingBalance: string;
@@ -210,8 +213,13 @@ export interface Item {
   salesRate: string | null;
   purchaseRate: string | null;
   taxRate: string;
+  // Seeds a Sales Invoice line's discount % when this item is picked —
+  // freely overridable on the line itself.
+  defaultDiscountPct: string;
   totalQuantityOnHand: number;
 }
+
+export type DiscountType = "PERCENT" | "FLAT";
 
 export interface DocumentLineInput {
   itemId: string;
@@ -220,12 +228,28 @@ export interface DocumentLineInput {
   taxRate?: number;
 }
 
+// Sales Invoice lines additionally carry a discount — Purchase Bill lines
+// stay DocumentLineInput as-is (no discount concept — see ROADMAP.md).
+export interface SalesLineInput extends DocumentLineInput {
+  discountType?: DiscountType | null;
+  discountValue?: number;
+}
+
 export interface DocumentLine extends DocumentLineInput {
   id: string;
   item: { id: string; sku: string; name: string };
-  lineSubtotal: string;
-  taxAmount: string;
+  lineSubtotal: string; // gross, qty*rate
+  taxAmount: string; // cgstAmount + sgstAmount + igstAmount
   lineTotal: string;
+  cgstAmount: string;
+  sgstAmount: string;
+  igstAmount: string;
+}
+
+export interface SalesInvoiceLine extends DocumentLine, SalesLineInput {
+  lineDiscountAmount: string;
+  invoiceDiscountShare: string;
+  taxableValue: string;
 }
 
 export interface SalesInvoice {
@@ -234,11 +258,17 @@ export interface SalesInvoice {
   invoiceDate: string;
   narration: string;
   businessPartner: { id: string; name: string };
-  subtotal: string;
+  subtotal: string; // gross, pre-discount
   taxTotal: string;
   grandTotal: string;
   totalCogs: string;
-  lines: DocumentLine[];
+  discountType: DiscountType | null;
+  discountValue: string;
+  discountTotal: string;
+  cgstTotal: string;
+  sgstTotal: string;
+  igstTotal: string;
+  lines: SalesInvoiceLine[];
 }
 
 export interface PurchaseBill {
@@ -250,6 +280,9 @@ export interface PurchaseBill {
   subtotal: string;
   taxTotal: string;
   grandTotal: string;
+  cgstTotal: string;
+  sgstTotal: string;
+  igstTotal: string;
   lines: DocumentLine[];
 }
 
@@ -404,6 +437,11 @@ export interface Branch {
   code: string;
   name: string;
   gstin: string | null;
+  // GST state code — auto-filled from gstin's first 2 characters when set,
+  // independently editable (a branch has a state even without a GSTIN).
+  // Compared against the counterparty's stateCode at Sales/Purchase
+  // posting time to decide CGST+SGST vs IGST.
+  stateCode: string | null;
   phone: string | null;
   email: string | null;
   address: unknown;

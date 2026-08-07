@@ -103,9 +103,27 @@ async function main() {
     },
     // Sales/Purchase/Inventory v1 — see routes/salesInvoices.ts,
     // purchaseBills.ts, stockAdjustments.ts for how these get posted to.
+    // Legacy single-account GST — kept in the COA for orgs with historical
+    // postings against them (trial balance integrity), but Sales
+    // Invoice/Purchase Bill no longer post new transactions here — see the
+    // CGST/SGST/IGST split accounts below.
     { domainTypeId: null, accountCode: "1101", accountName: "GST Input Credit", accountType: "ASSET" },
     { domainTypeId: null, accountCode: "2101", accountName: "GST Output Payable", accountType: "LIABILITY" },
+    // CGST/SGST/IGST split — see routes/salesInvoices.ts and
+    // routes/purchaseBills.ts for the intra-state (CGST+SGST) vs
+    // inter-state (IGST) determination this feeds.
+    { domainTypeId: null, accountCode: "1102", accountName: "CGST Input Credit", accountType: "ASSET" },
+    { domainTypeId: null, accountCode: "1103", accountName: "SGST Input Credit", accountType: "ASSET" },
+    { domainTypeId: null, accountCode: "1104", accountName: "IGST Input Credit", accountType: "ASSET" },
+    { domainTypeId: null, accountCode: "2102", accountName: "CGST Output Payable", accountType: "LIABILITY" },
+    { domainTypeId: null, accountCode: "2103", accountName: "SGST Output Payable", accountType: "LIABILITY" },
+    { domainTypeId: null, accountCode: "2104", accountName: "IGST Output Payable", accountType: "LIABILITY" },
     { domainTypeId: null, accountCode: "4001", accountName: "Cost of Goods Sold", accountType: "EXPENSE" },
+    // Gross-method Sales Invoice discount posting: Sales Revenue posts at
+    // full pre-discount value, this contra account absorbs everything taken
+    // off (line-level + invoice-level discount combined) — see
+    // routes/salesInvoices.ts.
+    { domainTypeId: null, accountCode: "4003", accountName: "Discount Allowed", accountType: "EXPENSE" },
     // Both directions of Stock Adjustment post here — a write-off debits
     // it (a real loss), a found-stock/opening correction credits it (a
     // contra that nets the expense down). One account, either direction,

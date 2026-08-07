@@ -23,6 +23,7 @@ psql "$DATABASE_URL" -f ../db/migration_010_user_management.sql
 psql "$DATABASE_URL" -f ../db/migration_011_custom_role_access_control.sql
 psql "$DATABASE_URL" -f ../db/migration_012_employee_details.sql
 psql "$DATABASE_URL" -f ../db/migration_013_branch_crud.sql
+psql "$DATABASE_URL" -f ../db/migration_014_discount_gst.sql
 npx prisma generate
 npx prisma db seed         # seeds domain_types, modules, coa_templates
 npm run create-admin -- --email you@example.com --password "something long"   # makes yourself a platform admin
@@ -77,7 +78,7 @@ different).
 | Endpoint | Notes |
 |---|---|
 | `GET /branches` | This org's branches (or, for a platform admin, `?organizationId=`). |
-| `POST /branches` | `{ code, name, gstin?, phone?, email?, address?, isHeadOffice? }`. `gstin` is validated against the standard 15-character format if provided. Setting `isHeadOffice: true` un-flags whichever branch had it before — at most one head office per org, always reassignable. |
+| `POST /branches` | `{ code, name, gstin?, stateCode?, phone?, email?, address?, isHeadOffice? }`. `gstin` is validated against the standard 15-character format if provided. `stateCode` (2-digit GST state code) is auto-derived from `gstin`'s first 2 characters when `gstin` is given and `stateCode` isn't — see Discount + GST Split below for what it feeds. Setting `isHeadOffice: true` un-flags whichever branch had it before — at most one head office per org, always reassignable. |
 | `PATCH /branches/:id` | Same fields, all optional — only what's sent changes. |
 | `PATCH /branches/:id/toggle` | Active/Inactive. Refuses on the head office branch (reassign head office first). |
 | `DELETE /branches/:id` | Soft-delete (`deleted_at`) — refuses (409) if the branch is the head office, has any team member assigned (`org_users.branch_id`), or has any `journal_entries`/`stock_movements` — every transactional document already pairs those two per branch, so checking them covers Sales/Purchase/Adjustments/Returns without checking each document type individually. Deactivate instead if it's ever been used. |
@@ -95,11 +96,44 @@ v1: direct invoicing only (no Sales/Purchase Order stage — see ROADMAP.md), Pu
 | `GET/POST /items/costing-method` | Read, or set-once, the org's stock valuation method. |
 | `GET /items/stock-accounts` | The org's item control accounts (Inventory / Raw Materials / Finished Goods), for the item-create form. |
 | `GET/POST /items`, `PATCH /items/:id`, `DELETE /items/:id` | Item master. Create also creates the paired `bpType = ITEM` Business Partner (never exposed separately) and, if `openingQuantity` is set, the opening stock movement. Delete only if it's never had a stock movement. |
-| `GET/POST /purchase-bills`, `GET /purchase-bills/:id` | Stock inward. Posts: Dr each line's item stock account (tagged that item's BP) + Dr GST Input, Cr Trade Payables (tagged the vendor). |
-| `GET/POST /sales-invoices`, `GET /sales-invoices/:id` | Stock outward — rejected if a branch's on-hand can't cover a line. Posts: Dr Trade Receivables (tagged the customer), Cr Sales Revenue + Cr GST Output, Dr Cost of Goods Sold, Cr each line's item stock account (tagged that item's BP). |
+| `GET/POST /purchase-bills`, `GET /purchase-bills/:id` | Stock inward. Posts: Dr each line's item stock account (tagged that item's BP) + Dr CGST/SGST/IGST Input (split — see Discount + GST Split below), Cr Trade Payables (tagged the vendor). |
+| `GET/POST /sales-invoices`, `GET /sales-invoices/:id` | Stock outward — rejected if a branch's on-hand can't cover a line. Posts: Dr Trade Receivables (tagged the customer), Cr Sales Revenue (gross, pre-discount) + Dr Discount Allowed + Cr CGST/SGST/IGST Output (split), Dr Cost of Goods Sold, Cr each line's item stock account (tagged that item's BP). See Discount + GST Split below for the full line-level math. |
 | `GET/POST /stock-adjustments` | Both directions in one document — IN (found stock/opening, needs an explicit `unitCost`) and OUT (write-off/shrinkage, costed automatically). Posts to Inventory Adjustments either direction. |
 | `GET /inventory/stock-ledger?itemId=&branchId=&from=&to=` | Running quantity balance for one item — the Stock Movement equivalent of `/journal/ledger`. |
 | `GET /inventory/valuation?branchId=` | Every item currently on hand and its value — reads `ItemStock.averageCost` for weighted-avg orgs, sums remaining `StockLot`s for FIFO orgs. |
+
+### Discount + GST Split (Sales Invoice, Purchase Bill)
+
+Sales Invoice lines carry a discount (item's `defaultDiscountPct` seeds it,
+freely overridden — `{ discountType: "PERCENT" | "FLAT", discountValue }`
+per line), and the invoice itself can carry one more discount on top
+(`{ discountType, discountValue }` in the request body) — prorated across
+lines by their post-line-discount value (`lib/discountGst.ts`
+`computeDiscountedLines()`), with the last line absorbing any rounding
+remainder so the stored per-line figures always sum exactly to the
+invoice-level total. GST is computed on what's left after both discounts —
+never on the gross rate. Purchase Bill has no discount concept (out of
+scope for this pass — see ROADMAP.md).
+
+Both documents split GST into CGST+SGST (same state) or IGST (different
+state) by comparing the posting branch's `stateCode` against the customer's/
+vendor's `stateCode` (`lib/discountGst.ts` `isInterState()`) — falls back to
+CGST+SGST if either side's `stateCode` is unset, rather than blocking
+posting. New GL accounts: `1102/1103/1104` CGST/SGST/IGST Input Credit,
+`2102/2103/2104` CGST/SGST/IGST Output Payable, `4003` Discount Allowed
+(contra-revenue, modeled as EXPENSE since the schema has no separate
+contra-income type — same convention `4002` Inventory Adjustments already
+uses). The old single-account `1101`/`2101` GST Input/Output stay in the
+COA for historical postings but no longer receive new ones.
+
+Requires `db/migration_014_discount_gst.sql`, then `npx prisma db seed`
+(new `coa_templates` rows) — existing orgs then pull the new accounts in via
+Chart of Accounts → **Sync from Templates**.
+
+Known gap: Sales Return still reads `rate`/`taxRate` straight off the
+original invoice line and has no discount awareness, so returning a
+discounted line refunds it at the pre-discount rate. Not fixed in this pass
+— flagged for whenever Returns gets revisited.
 
 ### Bulk upload (`/accounts`, `/items`, `/business-partners` — `/bulk-upload/*`)
 
@@ -258,8 +292,14 @@ real transactional endpoints are built later.
    psql "$DATABASE_URL" -f ../db/migration_004_module_subscriptions.sql
    psql "$DATABASE_URL" -f ../db/migration_005_menu_config.sql
    psql "$DATABASE_URL" -f ../db/migration_006_sales_purchase_inventory.sql
-psql "$DATABASE_URL" -f ../db/migration_007_user_name_and_bp_code.sql
-psql "$DATABASE_URL" -f ../db/migration_008_sales_purchase_returns.sql
+   psql "$DATABASE_URL" -f ../db/migration_007_user_name_and_bp_code.sql
+   psql "$DATABASE_URL" -f ../db/migration_008_sales_purchase_returns.sql
+   psql "$DATABASE_URL" -f ../db/migration_009_custom_roles.sql
+   psql "$DATABASE_URL" -f ../db/migration_010_user_management.sql
+   psql "$DATABASE_URL" -f ../db/migration_011_custom_role_access_control.sql
+   psql "$DATABASE_URL" -f ../db/migration_012_employee_details.sql
+   psql "$DATABASE_URL" -f ../db/migration_013_branch_crud.sql
+   psql "$DATABASE_URL" -f ../db/migration_014_discount_gst.sql
    npx prisma db seed
    npm run create-admin -- --email you@example.com --password "something long"
    ```

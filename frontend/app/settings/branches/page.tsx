@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
 import { ApiError, createBranch, deleteBranch, getBranches, toggleBranch, updateBranch } from "@/lib/api";
+import { GST_STATE_CODES } from "@/lib/gstStates";
 import type { Branch } from "@/lib/types";
 
 const emptyForm = () => ({
-  code: "", name: "", gstin: "", phone: "", email: "", addressText: "", isHeadOffice: false,
+  code: "", name: "", gstin: "", stateCode: "", phone: "", email: "", addressText: "", isHeadOffice: false,
 });
 type FormState = ReturnType<typeof emptyForm>;
 
@@ -44,7 +45,7 @@ export default function BranchesPage() {
   function startEdit(b: Branch) {
     setEditingId(b.id);
     setForm({
-      code: b.code, name: b.name, gstin: b.gstin ?? "", phone: b.phone ?? "", email: b.email ?? "",
+      code: b.code, name: b.name, gstin: b.gstin ?? "", stateCode: b.stateCode ?? "", phone: b.phone ?? "", email: b.email ?? "",
       addressText: typeof b.address === "string" ? b.address : b.address ? JSON.stringify(b.address) : "",
       isHeadOffice: b.isHeadOffice,
     });
@@ -59,7 +60,8 @@ export default function BranchesPage() {
     try {
       const body = {
         code: form.code, name: form.name,
-        gstin: form.gstin || undefined, phone: form.phone || undefined, email: form.email || undefined,
+        gstin: form.gstin || undefined, stateCode: form.stateCode || undefined,
+        phone: form.phone || undefined, email: form.email || undefined,
         address: form.addressText || undefined,
         isHeadOffice: form.isHeadOffice,
       };
@@ -131,6 +133,13 @@ export default function BranchesPage() {
                 className="ent-fc" value={form.gstin} placeholder="29ABCDE1234F1Z5" maxLength={15}
                 onChange={(e) => setForm((f) => ({ ...f, gstin: e.target.value.toUpperCase() }))}
               />
+            </div>
+            <div className="ent-fg">
+              <label className="ent-fl">State (GST)</label>
+              <select className="ent-fc" value={form.stateCode} onChange={(e) => setForm((f) => ({ ...f, stateCode: e.target.value }))}>
+                <option value="">Auto from GSTIN, or select…</option>
+                {GST_STATE_CODES.map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}
+              </select>
             </div>
             <div className="ent-fg">
               <label className="ent-fl">Phone</label>

@@ -17,7 +17,7 @@ const ITEM_UPLOAD_COLUMNS: { key: keyof ItemUploadRow; label: string }[] = [
 
 const emptyForm = () => ({
   sku: "", name: "", description: "", uom: "EA", hsnCode: "", isFinishedGood: false,
-  stockAccountId: "", salesRate: "", purchaseRate: "", taxRate: "0",
+  stockAccountId: "", salesRate: "", purchaseRate: "", taxRate: "0", defaultDiscountPct: "0",
   openingQuantity: "", openingCost: "",
 });
 
@@ -59,6 +59,7 @@ function ItemsPageInner() {
         salesRate: form.salesRate ? Number(form.salesRate) : undefined,
         purchaseRate: form.purchaseRate ? Number(form.purchaseRate) : undefined,
         taxRate: form.taxRate ? Number(form.taxRate) : undefined,
+        defaultDiscountPct: form.defaultDiscountPct ? Number(form.defaultDiscountPct) : undefined,
         openingQuantity: form.openingQuantity ? Number(form.openingQuantity) : undefined,
         openingCost: form.openingCost ? Number(form.openingCost) : undefined,
       });
@@ -117,6 +118,10 @@ function ItemsPageInner() {
             <div className="ent-fg">
               <label className="ent-fl">Tax Rate %</label>
               <input type="number" min={0} step="0.01" className="ent-fc" value={form.taxRate} onChange={(e) => setForm((f) => ({ ...f, taxRate: e.target.value }))} />
+            </div>
+            <div className="ent-fg">
+              <label className="ent-fl">Default Discount %</label>
+              <input type="number" min={0} step="0.01" className="ent-fc" value={form.defaultDiscountPct} onChange={(e) => setForm((f) => ({ ...f, defaultDiscountPct: e.target.value }))} />
             </div>
             <div className="ent-fg">
               <label className="ent-fl">Sales Rate</label>

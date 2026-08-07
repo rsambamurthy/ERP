@@ -4,15 +4,17 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
-import { ApiError, createSalesInvoice, getBusinessPartners, getItems, getSalesInvoices } from "@/lib/api";
-import type { BusinessPartner, DocumentLineInput, Item, SalesInvoice } from "@/lib/types";
+import { ApiError, createSalesInvoice, getBranches, getBusinessPartners, getItems, getSalesInvoice, getSalesInvoices } from "@/lib/api";
+import { computeDiscountedLines, isInterState, round2 } from "@/lib/discountGst";
+import type { Branch, BusinessPartner, DiscountType, Item, SalesInvoice, SalesLineInput } from "@/lib/types";
 
-const emptyLine = (): DocumentLineInput => ({ itemId: "", quantity: 0, rate: 0, taxRate: 0 });
+const emptyLine = (): SalesLineInput => ({ itemId: "", quantity: 0, rate: 0, taxRate: 0, discountType: null, discountValue: 0 });
 
 function SalesInvoicesInner() {
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [customers, setCustomers] = useState<BusinessPartner[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -21,27 +23,50 @@ function SalesInvoicesInner() {
   const [businessPartnerId, setBusinessPartnerId] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [narration, setNarration] = useState("");
-  const [lines, setLines] = useState<DocumentLineInput[]>([emptyLine()]);
+  const [lines, setLines] = useState<SalesLineInput[]>([emptyLine()]);
+  const [invoiceDiscountType, setInvoiceDiscountType] = useState<DiscountType | "">("");
+  const [invoiceDiscountValue, setInvoiceDiscountValue] = useState("");
+
+  const [detail, setDetail] = useState<SalesInvoice | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
   const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
+  const selectedCustomer = useMemo(() => customers.find((c) => c.id === businessPartnerId), [customers, businessPartnerId]);
+  // No branch selector on this form yet — the server defaults to head
+  // office when branchId isn't given, so the preview mirrors that here too.
+  const headOffice = useMemo(() => branches.find((b) => b.isHeadOffice), [branches]);
+  const interState = isInterState(headOffice?.stateCode, selectedCustomer?.stateCode);
+
+  const discountLines = useMemo(
+    () =>
+      computeDiscountedLines(
+        lines.map((l) => ({ quantity: Number(l.quantity || 0), rate: Number(l.rate || 0), taxRate: Number(l.taxRate || 0), discountType: l.discountType, discountValue: Number(l.discountValue || 0) })),
+        { type: invoiceDiscountType || null, value: Number(invoiceDiscountValue || 0) },
+        interState
+      ),
+    [lines, invoiceDiscountType, invoiceDiscountValue, interState]
+  );
 
   const totals = useMemo(() => {
-    let subtotal = 0, tax = 0;
-    for (const l of lines) {
-      const s = Number(l.quantity || 0) * Number(l.rate || 0);
-      subtotal += s;
-      tax += s * Number(l.taxRate || 0) / 100;
+    let subtotal = 0, discountTotal = 0, tax = 0, cgst = 0, sgst = 0, igst = 0, grand = 0;
+    for (const d of discountLines) {
+      subtotal += d.lineSubtotal;
+      discountTotal += round2(d.lineDiscountAmount + d.invoiceDiscountShare);
+      tax += d.taxAmount; cgst += d.cgstAmount; sgst += d.sgstAmount; igst += d.igstAmount;
+      grand += d.lineTotal;
     }
-    return { subtotal, tax, grand: subtotal + tax };
-  }, [lines]);
+    return { subtotal, discountTotal, tax, cgst, sgst, igst, grand };
+  }, [discountLines]);
 
   async function loadAll() {
     setLoading(true);
     try {
-      const [invRes, itemsRes, custRes] = await Promise.all([getSalesInvoices(), getItems(), getBusinessPartners("CUSTOMER")]);
+      const [invRes, itemsRes, custRes, branchRes] = await Promise.all([getSalesInvoices(), getItems(), getBusinessPartners("CUSTOMER"), getBranches()]);
       setInvoices(invRes.data);
       setItems(itemsRes.data);
       setCustomers(custRes.data);
+      setBranches(branchRes.data);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load sales invoices.");
     } finally {
@@ -51,16 +76,34 @@ function SalesInvoicesInner() {
 
   useEffect(() => { loadAll(); }, []);
 
-  function updateLine(i: number, patch: Partial<DocumentLineInput>) {
+  async function openDetail(id: string) {
+    setShowForm(false);
+    setDetail(null);
+    setDetailError(null);
+    setDetailLoading(true);
+    try {
+      const res = await getSalesInvoice(id);
+      setDetail(res.data);
+    } catch (err) {
+      setDetailError(err instanceof ApiError ? err.message : "Could not load invoice.");
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  function updateLine(i: number, patch: Partial<SalesLineInput>) {
     setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   }
 
   function pickItem(i: number, itemId: string) {
     const item = itemById.get(itemId);
+    const defaultDiscount = item?.defaultDiscountPct ? Number(item.defaultDiscountPct) : 0;
     updateLine(i, {
       itemId,
       rate: item?.salesRate ? Number(item.salesRate) : 0,
       taxRate: item?.taxRate ? Number(item.taxRate) : 0,
+      discountType: defaultDiscount > 0 ? "PERCENT" : null,
+      discountValue: defaultDiscount,
     });
   }
 
@@ -72,9 +115,12 @@ function SalesInvoicesInner() {
       await createSalesInvoice({
         businessPartnerId, invoiceDate, narration,
         lines: lines.filter((l) => l.itemId && l.quantity > 0),
+        discountType: invoiceDiscountType || null,
+        discountValue: invoiceDiscountValue ? Number(invoiceDiscountValue) : 0,
       });
       setShowForm(false);
       setBusinessPartnerId(""); setNarration(""); setLines([emptyLine()]);
+      setInvoiceDiscountType(""); setInvoiceDiscountValue("");
       await loadAll();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not post invoice.");
@@ -87,12 +133,12 @@ function SalesInvoicesInner() {
     <>
       <div className="ent-page-hdr">
         <h1>Sales Invoices</h1>
-        <p>Stock out, posted straight to the books — Trade Receivables, Sales Revenue, GST, and Cost of Goods Sold.</p>
+        <p>Stock out, posted straight to the books — Trade Receivables, Sales Revenue, Discount Allowed, CGST/SGST/IGST, and Cost of Goods Sold.</p>
       </div>
 
       <div className="ent-toolbar">
         <div style={{ flex: 1 }} />
-        <button className="ent-btn-add" onClick={() => setShowForm((s) => !s)}>{showForm ? "Cancel" : "+ New Invoice"}</button>
+        <button className="ent-btn-add" onClick={() => { setShowForm((s) => !s); setDetail(null); setDetailError(null); }}>{showForm ? "Cancel" : "+ New Invoice"}</button>
       </div>
 
       {showForm && (
@@ -118,7 +164,7 @@ function SalesInvoicesInner() {
 
           <div style={{ padding: "0 14px" }}>
             <table className="ent-table">
-              <thead><tr><th style={{ width: "36%" }}>Item</th><th>Qty</th><th>Rate</th><th>Tax %</th><th /></tr></thead>
+              <thead><tr><th style={{ width: "30%" }}>Item</th><th>Qty</th><th>Rate</th><th>Discount</th><th>Tax %</th><th /></tr></thead>
               <tbody>
                 {lines.map((line, i) => (
                   <tr key={i}>
@@ -130,6 +176,20 @@ function SalesInvoicesInner() {
                     </td>
                     <td><input type="number" min={0} step="0.0001" className="ent-fc" value={line.quantity || ""} onChange={(e) => updateLine(i, { quantity: Number(e.target.value) })} /></td>
                     <td><input type="number" min={0} step="0.01" className="ent-fc" value={line.rate || ""} onChange={(e) => updateLine(i, { rate: Number(e.target.value) })} /></td>
+                    <td>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <select className="ent-fc" style={{ width: 62 }} value={line.discountType ?? ""} onChange={(e) => updateLine(i, { discountType: (e.target.value || null) as DiscountType | null })}>
+                          <option value="">—</option>
+                          <option value="PERCENT">%</option>
+                          <option value="FLAT">₹</option>
+                        </select>
+                        <input
+                          type="number" min={0} step="0.01" className="ent-fc" style={{ width: 70 }}
+                          value={line.discountValue || ""} disabled={!line.discountType}
+                          onChange={(e) => updateLine(i, { discountValue: Number(e.target.value) })}
+                        />
+                      </div>
+                    </td>
                     <td><input type="number" min={0} step="0.01" className="ent-fc" value={line.taxRate || ""} onChange={(e) => updateLine(i, { taxRate: Number(e.target.value) })} /></td>
                     <td><button type="button" className="ent-ia ent-ia-del" disabled={lines.length <= 1} onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))}>✕</button></td>
                   </tr>
@@ -138,13 +198,43 @@ function SalesInvoicesInner() {
             </table>
             <button type="button" className="ent-add-row" style={{ margin: "10px 0" }} onClick={() => setLines((ls) => [...ls, emptyLine()])}>+ Add line</button>
 
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 12 }}>
+              <div className="ent-fg" style={{ marginBottom: 0 }}>
+                <label className="ent-fl">Invoice Discount</label>
+                <select className="ent-fc" value={invoiceDiscountType} onChange={(e) => setInvoiceDiscountType(e.target.value as DiscountType | "")}>
+                  <option value="">None</option>
+                  <option value="PERCENT">Percent %</option>
+                  <option value="FLAT">Flat ₹</option>
+                </select>
+              </div>
+              <div className="ent-fg" style={{ marginBottom: 0 }}>
+                <label className="ent-fl">&nbsp;</label>
+                <input
+                  type="number" min={0} step="0.01" className="ent-fc" disabled={!invoiceDiscountType}
+                  value={invoiceDiscountValue} onChange={(e) => setInvoiceDiscountValue(e.target.value)}
+                  placeholder={invoiceDiscountType === "PERCENT" ? "e.g. 5" : "e.g. 500"}
+                />
+              </div>
+              <span style={{ fontSize: 12, color: "var(--color-muted)", paddingBottom: 8 }}>
+                Applied on top of each line's own discount, spread proportionally across lines.
+              </span>
+            </div>
+
             <div style={{
-              display: "flex", justifyContent: "space-between", alignItems: "center",
+              display: "flex", flexWrap: "wrap", gap: "6px 18px", alignItems: "center",
               background: "#f8fafd", border: "1px solid var(--color-border)", borderRadius: 6,
               padding: "8px 14px", fontSize: 13, marginBottom: 12,
             }}>
-              <span>Subtotal: <strong>{totals.subtotal.toFixed(2)}</strong></span>
-              <span>Tax: <strong>{totals.tax.toFixed(2)}</strong></span>
+              <span>Gross Subtotal: <strong>{totals.subtotal.toFixed(2)}</strong></span>
+              <span>Discount: <strong>-{totals.discountTotal.toFixed(2)}</strong></span>
+              {interState ? (
+                <span>IGST: <strong>{totals.igst.toFixed(2)}</strong></span>
+              ) : (
+                <>
+                  <span>CGST: <strong>{totals.cgst.toFixed(2)}</strong></span>
+                  <span>SGST: <strong>{totals.sgst.toFixed(2)}</strong></span>
+                </>
+              )}
               <span>Grand Total: <strong>{totals.grand.toFixed(2)}</strong></span>
             </div>
           </div>
@@ -158,6 +248,79 @@ function SalesInvoicesInner() {
 
       {error && !showForm && <p style={{ color: "#dc2626", fontSize: 13, marginBottom: 12 }}>{error}</p>}
 
+      {(detailLoading || detail || detailError) && (
+        <div className="ent-section">
+          <div className="ent-section-hdr">
+            <span className="ent-section-title">{detail ? `Invoice ${detail.invoiceNumber}` : "Loading…"}</span>
+            <button type="button" className="ent-ia ent-ia-edit" onClick={() => { setDetail(null); setDetailError(null); }}>Close</button>
+          </div>
+          {detailLoading && <p style={{ padding: "0 14px 14px", fontSize: 13, color: "var(--color-muted)" }}>Loading…</p>}
+          {detailError && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 14px" }}>{detailError}</p>}
+          {detail && (() => {
+            const docInterState = Number(detail.igstTotal) > 0;
+            return (
+              <>
+                <div style={{ padding: "0 14px 10px", fontSize: 13, color: "var(--color-muted)" }}>
+                  {new Date(detail.invoiceDate).toLocaleDateString()} · {detail.businessPartner.name}
+                  {detail.narration ? ` · ${detail.narration}` : ""}
+                </div>
+                <div style={{ padding: "0 14px" }}>
+                  <table className="ent-table">
+                    <thead>
+                      <tr>
+                        <th>Item</th><th>Qty</th><th>Rate</th><th>Discount</th><th>Taxable Value</th>
+                        {docInterState ? <th>IGST</th> : <><th>CGST</th><th>SGST</th></>}
+                        <th style={{ textAlign: "right" }}>Line Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detail.lines.map((l) => {
+                        const lineDiscount = Number(l.lineDiscountAmount || 0) + Number(l.invoiceDiscountShare || 0);
+                        return (
+                          <tr key={l.id}>
+                            <td>{l.item.sku} — {l.item.name}</td>
+                            <td>{l.quantity}</td>
+                            <td>{Number(l.rate).toFixed(2)}</td>
+                            <td>{lineDiscount > 0 ? lineDiscount.toFixed(2) : "—"}</td>
+                            <td>{Number(l.taxableValue).toFixed(2)}</td>
+                            {docInterState ? (
+                              <td>{Number(l.igstAmount).toFixed(2)}</td>
+                            ) : (
+                              <>
+                                <td>{Number(l.cgstAmount).toFixed(2)}</td>
+                                <td>{Number(l.sgstAmount).toFixed(2)}</td>
+                              </>
+                            )}
+                            <td style={{ textAlign: "right" }}>{Number(l.lineTotal).toFixed(2)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{
+                  display: "flex", flexWrap: "wrap", gap: "6px 18px", alignItems: "center",
+                  background: "#f8fafd", border: "1px solid var(--color-border)", borderRadius: 6,
+                  padding: "8px 14px", fontSize: 13, margin: "10px 14px 14px",
+                }}>
+                  <span>Gross Subtotal: <strong>{Number(detail.subtotal).toFixed(2)}</strong></span>
+                  <span>Discount: <strong>-{Number(detail.discountTotal).toFixed(2)}</strong></span>
+                  {docInterState ? (
+                    <span>IGST: <strong>{Number(detail.igstTotal).toFixed(2)}</strong></span>
+                  ) : (
+                    <>
+                      <span>CGST: <strong>{Number(detail.cgstTotal).toFixed(2)}</strong></span>
+                      <span>SGST: <strong>{Number(detail.sgstTotal).toFixed(2)}</strong></span>
+                    </>
+                  )}
+                  <span>Grand Total: <strong>{Number(detail.grandTotal).toFixed(2)}</strong></span>
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      )}
+
       <div className="ent-page-table">
         <table>
           <thead><tr><th>Invoice #</th><th>Date</th><th>Customer</th><th style={{ textAlign: "right" }}>Amount</th><th /></tr></thead>
@@ -165,13 +328,13 @@ function SalesInvoicesInner() {
             {loading && <tr><td colSpan={5} className="ent-empty">Loading…</td></tr>}
             {!loading && invoices.length === 0 && <tr><td colSpan={5} className="ent-empty">No invoices yet.</td></tr>}
             {invoices.map((inv) => (
-              <tr key={inv.id}>
+              <tr key={inv.id} style={{ cursor: "pointer" }} onClick={() => openDetail(inv.id)}>
                 <td style={{ fontWeight: 500 }}>{inv.invoiceNumber}</td>
                 <td style={{ color: "var(--color-muted)" }}>{new Date(inv.invoiceDate).toLocaleDateString()}</td>
                 <td>{inv.businessPartner.name}</td>
                 <td style={{ textAlign: "right" }}>{Number(inv.grandTotal).toFixed(2)}</td>
                 <td style={{ textAlign: "right" }}>
-                  <Link className="ent-ia ent-ia-edit" href={`/sales/returns?invoiceId=${inv.id}`}>Return</Link>
+                  <Link className="ent-ia ent-ia-edit" href={`/sales/returns?invoiceId=${inv.id}`} onClick={(e) => e.stopPropagation()}>Return</Link>
                 </td>
               </tr>
             ))}

@@ -9,6 +9,16 @@ const router = Router();
 router.use(authenticate, requireActiveSubscription);
 const canManageBp = requirePermission("businessPartners.manage");
 
+// stateCode (the 2-digit GST state code) is auto-filled from a GSTIN's
+// first 2 characters when one is set, but stays independently editable —
+// a B2C customer or an unregistered vendor still has a state without
+// having a GSTIN. See migration_014 / branches.ts's identical helper.
+function resolveStateCode(stateCode: unknown, gstin: unknown): string | null | undefined {
+  if (stateCode !== undefined) return stateCode ? String(stateCode).trim() : null;
+  if (gstin) return String(gstin).trim().toUpperCase().slice(0, 2);
+  return undefined;
+}
+
 function orgIdOr400(req: import("express").Request, res: import("express").Response): string | null {
   const organizationId = resolveOrgId(req);
   if (!organizationId) {
@@ -38,7 +48,7 @@ router.get("/", async (req, res) => {
 router.post("/", canManageBp, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
-  const { bpType, name, gstin, phone, email, address, openingBalance, openingBalanceType } = req.body ?? {};
+  const { bpType, name, gstin, stateCode, phone, email, address, openingBalance, openingBalanceType } = req.body ?? {};
   if (!bpType || !["CUSTOMER", "VENDOR"].includes(bpType) || !name) {
     return res.status(400).json({ message: "bpType (CUSTOMER or VENDOR) and name are required." });
   }
@@ -48,6 +58,7 @@ router.post("/", canManageBp, async (req, res) => {
       organizationId,
       bpType, name,
       gstin: gstin ?? null,
+      stateCode: resolveStateCode(stateCode, gstin) ?? null,
       phone: phone ?? null,
       email: email ?? null,
       address: address ?? null,
@@ -71,9 +82,15 @@ router.patch("/:id", canManageBp, async (req, res) => {
   });
   if (!partner) return res.status(404).json({ message: "Business partner not found." });
 
+  const body = { ...(req.body ?? {}) };
+  if (body.stateCode === undefined && body.gstin !== undefined) {
+    const derived = resolveStateCode(undefined, body.gstin);
+    if (derived !== undefined) body.stateCode = derived;
+  }
+
   const updated = await prisma.businessPartner.update({
     where: { id: partner.id },
-    data: req.body ?? {},
+    data: body,
   });
   logAudit({
     organizationId, actorUserId: req.user!.userId,

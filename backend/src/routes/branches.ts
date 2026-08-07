@@ -31,6 +31,17 @@ function validateGstin(gstin: unknown): { ok: true; value: string | null } | { o
   return { ok: true, value: cleaned };
 }
 
+// stateCode (the 2-digit GST state code) is auto-filled from a GSTIN's
+// first 2 characters when one is set, but stays independently editable —
+// see migration_014's note on why (unregistered branches still have a
+// state). An explicit stateCode in the request always wins over the
+// GSTIN-derived one.
+function resolveStateCode(stateCode: unknown, gstinValue: string | null): string | null | undefined {
+  if (stateCode !== undefined) return stateCode ? String(stateCode).trim() : null;
+  if (gstinValue) return gstinValue.slice(0, 2);
+  return undefined;
+}
+
 // GET /branches — the caller's own org's branches (or, for a platform
 // admin, whichever org ?organizationId= names). Open to any authenticated
 // org member, same as the Chart of Accounts list — reads aren't gated,
@@ -50,7 +61,7 @@ router.get("/", async (req, res) => {
 router.post("/", canManageBranches, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
-  const { code, name, gstin, phone, email, address, isHeadOffice } = req.body ?? {};
+  const { code, name, gstin, stateCode, phone, email, address, isHeadOffice } = req.body ?? {};
 
   if (!code || !name) {
     return res.status(400).json({ message: "code and name are required." });
@@ -70,7 +81,8 @@ router.post("/", canManageBranches, async (req, res) => {
     return tx.branch.create({
       data: {
         organizationId, code, name,
-        gstin: gstinResult.value, phone: phone || null, email: email || null,
+        gstin: gstinResult.value, stateCode: resolveStateCode(stateCode, gstinResult.value) ?? null,
+        phone: phone || null, email: email || null,
         address: address ?? undefined, isHeadOffice: !!isHeadOffice,
       },
     });
@@ -91,7 +103,7 @@ router.patch("/:id", canManageBranches, async (req, res) => {
   const branch = await prisma.branch.findFirst({ where: { id: req.params.id, organizationId, deletedAt: null } });
   if (!branch) return res.status(404).json({ message: "Branch not found." });
 
-  const { code, name, gstin, phone, email, address, isHeadOffice } = req.body ?? {};
+  const { code, name, gstin, stateCode, phone, email, address, isHeadOffice } = req.body ?? {};
   const data: Record<string, unknown> = {};
 
   if (code !== undefined) {
@@ -106,11 +118,15 @@ router.patch("/:id", canManageBranches, async (req, res) => {
     if (!name) return res.status(400).json({ message: "name cannot be empty." });
     data.name = name;
   }
+  let gstinValue: string | null = branch.gstin;
   if (gstin !== undefined) {
     const gstinResult = validateGstin(gstin);
     if (!gstinResult.ok) return res.status(400).json({ message: gstinResult.message });
     data.gstin = gstinResult.value;
+    gstinValue = gstinResult.value;
   }
+  const resolvedStateCode = resolveStateCode(stateCode, gstin !== undefined ? gstinValue : null);
+  if (resolvedStateCode !== undefined) data.stateCode = resolvedStateCode;
   if (phone !== undefined) data.phone = phone || null;
   if (email !== undefined) data.email = email || null;
   if (address !== undefined) data.address = address;

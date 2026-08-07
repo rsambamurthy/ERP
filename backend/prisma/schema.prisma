@@ -128,6 +128,11 @@ model Branch {
   phone          String?   @db.VarChar(20)
   email          String?   @db.VarChar(255)
   address        Json?
+  // GST state code (2 digits, e.g. "29" = Karnataka) — auto-parsed from
+  // gstin when set, independently editable. Compared against the
+  // counterparty's stateCode at Sales/Purchase posting time to decide
+  // CGST+SGST (same state) vs IGST (different state).
+  stateCode      String?   @map("state_code") @db.VarChar(2)
   isHeadOffice   Boolean   @default(false) @map("is_head_office")
   status         String    @default("ACTIVE") @db.VarChar(20)
   createdAt      DateTime  @default(now()) @map("created_at")
@@ -369,6 +374,10 @@ model Item {
   salesRate      Decimal?  @map("sales_rate") @db.Decimal(14, 2)
   purchaseRate   Decimal?  @map("purchase_rate") @db.Decimal(14, 2)
   taxRate        Decimal   @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  // Seeds a Sales Invoice line's discount % when this item is picked —
+  // freely overridable on the line itself, same convention as
+  // salesRate/taxRate.
+  defaultDiscountPct Decimal @default(0) @map("default_discount_pct") @db.Decimal(5, 2)
   // Starting balance, same convention as Account.openingBalance /
   // BusinessPartner.openingBalance — a stored figure reports fold in
   // mathematically, not a posted document. Seeds ItemStock.averageCost
@@ -469,10 +478,24 @@ model SalesInvoice {
   invoiceDate       DateTime @map("invoice_date") @db.Date
   narration         String   @default("") @db.VarChar(255)
   journalEntryId    String   @unique @map("journal_entry_id") @db.Uuid
+  // Gross, pre-discount total (sum of qty*rate across lines) — Sales
+  // Revenue posts here (gross method). Grand Total is still what the
+  // customer actually owes.
   subtotal          Decimal  @db.Decimal(14, 2)
   taxTotal          Decimal  @map("tax_total") @db.Decimal(14, 2)
   grandTotal        Decimal  @map("grand_total") @db.Decimal(14, 2)
   totalCogs         Decimal  @map("total_cogs") @db.Decimal(14, 2)
+  // Invoice-level discount, applied on top of each line's own discount and
+  // prorated across lines — see routes/salesInvoices.ts.
+  discountType      String?  @map("discount_type") @db.VarChar(10) // PERCENT | FLAT
+  discountValue     Decimal  @default(0) @map("discount_value") @db.Decimal(14, 2)
+  // Total discount actually applied — line-level + this invoice-level
+  // discount's prorated share, combined. Posts to the Discount Allowed
+  // contra-revenue account.
+  discountTotal     Decimal  @default(0) @map("discount_total") @db.Decimal(14, 2)
+  cgstTotal         Decimal  @default(0) @map("cgst_total") @db.Decimal(14, 2)
+  sgstTotal         Decimal  @default(0) @map("sgst_total") @db.Decimal(14, 2)
+  igstTotal         Decimal  @default(0) @map("igst_total") @db.Decimal(14, 2)
   createdBy         String?  @map("created_by") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at")
 
@@ -494,11 +517,23 @@ model SalesInvoiceLine {
   quantity       Decimal @db.Decimal(14, 4)
   rate           Decimal @db.Decimal(14, 2)
   taxRate        Decimal @map("tax_rate") @db.Decimal(5, 2)
-  lineSubtotal   Decimal @map("line_subtotal") @db.Decimal(14, 2)
-  taxAmount      Decimal @map("tax_amount") @db.Decimal(14, 2)
-  lineTotal      Decimal @map("line_total") @db.Decimal(14, 2)
+  lineSubtotal   Decimal @map("line_subtotal") @db.Decimal(14, 2) // gross, qty*rate, pre-discount
+  taxAmount      Decimal @map("tax_amount") @db.Decimal(14, 2) // cgstAmount + sgstAmount + igstAmount
+  lineTotal      Decimal @map("line_total") @db.Decimal(14, 2) // taxableValue + taxAmount
   unitCost       Decimal @map("unit_cost") @db.Decimal(14, 4) // cost consumed for this line, snapshotted at posting
   lineCogs       Decimal @map("line_cogs") @db.Decimal(14, 2)
+  // This line's own discount (item-default-seeded, freely overridden).
+  discountType         String?  @map("discount_type") @db.VarChar(10) // PERCENT | FLAT
+  discountValue        Decimal  @default(0) @map("discount_value") @db.Decimal(14, 2)
+  lineDiscountAmount    Decimal  @default(0) @map("line_discount_amount") @db.Decimal(14, 2)
+  // Prorated share of the invoice-level discount — see routes/salesInvoices.ts.
+  invoiceDiscountShare  Decimal  @default(0) @map("invoice_discount_share") @db.Decimal(14, 2)
+  // lineSubtotal - lineDiscountAmount - invoiceDiscountShare — what GST is
+  // actually computed on.
+  taxableValue          Decimal  @default(0) @map("taxable_value") @db.Decimal(14, 2)
+  cgstAmount            Decimal  @default(0) @map("cgst_amount") @db.Decimal(14, 2)
+  sgstAmount            Decimal  @default(0) @map("sgst_amount") @db.Decimal(14, 2)
+  igstAmount            Decimal  @default(0) @map("igst_amount") @db.Decimal(14, 2)
 
   salesInvoice SalesInvoice      @relation(fields: [salesInvoiceId], references: [id])
   item         Item              @relation(fields: [itemId], references: [id])
@@ -519,6 +554,9 @@ model PurchaseBill {
   subtotal          Decimal  @db.Decimal(14, 2)
   taxTotal          Decimal  @map("tax_total") @db.Decimal(14, 2)
   grandTotal        Decimal  @map("grand_total") @db.Decimal(14, 2)
+  cgstTotal         Decimal  @default(0) @map("cgst_total") @db.Decimal(14, 2)
+  sgstTotal         Decimal  @default(0) @map("sgst_total") @db.Decimal(14, 2)
+  igstTotal         Decimal  @default(0) @map("igst_total") @db.Decimal(14, 2)
   createdBy         String?  @map("created_by") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at")
 
@@ -541,8 +579,11 @@ model PurchaseBillLine {
   rate           Decimal @db.Decimal(14, 2)
   taxRate        Decimal @map("tax_rate") @db.Decimal(5, 2)
   lineSubtotal   Decimal @map("line_subtotal") @db.Decimal(14, 2)
-  taxAmount      Decimal @map("tax_amount") @db.Decimal(14, 2)
+  taxAmount      Decimal @map("tax_amount") @db.Decimal(14, 2) // cgstAmount + sgstAmount + igstAmount
   lineTotal      Decimal @map("line_total") @db.Decimal(14, 2)
+  cgstAmount     Decimal @default(0) @map("cgst_amount") @db.Decimal(14, 2)
+  sgstAmount     Decimal @default(0) @map("sgst_amount") @db.Decimal(14, 2)
+  igstAmount     Decimal @default(0) @map("igst_amount") @db.Decimal(14, 2)
 
   purchaseBill PurchaseBill         @relation(fields: [purchaseBillId], references: [id])
   item         Item                 @relation(fields: [itemId], references: [id])
@@ -730,6 +771,9 @@ model BusinessPartner {
   phone              String?   @db.VarChar(20)
   email              String?   @db.VarChar(255)
   address            Json?
+  // GST state code — see Branch.stateCode for how this feeds the
+  // CGST+SGST vs IGST determination at Sales/Purchase posting time.
+  stateCode          String?   @map("state_code") @db.VarChar(2)
   openingBalance     Decimal   @default(0) @map("opening_balance") @db.Decimal(14, 2)
   openingBalanceType String?   @map("opening_balance_type") @db.VarChar(6)
   isActive           Boolean   @default(true) @map("is_active")

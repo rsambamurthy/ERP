@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
 import { ApiError, createBusinessPartner, getBusinessPartners, toggleBusinessPartner } from "@/lib/api";
 import { useBulkUpload } from "@/components/shared/BulkUpload";
+import { GST_STATE_CODES } from "@/lib/gstStates";
 import type { BpUploadRow, BusinessPartner } from "@/lib/types";
 
 const BP_UPLOAD_COLUMNS: { key: keyof BpUploadRow; label: string }[] = [
@@ -22,7 +23,7 @@ export default function BusinessPartnersPage() {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const [form, setForm] = useState({ name: "", gstin: "", phone: "", email: "" });
+  const [form, setForm] = useState({ name: "", gstin: "", stateCode: "", phone: "", email: "" });
 
   async function load() {
     setLoading(true);
@@ -50,10 +51,11 @@ export default function BusinessPartnersPage() {
     try {
       await createBusinessPartner({
         bpType, name: form.name,
-        gstin: form.gstin || null, phone: form.phone || null, email: form.email || null,
+        gstin: form.gstin || null, stateCode: form.stateCode || null,
+        phone: form.phone || null, email: form.email || null,
       });
       setShowForm(false);
-      setForm({ name: "", gstin: "", phone: "", email: "" });
+      setForm({ name: "", gstin: "", stateCode: "", phone: "", email: "" });
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not create business partner.");
@@ -98,6 +100,13 @@ export default function BusinessPartnersPage() {
           <div className="ent-form-grid">
             <div className="ent-fg"><label className="ent-fl">Name</label><input className="ent-fc" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} required /></div>
             <div className="ent-fg"><label className="ent-fl">GSTIN (optional)</label><input className="ent-fc" value={form.gstin} onChange={(e) => setForm((f) => ({ ...f, gstin: e.target.value }))} /></div>
+            <div className="ent-fg">
+              <label className="ent-fl">State (GST)</label>
+              <select className="ent-fc" value={form.stateCode} onChange={(e) => setForm((f) => ({ ...f, stateCode: e.target.value }))}>
+                <option value="">Auto from GSTIN, or select…</option>
+                {GST_STATE_CODES.map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}
+              </select>
+            </div>
             <div className="ent-fg"><label className="ent-fl">Phone (optional)</label><input className="ent-fc" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} /></div>
             <div className="ent-fg"><label className="ent-fl">Email (optional)</label><input className="ent-fc" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} /></div>
           </div>

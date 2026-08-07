@@ -124,6 +124,60 @@ Office (exactly one per org, freely reassignable — toggling it on for one
 branch automatically un-flags whichever branch had it before). Requires
 `db/migration_013_branch_crud.sql`.
 
+## Discount + GST Split (built)
+
+Sales Invoice had a single flat tax rate per line and no discount concept
+at all; Purchase Bill had the same flat tax rate with no CGST/SGST/IGST
+split even though `Branch.gstin`/`BusinessPartner.gstin` both already
+existed. Filled in:
+
+- **Discount, three layers deep.** An item's `defaultDiscountPct` seeds a
+  Sales Invoice line's discount when picked, freely overridden per line
+  (percent or flat amount, admin's choice) — and the invoice itself can
+  carry one more discount on top, prorated across lines by their
+  post-line-discount value (last line absorbs any rounding remainder so the
+  stored figures always sum exactly). GST is computed on what's left after
+  both discounts, never on the gross rate. Posts **gross**: Sales Revenue
+  books the full pre-discount value, a new contra `4003 Discount Allowed`
+  account absorbs everything taken off (line + invoice level combined) —
+  so the P&L shows revenue and total discount given as separate figures,
+  not netted invisibly into a smaller revenue number. Scoped to Sales
+  Invoice only (not Purchase Bill) — matches how the feature was asked for;
+  nothing stops a vendor-side discount being added the same way later if
+  wanted.
+- **CGST/SGST/IGST split**, Sales Invoice and Purchase Bill both. Branch
+  and Business Partner each got a `stateCode` (2-digit GST state code) —
+  auto-parsed from a GSTIN's first 2 characters when one's entered, but
+  independently settable, since an unregistered branch or a B2C customer
+  still has a state without having a GSTIN. At posting time, the selling/
+  buying branch's `stateCode` is compared against the customer's/vendor's:
+  same state → CGST + SGST (half the rate each); different state → IGST at
+  the full rate. If either side's `stateCode` is unset, both documents fall
+  back to CGST+SGST rather than blocking posting — a documented assumption,
+  not a validation gate. New GL accounts: `1102/1103/1104` CGST/SGST/IGST
+  Input Credit, `2102/2103/2104` CGST/SGST/IGST Output Payable. The old
+  single-account `1101`/`2101` GST Input/Output stay in the COA (historical
+  postings keep pointing at them) but no longer receive new transactions.
+
+Requires `db/migration_014_discount_gst.sql`, then `npx prisma db seed` to
+add the new accounts to `coa_templates` — existing orgs pull them in via
+Chart of Accounts → Sync from Templates (same mechanism `POST /accounts/
+sync-templates` already provided for the original GST/COGS/Sales Revenue
+rollout).
+
+Deliberately not covered by this pass:
+
+- **Sales Return doesn't know about discount.** It still reads `rate`/
+  `taxRate` straight off the original invoice line and refunds at that
+  figure — a returned line on a discounted invoice gets credited at the
+  pre-discount rate. Worth fixing whenever Returns is revisited; not fixed
+  here since Returns wasn't part of what was asked.
+- **Purchase Bill discount.** Only the GST split applies to Purchase Bill;
+  no vendor-side discount concept was requested, so none was built.
+- **GSTR-1 / GSTR-3B.** The CGST/SGST/IGST split is exactly the shape a
+  real GST return needs, but nothing computes one yet — still listed under
+  "From the earlier what's next review" below.
+
 ## Custom Roles (built)
 
 Layered on top of the fixed OWNER/ADMIN/ACCOUNTANT/VIEWER four, which stay

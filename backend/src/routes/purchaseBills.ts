@@ -3,11 +3,14 @@ import { prisma } from "../db";
 import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { receiveStock } from "../lib/costing";
+import { isInterState, round2, splitGst } from "../lib/discountGst";
 
 // Every org's core COA (seed.ts) always includes these — same convention
 // journal.ts uses for CASH_BANK_CODES.
 const TRADE_PAYABLES_CODE = "2001";
-const GST_INPUT_CODE = "1101";
+const CGST_INPUT_CODE = "1102";
+const SGST_INPUT_CODE = "1103";
+const IGST_INPUT_CODE = "1104";
 
 const router = Router();
 router.use(authenticate, requireActiveSubscription);
@@ -54,8 +57,9 @@ router.get("/:id", async (req, res) => {
 
 // POST /purchase-bills — create and post in one step, same UX as journal
 // entries. Stock inward for every line, one journal entry: Dr each item's
-// stock account (tagged that item's own ITEM business partner) + Dr GST
-// Input Credit, Cr Trade Payables (tagged the vendor).
+// stock account (tagged that item's own ITEM business partner) + Dr
+// CGST/SGST/IGST Input Credit (split by whether the branch and vendor are
+// in the same GST state), Cr Trade Payables (tagged the vendor).
 router.post("/", canPost, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
@@ -77,6 +81,7 @@ router.post("/", canPost, async (req, res) => {
     resolvedBranchId = ho?.id ?? null;
   }
   if (!resolvedBranchId) return res.status(400).json({ message: "No branch found — provide branchId." });
+  const branch = await prisma.branch.findFirst({ where: { id: resolvedBranchId, organizationId }, select: { stateCode: true } });
 
   const typedLines: LineInput[] = lines;
   const itemIds = [...new Set(typedLines.map((l) => l.itemId))];
@@ -84,24 +89,30 @@ router.post("/", canPost, async (req, res) => {
   if (items.length !== itemIds.length) return res.status(400).json({ message: "One or more items are invalid for this organization." });
   const itemById = new Map(items.map((i) => [i.id, i]));
 
-  let subtotal = 0, taxTotal = 0;
+  const interState = isInterState(branch?.stateCode, vendor.stateCode);
+  let subtotal = 0, taxTotal = 0, cgstTotal = 0, sgstTotal = 0, igstTotal = 0;
   const computed = typedLines.map((l) => {
     if (!l.itemId || !(l.quantity > 0) || !(l.rate >= 0)) {
       throw Object.assign(new Error("Every line needs itemId, quantity > 0, and rate >= 0."), { status: 400 });
     }
-    const lineSubtotal = Math.round(l.quantity * l.rate * 100) / 100;
-    const taxAmount = Math.round(lineSubtotal * (l.taxRate ?? 0) / 100 * 100) / 100;
-    subtotal += lineSubtotal; taxTotal += taxAmount;
-    return { ...l, lineSubtotal, taxAmount, lineTotal: lineSubtotal + taxAmount };
+    const lineSubtotal = round2(l.quantity * l.rate);
+    const taxAmount = round2(lineSubtotal * (l.taxRate ?? 0) / 100);
+    const { cgst, sgst, igst } = splitGst(taxAmount, interState);
+    subtotal += lineSubtotal; taxTotal += taxAmount; cgstTotal += cgst; sgstTotal += sgst; igstTotal += igst;
+    return { ...l, lineSubtotal, taxAmount, lineTotal: lineSubtotal + taxAmount, cgstAmount: cgst, sgstAmount: sgst, igstAmount: igst };
   });
   const grandTotal = subtotal + taxTotal;
 
-  const [gstInput, tradePayables] = await Promise.all([
-    prisma.account.findFirst({ where: { organizationId, accountCode: GST_INPUT_CODE } }),
+  const [cgstInput, sgstInput, igstInput, tradePayables] = await Promise.all([
+    prisma.account.findFirst({ where: { organizationId, accountCode: CGST_INPUT_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: SGST_INPUT_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: IGST_INPUT_CODE } }),
     prisma.account.findFirst({ where: { organizationId, accountCode: TRADE_PAYABLES_CODE } }),
   ]);
   if (!tradePayables) return res.status(500).json({ message: "Trade Payables account not found — re-run provisioning." });
-  if (taxTotal > 0 && !gstInput) return res.status(500).json({ message: "GST Input Credit account not found — re-run provisioning." });
+  if (cgstTotal > 0 && !cgstInput) return res.status(500).json({ message: "CGST Input Credit account not found — re-run provisioning." });
+  if (sgstTotal > 0 && !sgstInput) return res.status(500).json({ message: "SGST Input Credit account not found — re-run provisioning." });
+  if (igstTotal > 0 && !igstInput) return res.status(500).json({ message: "IGST Input Credit account not found — re-run provisioning." });
 
   const count = await prisma.purchaseBill.count({ where: { organizationId } });
   const billNumber = `PB-${String(count + 1).padStart(4, "0")}`;
@@ -125,7 +136,9 @@ router.post("/", canPost, async (req, res) => {
             debit: l.lineSubtotal, credit: 0,
             narration: `${itemById.get(l.itemId)!.sku} x ${l.quantity}`,
           })),
-          ...(taxTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: gstInput!.id, businessPartnerId: null, debit: taxTotal, credit: 0, narration: "GST Input" }] : []),
+          ...(cgstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: cgstInput!.id, businessPartnerId: null, debit: cgstTotal, credit: 0, narration: "CGST Input" }] : []),
+          ...(sgstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: sgstInput!.id, businessPartnerId: null, debit: sgstTotal, credit: 0, narration: "SGST Input" }] : []),
+          ...(igstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: igstInput!.id, businessPartnerId: null, debit: igstTotal, credit: 0, narration: "IGST Input" }] : []),
           { journalEntryId: journalEntry.id, accountId: tradePayables.id, businessPartnerId: vendor.id, debit: 0, credit: grandTotal, narration: `Payable to ${vendor.name}` },
         ],
       });
@@ -135,6 +148,7 @@ router.post("/", canPost, async (req, res) => {
           organizationId, branchId: resolvedBranchId, businessPartnerId,
           billNumber, billDate: new Date(billDate), narration: narration ?? "",
           journalEntryId: journalEntry.id, subtotal, taxTotal, grandTotal,
+          cgstTotal, sgstTotal, igstTotal,
           createdBy: req.user!.userId,
         },
       });
@@ -143,6 +157,7 @@ router.post("/", canPost, async (req, res) => {
         data: computed.map((l) => ({
           purchaseBillId: created.id, itemId: l.itemId, quantity: l.quantity, rate: l.rate,
           taxRate: l.taxRate ?? 0, lineSubtotal: l.lineSubtotal, taxAmount: l.taxAmount, lineTotal: l.lineTotal,
+          cgstAmount: l.cgstAmount, sgstAmount: l.sgstAmount, igstAmount: l.igstAmount,
         })),
       });
 

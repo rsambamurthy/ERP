@@ -4,10 +4,14 @@ import { prisma } from "../db";
 import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { consumeStock, InsufficientStockError } from "../lib/costing";
+import { computeDiscountedLines, isInterState, round2, type DiscountType } from "../lib/discountGst";
 
 const TRADE_RECEIVABLES_CODE = "1005";
 const SALES_REVENUE_CODE = "5001";
-const GST_OUTPUT_CODE = "2101";
+const DISCOUNT_ALLOWED_CODE = "4003";
+const CGST_OUTPUT_CODE = "2102";
+const SGST_OUTPUT_CODE = "2103";
+const IGST_OUTPUT_CODE = "2104";
 const COGS_CODE = "4001";
 
 const router = Router();
@@ -28,6 +32,8 @@ interface LineInput {
   quantity: number;
   rate: number;
   taxRate?: number;
+  discountType?: DiscountType | null;
+  discountValue?: number;
 }
 
 router.get("/", async (req, res) => {
@@ -56,13 +62,17 @@ router.get("/:id", async (req, res) => {
 // POST /sales-invoices — create and post in one step. Stock outward for
 // every line (rejected if any line's branch stock can't cover it), one
 // journal entry: Dr Trade Receivables (tagged the customer) / Cr Sales
-// Revenue + Cr GST Output, and Dr Cost of Goods Sold / Cr each item's
-// stock account (tagged that item's own ITEM business partner).
+// Revenue (gross, pre-discount) + Dr Discount Allowed (line + invoice-level
+// discount combined) + Cr CGST/SGST/IGST Output (split by whether the
+// branch and customer are in the same GST state), and Dr Cost of Goods
+// Sold / Cr each item's stock account (tagged that item's own ITEM
+// business partner). Discount never touches COGS — that's the item's
+// actual cost, unrelated to what it sold for.
 router.post("/", canPost, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
 
-  const { businessPartnerId, invoiceDate, branchId, narration, lines } = req.body ?? {};
+  const { businessPartnerId, invoiceDate, branchId, narration, lines, discountType, discountValue } = req.body ?? {};
   if (!businessPartnerId || !invoiceDate || !Array.isArray(lines) || lines.length === 0) {
     return res.status(400).json({ message: "businessPartnerId, invoiceDate, and at least one line are required." });
   }
@@ -79,6 +89,7 @@ router.post("/", canPost, async (req, res) => {
     resolvedBranchId = ho?.id ?? null;
   }
   if (!resolvedBranchId) return res.status(400).json({ message: "No branch found — provide branchId." });
+  const branch = await prisma.branch.findFirst({ where: { id: resolvedBranchId, organizationId }, select: { stateCode: true } });
 
   const typedLines: LineInput[] = lines;
   const itemIds = [...new Set(typedLines.map((l) => l.itemId))];
@@ -92,15 +103,25 @@ router.post("/", canPost, async (req, res) => {
     }
   }
 
-  const [tradeReceivables, salesRevenue, gstOutput, cogs] = await Promise.all([
+  const [tradeReceivables, salesRevenue, discountAllowed, cgstOutput, sgstOutput, igstOutput, cogs] = await Promise.all([
     prisma.account.findFirst({ where: { organizationId, accountCode: TRADE_RECEIVABLES_CODE } }),
     prisma.account.findFirst({ where: { organizationId, accountCode: SALES_REVENUE_CODE } }),
-    prisma.account.findFirst({ where: { organizationId, accountCode: GST_OUTPUT_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: DISCOUNT_ALLOWED_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: CGST_OUTPUT_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: SGST_OUTPUT_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: IGST_OUTPUT_CODE } }),
     prisma.account.findFirst({ where: { organizationId, accountCode: COGS_CODE } }),
   ]);
   if (!tradeReceivables || !salesRevenue || !cogs) {
     return res.status(500).json({ message: "Core Sales accounts not found — re-run provisioning." });
   }
+
+  const interState = isInterState(branch?.stateCode, customer.stateCode);
+  const discountLines = computeDiscountedLines(
+    typedLines.map((l) => ({ quantity: l.quantity, rate: l.rate, taxRate: l.taxRate ?? 0, discountType: l.discountType, discountValue: l.discountValue })),
+    { type: discountType, value: discountValue },
+    interState
+  );
 
   const count = await prisma.salesInvoice.count({ where: { organizationId } });
   const invoiceNumber = `SI-${String(count + 1).padStart(4, "0")}`;
@@ -114,25 +135,29 @@ router.post("/", canPost, async (req, res) => {
       // fails the whole transaction atomically. The invoice id is
       // generated upfront (rather than left blank and backfilled) so the
       // StockMovement rows created here can reference it directly.
-      let subtotal = 0, taxTotal = 0, totalCogs = 0;
+      let subtotal = 0, discountTotal = 0, taxTotal = 0, cgstTotal = 0, sgstTotal = 0, igstTotal = 0, totalCogs = 0;
       const computed = [];
-      for (const l of typedLines) {
-        const lineSubtotal = Math.round(l.quantity * l.rate * 100) / 100;
-        const taxAmount = Math.round(lineSubtotal * (l.taxRate ?? 0) / 100 * 100) / 100;
+      for (let i = 0; i < typedLines.length; i++) {
+        const l = typedLines[i];
+        const d = discountLines[i];
         const { unitCost, totalCost } = await consumeStock(tx, {
           organizationId, branchId: resolvedBranchId!, itemId: l.itemId,
           quantity: l.quantity, costingMethod: org.costingMethod!,
           movementType: "SALE", referenceType: "sales_invoice", referenceId: invoiceId,
           movementDate: new Date(invoiceDate), narration: `Sales invoice ${invoiceNumber}`,
         });
-        subtotal += lineSubtotal; taxTotal += taxAmount; totalCogs += totalCost;
-        computed.push({ ...l, lineSubtotal, taxAmount, lineTotal: lineSubtotal + taxAmount, unitCost, lineCogs: Math.round(totalCost * 100) / 100 });
+        subtotal += d.lineSubtotal;
+        discountTotal += round2(d.lineDiscountAmount + d.invoiceDiscountShare);
+        taxTotal += d.taxAmount; cgstTotal += d.cgstAmount; sgstTotal += d.sgstAmount; igstTotal += d.igstAmount;
+        totalCogs += totalCost;
+        computed.push({ ...l, ...d, unitCost, lineCogs: round2(totalCost) });
       }
-      const grandTotal = subtotal + taxTotal;
+      const grandTotal = round2(computed.reduce((s, l) => s + l.lineTotal, 0));
 
-      if (taxTotal > 0 && !gstOutput) {
-        throw Object.assign(new Error("GST Output Payable account not found — re-run provisioning."), { status: 500 });
-      }
+      if (cgstTotal > 0 && !cgstOutput) throw Object.assign(new Error("CGST Output Payable account not found — re-run provisioning."), { status: 500 });
+      if (sgstTotal > 0 && !sgstOutput) throw Object.assign(new Error("SGST Output Payable account not found — re-run provisioning."), { status: 500 });
+      if (igstTotal > 0 && !igstOutput) throw Object.assign(new Error("IGST Output Payable account not found — re-run provisioning."), { status: 500 });
+      if (discountTotal > 0 && !discountAllowed) throw Object.assign(new Error("Discount Allowed account not found — re-run provisioning."), { status: 500 });
 
       const journalEntry = await tx.journalEntry.create({
         data: {
@@ -146,7 +171,10 @@ router.post("/", canPost, async (req, res) => {
         data: [
           { journalEntryId: journalEntry.id, accountId: tradeReceivables.id, businessPartnerId: customer.id, debit: grandTotal, credit: 0, narration: `Receivable from ${customer.name}` },
           { journalEntryId: journalEntry.id, accountId: salesRevenue.id, businessPartnerId: null, debit: 0, credit: subtotal, narration: `Sales revenue — ${invoiceNumber}` },
-          ...(taxTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: gstOutput!.id, businessPartnerId: null, debit: 0, credit: taxTotal, narration: "GST Output" }] : []),
+          ...(discountTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: discountAllowed!.id, businessPartnerId: null, debit: discountTotal, credit: 0, narration: "Discount allowed" }] : []),
+          ...(cgstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: cgstOutput!.id, businessPartnerId: null, debit: 0, credit: cgstTotal, narration: "CGST Output" }] : []),
+          ...(sgstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: sgstOutput!.id, businessPartnerId: null, debit: 0, credit: sgstTotal, narration: "SGST Output" }] : []),
+          ...(igstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: igstOutput!.id, businessPartnerId: null, debit: 0, credit: igstTotal, narration: "IGST Output" }] : []),
           { journalEntryId: journalEntry.id, accountId: cogs.id, businessPartnerId: null, debit: totalCogs, credit: 0, narration: `Cost of goods sold — ${invoiceNumber}` },
           ...computed.map((l) => ({
             journalEntryId: journalEntry.id,
@@ -164,6 +192,8 @@ router.post("/", canPost, async (req, res) => {
           organizationId, branchId: resolvedBranchId, businessPartnerId,
           invoiceNumber, invoiceDate: new Date(invoiceDate), narration: narration ?? "",
           journalEntryId: journalEntry.id, subtotal, taxTotal, grandTotal, totalCogs,
+          discountType: discountType ?? null, discountValue: discountValue ?? 0, discountTotal,
+          cgstTotal, sgstTotal, igstTotal,
           createdBy: req.user!.userId,
         },
       });
@@ -173,6 +203,9 @@ router.post("/", canPost, async (req, res) => {
           salesInvoiceId: created.id, itemId: l.itemId, quantity: l.quantity, rate: l.rate,
           taxRate: l.taxRate ?? 0, lineSubtotal: l.lineSubtotal, taxAmount: l.taxAmount, lineTotal: l.lineTotal,
           unitCost: l.unitCost, lineCogs: l.lineCogs,
+          discountType: l.discountType ?? null, discountValue: l.discountValue ?? 0,
+          lineDiscountAmount: l.lineDiscountAmount, invoiceDiscountShare: l.invoiceDiscountShare, taxableValue: l.taxableValue,
+          cgstAmount: l.cgstAmount, sgstAmount: l.sgstAmount, igstAmount: l.igstAmount,
         })),
       });
 

@@ -72,6 +72,7 @@ router.get("/", async (req, res) => {
       isFinishedGood: i.isFinishedGood, isActive: i.isActive,
       stockAccount: i.stockAccount,
       salesRate: i.salesRate, purchaseRate: i.purchaseRate, taxRate: i.taxRate,
+      defaultDiscountPct: i.defaultDiscountPct,
       totalQuantityOnHand: i.itemStocks.reduce((s, st) => s + Number(st.quantityOnHand), 0),
     })),
   });
@@ -101,7 +102,7 @@ router.post("/", canManageItems, async (req, res) => {
 
   const {
     sku, name, description, uom, hsnCode, isFinishedGood,
-    stockAccountId, salesRate, purchaseRate, taxRate,
+    stockAccountId, salesRate, purchaseRate, taxRate, defaultDiscountPct,
     openingQuantity, openingCost, openingBranchId, openingDate,
   } = req.body ?? {};
 
@@ -150,6 +151,7 @@ router.post("/", canManageItems, async (req, res) => {
         salesRate: salesRate ?? null,
         purchaseRate: purchaseRate ?? null,
         taxRate: taxRate ?? 0,
+        defaultDiscountPct: defaultDiscountPct ?? 0,
         openingQuantity: qty,
         openingCost: cost,
       },
@@ -186,10 +188,10 @@ router.patch("/:id", canManageItems, async (req, res) => {
   const item = await prisma.item.findFirst({ where: { id: req.params.id, organizationId } });
   if (!item) return res.status(404).json({ message: "Item not found." });
 
-  const { name, description, uom, hsnCode, isFinishedGood, salesRate, purchaseRate, taxRate, isActive } = req.body ?? {};
+  const { name, description, uom, hsnCode, isFinishedGood, salesRate, purchaseRate, taxRate, defaultDiscountPct, isActive } = req.body ?? {};
   const updated = await prisma.item.update({
     where: { id: item.id },
-    data: { name, description, uom, hsnCode, isFinishedGood, salesRate, purchaseRate, taxRate, isActive },
+    data: { name, description, uom, hsnCode, isFinishedGood, salesRate, purchaseRate, taxRate, defaultDiscountPct, isActive },
   });
 
   if (name && name !== item.name) {
