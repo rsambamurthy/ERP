@@ -97,6 +97,19 @@ more powerful role and assign it to themselves, the standard
 self-escalation hole in any permissions-that-can-grant-permissions model.
 Requires `db/migration_009_custom_roles.sql`.
 
+**Update:** custom roles are now also configurable in Access Control
+(`/settings/access-control`), not just permissions — every custom role an
+org defines shows up there as an extra tab an OWNER/ADMIN can toggle
+per-item visibility for, the same way the four fixed roles always could. A
+custom role's *default* visibility (before any override) is computed from
+its granted permissions rather than a fixed `roles` list (see `NavItem.
+permission` in `navGroups.ts`); `AccessControlMatrix.tsx` (the editing
+screen) and `AppShell.tsx` (the actual sidebar) compute that default with
+the same formula so they never disagree. Its `org_menu_config` rows are
+keyed `"custom:<org_roles.id>"` rather than by name, so renaming a custom
+role doesn't orphan its menu overrides. Requires
+`db/migration_011_custom_role_access_control.sql`.
+
 ## Sales Return / Purchase Return (built)
 
 Always tied to the original Sales Invoice / Purchase Bill — never freeform

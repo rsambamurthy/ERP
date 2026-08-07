@@ -102,16 +102,16 @@ export function verifyOtp(organizationId: string, otp: string) {
 export function login(payload: { email?: string; phone?: string; password: string }) {
   return request<{
     token: string; organizationId: string | null; role: string | null;
-    isPlatformAdmin: boolean; name: string | null; permissions?: Permission[];
+    isPlatformAdmin: boolean; name: string | null; permissions?: Permission[]; customRoleId?: string | null;
   }>("/auth/login", { method: "POST", body: JSON.stringify(payload) });
 }
 
 // POST /auth/accept-invite
 export function acceptInvite(token: string, name: string, password: string) {
-  return request<{ token: string; organizationId: string; role: string; name: string | null; permissions: Permission[] }>(
-    "/auth/accept-invite",
-    { method: "POST", body: JSON.stringify({ token, name, password }) }
-  );
+  return request<{
+    token: string; organizationId: string; role: string; name: string | null;
+    permissions: Permission[]; customRoleId: string | null;
+  }>("/auth/accept-invite", { method: "POST", body: JSON.stringify({ token, name, password }) });
 }
 
 // GET /domain-types
@@ -483,7 +483,9 @@ export function getMenuConfigForOrg(organizationId: string) {
   return request<AccessControlMenuResponse>(`/access-control/menu/${organizationId}`);
 }
 
-export function saveMenuConfig(organizationId: string, items: Array<{ itemId: string; role: OrgRole; enabled: boolean }>) {
+// role is a plain string, not OrgRole — a fixed role name or "custom:<id>"
+// for a custom role (see accessControl.ts's customRoleKey()).
+export function saveMenuConfig(organizationId: string, items: Array<{ itemId: string; role: string; enabled: boolean }>) {
   return request<{ data: MenuConfigMap }>(`/access-control/menu/${organizationId}`, {
     method: "PUT",
     body: JSON.stringify({ items }),

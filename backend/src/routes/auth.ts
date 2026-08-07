@@ -124,7 +124,7 @@ router.post("/verify-otp", async (req, res) => {
     : null;
   const permissions = orgUser ? await resolvePermissions(orgUser.role, orgUser.customRoleId) : [];
 
-  res.json({ ok: true, token, permissions });
+  res.json({ ok: true, token, permissions, customRoleId: orgUser?.customRoleId ?? null });
 });
 
 // POST /auth/login — for returning users (registration already happened).
@@ -180,7 +180,7 @@ router.post("/login", async (req, res) => {
 
   res.json({
     token, organizationId: orgUser.organizationId, role: orgUser.role, isPlatformAdmin: false, name: user.name,
-    permissions,
+    permissions, customRoleId: orgUser.customRoleId,
   });
 });
 
@@ -240,7 +240,10 @@ router.post("/accept-invite", async (req, res) => {
   });
   const permissions = await resolvePermissions(invite.role, invite.customRoleId);
 
-  res.json({ token: token2, organizationId: invite.organizationId, role: invite.role, name: user.name, permissions });
+  res.json({
+    token: token2, organizationId: invite.organizationId, role: invite.role, name: user.name,
+    permissions, customRoleId: invite.customRoleId,
+  });
 });
 
 // POST /auth/forgot-password — logged-out password reset, step 1. Always

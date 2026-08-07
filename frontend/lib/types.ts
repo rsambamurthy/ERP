@@ -458,10 +458,21 @@ export interface CustomRole {
 /** role -> itemId -> enabled. Sparse — only overrides, never the full catalogue. */
 export type MenuConfigMap = Record<string, Record<string, boolean>>;
 
+// One configurable target in the Access Control screen — either a fixed
+// role (value is the plain role name, permissions is null) or a custom role
+// (value is "custom:<org_roles.id>", permissions is that role's granted
+// set, used to compute its default — absent an override — visibility per
+// item; see AccessControlMatrix.tsx).
+export interface EditableRoleOption {
+  value: string;
+  label: string;
+  permissions: Permission[] | null;
+}
+
 export interface AccessControlMenuResponse {
   data: MenuConfigMap;
   organizationId: string;
-  editableRoles: OrgRole[];
+  editableRoles: EditableRoleOption[];
   allRoles: OrgRole[];
 }
 

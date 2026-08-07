@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { NAV_GROUPS, NavItem } from "./navGroups";
-import { clearSession, getName, getPermissions, getRole, isLoggedIn, isPlatformAdmin } from "@/lib/auth";
+import { clearSession, getCustomRoleId, getName, getPermissions, getRole, isLoggedIn, isPlatformAdmin } from "@/lib/auth";
 import { getMenuConfig } from "@/lib/api";
 import type { MenuConfigMap } from "@/lib/types";
 
@@ -63,18 +63,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   const role = getRole();
-  // A CUSTOM role never has org_menu_config overrides (accessControl.ts's
-  // editableRolesFor only offers the four fixed roles) and isn't in any
-  // item's default `roles` list either — its visibility is decided purely
-  // by whether its permission set covers the item's `permission` (undefined
+  // A custom role's menu-config key is "custom:<org_roles.id>" (see
+  // accessControl.ts's customRoleKey()) — distinct from the plain role-name
+  // keys a fixed role uses. Its default (absent an explicit override from
+  // the Access Control screen) is permission-based: undefined `permission`
   // = universal, every custom role sees it, same as every fixed role does
-  // for read-only screens).
+  // for read-only screens; otherwise visible only if the role's granted
+  // permissions cover it. AccessControlMatrix.tsx computes this identical
+  // default so the two stay consistent.
+  const menuKey = role === "CUSTOM" ? (getCustomRoleId() ? `custom:${getCustomRoleId()}` : null) : role;
   const isVisible = (item: NavItem) => {
+    const override = menuKey ? menuConfig[menuKey]?.[item.id] : undefined;
+    if (override !== undefined) return override;
     if (role === "CUSTOM") {
       return item.permission === undefined || getPermissions().includes(item.permission);
     }
-    const override = role ? menuConfig[role]?.[item.id] : undefined;
-    if (override !== undefined) return override;
     return role ? item.roles.includes(role as any) : false;
   };
 

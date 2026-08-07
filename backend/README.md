@@ -20,6 +20,7 @@ psql "$DATABASE_URL" -f ../db/migration_007_user_name_and_bp_code.sql
 psql "$DATABASE_URL" -f ../db/migration_008_sales_purchase_returns.sql
 psql "$DATABASE_URL" -f ../db/migration_009_custom_roles.sql
 psql "$DATABASE_URL" -f ../db/migration_010_user_management.sql
+psql "$DATABASE_URL" -f ../db/migration_011_custom_role_access_control.sql
 npx prisma generate
 npx prisma db seed         # seeds domain_types, modules, coa_templates
 npm run create-admin -- --email you@example.com --password "something long"   # makes yourself a platform admin
@@ -152,15 +153,31 @@ per-role visibility live in `frontend/components/layout/navGroups.ts`
 
 | Endpoint | Notes |
 |---|---|
-| `GET /access-control/menu` | Any org member — full override map for their own org, all roles. AppShell filters the sidebar for the caller's own role from this. |
-| `GET /access-control/menu/:organizationId` | OWNER/ADMIN (own org — the URL id is a hint, not an authority) or platform admin (any org). Returns the matrix plus `editableRoles`. |
-| `PUT /access-control/menu/:organizationId` | `{ items: [{ itemId, role, enabled }] }` — replaces the caller's editable roles' overrides. |
+| `GET /access-control/menu` | Any org member — full override map for their own org, every role (fixed and custom) included. AppShell filters the sidebar for the caller's own role/custom role from this. |
+| `GET /access-control/menu/:organizationId` | OWNER/ADMIN (own org — the URL id is a hint, not an authority) or platform admin (any org). Returns the matrix plus `editableRoles` (`{ value, label, permissions }[]`). |
+| `PUT /access-control/menu/:organizationId` | `{ items: [{ itemId, role, enabled }] }` — replaces the caller's editable roles' overrides. `role` is a plain string, not just the four fixed names. |
 
-**Who can edit which role's menu:** OWNER/ADMIN can configure every role
-except OWNER (never restrictable) and except their own role (self-lock
+**Who can edit which role's menu:** OWNER/ADMIN can configure every fixed
+role except OWNER (never restrictable) and except their own role (self-lock
 protection — an ADMIN hiding a screen from ADMIN would lock themselves out
-with no way back short of a platform admin). A platform admin can configure
-all four org roles. See `editableRolesFor()` in `middleware/auth.ts`.
+with no way back short of a platform admin), plus **every custom role** the
+org has defined (no self-lock concern there — OWNER/ADMIN are never
+themselves a custom role). A platform admin can configure all four fixed
+roles too. See `editableRolesFor()` in `middleware/auth.ts` (fixed roles)
+and `editableRoleOptions()` in `accessControl.ts` (adds custom roles).
+
+**Custom roles in this matrix.** A custom role's `org_menu_config` rows are
+keyed `"custom:<org_roles.id>"` — an ID rather than the role's name so a
+rename doesn't orphan its overrides (`role` widened to `VARCHAR(50)` in
+`migration_011_custom_role_access_control.sql` to fit `"custom:" + uuid`).
+Its *default* visibility (before any override) isn't a fixed `roles` list
+like the four built-in roles have — it's computed from whether the role
+holds the item's `permission` (`navGroups.ts`'s `NavItem.permission`; items
+with no `permission` are universal, visible to every custom role). Both
+`AccessControlMatrix.tsx` (the admin's editing screen) and `AppShell.tsx`
+(the actual sidebar a custom-role user sees) compute this same default
+independently, so what an admin sees as "on by default" in the matrix
+always matches what that role's members actually see.
 
 ### Platform admin (`/admin/*`, platform-admin accounts only)
 

@@ -26,7 +26,7 @@ export default function LoginPage() {
         password,
         ...(isEmail ? { email: identifier } : { phone: identifier }),
       });
-      setSession(res.token, res.organizationId, res.role, res.isPlatformAdmin, res.name, res.permissions);
+      setSession(res.token, res.organizationId, res.role, res.isPlatformAdmin, res.name, res.permissions, res.customRoleId);
       router.push(res.isPlatformAdmin ? "/admin" : "/dashboard");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong.");

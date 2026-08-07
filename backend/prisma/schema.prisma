@@ -288,7 +288,9 @@ model OrgRole {
 model OrgMenuConfig {
   organizationId String   @map("organization_id") @db.Uuid
   itemId         String   @map("item_id") @db.VarChar(50)
-  role           String   @db.VarChar(20)
+  // Either a fixed role name ("ACCOUNTANT") or "custom:<org_roles.id>" for
+  // a custom role — see migration_011_custom_role_access_control.sql.
+  role           String   @db.VarChar(50)
   enabled        Boolean
   updatedAt      DateTime @default(now()) @map("updated_at")
 

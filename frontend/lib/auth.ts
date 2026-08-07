@@ -7,6 +7,7 @@ const ROLE_KEY = "smarterp_role";
 const ADMIN_KEY = "smarterp_admin";
 const NAME_KEY = "smarterp_name";
 const PERMISSIONS_KEY = "smarterp_permissions";
+const CUSTOM_ROLE_ID_KEY = "smarterp_custom_role_id";
 
 export function setSession(
   token: string,
@@ -14,7 +15,8 @@ export function setSession(
   role?: string | null,
   isPlatformAdmin?: boolean,
   name?: string | null,
-  permissions?: string[]
+  permissions?: string[],
+  customRoleId?: string | null
 ) {
   if (typeof window === "undefined") return;
   localStorage.setItem(TOKEN_KEY, token);
@@ -28,6 +30,11 @@ export function setSession(
   // Only meaningful for role === "CUSTOM" — a snapshot from login, used to
   // decide what the sidebar shows. Real enforcement is always server-side.
   localStorage.setItem(PERMISSIONS_KEY, JSON.stringify(permissions ?? []));
+  // Which org_roles row, when role === "CUSTOM" — lets AppShell key into
+  // the "custom:<id>" menu-config entries Access Control writes for this
+  // specific custom role (see accessControl.ts's customRoleKey()).
+  if (customRoleId) localStorage.setItem(CUSTOM_ROLE_ID_KEY, customRoleId);
+  else localStorage.removeItem(CUSTOM_ROLE_ID_KEY);
 }
 
 export function getName(): string | null {
@@ -53,6 +60,11 @@ export function getRole(): string | null {
 export function isPlatformAdmin(): boolean {
   if (typeof window === "undefined") return false;
   return localStorage.getItem(ADMIN_KEY) === "1";
+}
+
+export function getCustomRoleId(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(CUSTOM_ROLE_ID_KEY);
 }
 
 // Only populated (and only meaningful) for role === "CUSTOM" — the
@@ -95,6 +107,7 @@ export function clearSession() {
   localStorage.removeItem(ADMIN_KEY);
   localStorage.removeItem(NAME_KEY);
   localStorage.removeItem(PERMISSIONS_KEY);
+  localStorage.removeItem(CUSTOM_ROLE_ID_KEY);
 }
 
 export function isLoggedIn(): boolean {
