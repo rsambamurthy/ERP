@@ -4,10 +4,10 @@ import { useEffect, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
 import {
   ApiError, cancelInvite, createOrgRole, deleteOrgRole, getBranches, getOrgRoles, getOrgUsers,
-  inviteUser, removeMember, updateMemberBranch, updateMemberRole, updateMemberStatus, updateOrgRole,
+  inviteUser, removeMember, updateMemberBranch, updateMemberEmployeeDetails, updateMemberRole, updateMemberStatus, updateOrgRole,
 } from "@/lib/api";
 import { PERMISSIONS, PERMISSION_LABELS } from "@/lib/types";
-import type { BranchSummary, CustomRole, MemberStatus, OrgRole, OrgUsersResponse, Permission } from "@/lib/types";
+import type { BranchSummary, CustomRole, MemberStatus, OrgMember, OrgRole, OrgUsersResponse, Permission } from "@/lib/types";
 
 const FIXED_ROLES: OrgRole[] = ["ADMIN", "ACCOUNTANT", "VIEWER"];
 
@@ -43,6 +43,16 @@ export default function TeamPage() {
   const [showRoleForm, setShowRoleForm] = useState(false);
   const [roleSaving, setRoleSaving] = useState(false);
   const [roleError, setRoleError] = useState<string | null>(null);
+
+  // Employee details (address/PAN/Aadhar) — OWNER/ADMIN-entered, interim
+  // fields on the membership row (see migration_012). Aadhar is
+  // write-only from here: the API never hands back the full number, so the
+  // field starts blank and only overwrites what's stored if the admin
+  // actually types a new one.
+  const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  const [detailsForm, setDetailsForm] = useState({ address: "", pan: "", aadhar: "" });
+  const [detailsSaving, setDetailsSaving] = useState(false);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -109,6 +119,32 @@ export default function TeamPage() {
   async function handleRemove(userId: string) {
     await removeMember(userId);
     await load();
+  }
+
+  function startEditDetails(m: OrgMember) {
+    setEditingMemberId(m.userId);
+    setDetailsForm({ address: m.address ?? "", pan: m.pan ?? "", aadhar: "" });
+    setDetailsError(null);
+  }
+
+  async function handleSaveDetails(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingMemberId) return;
+    setDetailsSaving(true);
+    setDetailsError(null);
+    try {
+      await updateMemberEmployeeDetails(editingMemberId, {
+        address: detailsForm.address,
+        pan: detailsForm.pan,
+        ...(detailsForm.aadhar ? { aadhar: detailsForm.aadhar } : {}),
+      });
+      setEditingMemberId(null);
+      await load();
+    } catch (err) {
+      setDetailsError(err instanceof ApiError ? err.message : "Could not save employee details.");
+    } finally {
+      setDetailsSaving(false);
+    }
   }
 
   async function handleCancelInvite(id: string) {
@@ -336,6 +372,7 @@ export default function TeamPage() {
                   </span>
                 </td>
                 <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                  <button className="ent-ia ent-ia-edit" onClick={() => startEditDetails(m)}>Edit</button>
                   {m.role !== "OWNER" && (
                     <>
                       <button className="ent-ia ent-ia-edit" onClick={() => handleStatusToggle(m.userId, m.status)}>
@@ -350,6 +387,61 @@ export default function TeamPage() {
           </tbody>
         </table>
       </div>
+
+      {editingMemberId && (() => {
+        const member = data?.members.find((m) => m.userId === editingMemberId);
+        return (
+          <form onSubmit={handleSaveDetails} className="ent-section" style={{ marginBottom: 20 }}>
+            <div className="ent-section-hdr">
+              <span className="ent-section-title">Employee Details{member ? ` — ${member.name || member.email || member.phone}` : ""}</span>
+            </div>
+            <div style={{ padding: "0 14px" }}>
+              <p style={{ fontSize: 13, color: "var(--color-muted)", marginBottom: 12 }}>
+                Interim fields, filled in by OWNER/ADMIN. Aadhar is write-only here — the current value is never
+                shown back, only its last 4 digits{member?.aadharMasked ? ` (currently ${member.aadharMasked})` : ""};
+                leave it blank to keep whatever's already on file.
+              </p>
+            </div>
+            <div className="ent-form-grid">
+              <div className="ent-fg" style={{ gridColumn: "1 / -1" }}>
+                <label className="ent-fl">Address</label>
+                <textarea
+                  className="ent-fc"
+                  style={{ minHeight: 60 }}
+                  value={detailsForm.address}
+                  onChange={(e) => setDetailsForm((f) => ({ ...f, address: e.target.value }))}
+                />
+              </div>
+              <div className="ent-fg">
+                <label className="ent-fl">PAN</label>
+                <input
+                  className="ent-fc"
+                  value={detailsForm.pan}
+                  onChange={(e) => setDetailsForm((f) => ({ ...f, pan: e.target.value.toUpperCase() }))}
+                  placeholder="ABCDE1234F"
+                  maxLength={10}
+                />
+              </div>
+              <div className="ent-fg">
+                <label className="ent-fl">Aadhar Number</label>
+                <input
+                  className="ent-fc"
+                  value={detailsForm.aadhar}
+                  onChange={(e) => setDetailsForm((f) => ({ ...f, aadhar: e.target.value }))}
+                  placeholder={member?.aadharMasked ?? "12-digit number"}
+                  maxLength={12}
+                  inputMode="numeric"
+                />
+              </div>
+            </div>
+            {detailsError && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 10px" }}>{detailsError}</p>}
+            <div style={{ display: "flex", gap: 8, padding: "0 14px 14px" }}>
+              <button type="submit" className="ent-btn-save" disabled={detailsSaving}>{detailsSaving ? "Saving…" : "Save"}</button>
+              <button type="button" className="ent-ia" onClick={() => setEditingMemberId(null)}>Cancel</button>
+            </div>
+          </form>
+        );
+      })()}
 
       {data && data.invites.length > 0 && (
         <div className="ent-page-table">

@@ -381,6 +381,12 @@ export interface OrgMember {
   email: string | null;
   phone: string | null;
   isVerified: boolean;
+  // Interim employee-details fields, OWNER/ADMIN-entered — see
+  // migration_012. aadharMasked is always "XXXX XXXX 1234" form or null,
+  // the full number is never returned by the API.
+  address: string | null;
+  pan: string | null;
+  aadharMasked: string | null;
 }
 
 export interface BranchSummary {

@@ -7,6 +7,15 @@ import { logAudit } from "../lib/audit";
 const router = Router();
 router.use(authenticate);
 
+// Never return a full Aadhar number in any response — only the last 4
+// digits, everywhere it'd otherwise appear (GET /, PATCH .../employee-details).
+// See migration_012's note: this limits accidental exposure through the API
+// surface, it does not substitute for real encryption-at-rest.
+function maskAadhar(aadhar: string | null): string | null {
+  if (!aadhar) return null;
+  return `XXXX XXXX ${aadhar.slice(-4)}`;
+}
+
 const ORG_ROLES = ["ADMIN", "ACCOUNTANT", "VIEWER"]; // OWNER is never assignable — set once at registration
 const canManageUsers = requireRole("OWNER", "ADMIN");
 
@@ -66,6 +75,7 @@ router.get("/", canManageUsers, async (req, res) => {
         userId: m.userId, role: m.role, branchId: m.branchId, status: m.status,
         customRoleId: m.customRoleId, customRoleName: m.customRole?.name ?? null,
         name: m.user.name, email: m.user.email, phone: m.user.phone, isVerified: m.user.isVerified,
+        address: m.address, pan: m.pan, aadharMasked: maskAadhar(m.aadhar),
       })),
       invites: invites.map((i) => ({
         id: i.id, email: i.email, phone: i.phone, role: i.role,
@@ -202,6 +212,65 @@ router.patch("/:userId/branch", canManageUsers, async (req, res) => {
     summary: branchId ? "Assigned a team member to a branch" : "Cleared a team member's branch assignment",
   });
   res.json({ data: { userId: updated.userId, branchId: updated.branchId } });
+});
+
+// PATCH /org/users/:userId/employee-details — address/PAN/Aadhar,
+// OWNER/ADMIN-entered (see migration_012's note: interim fields on the
+// membership row, not a separate Employee master). Unlike role/status,
+// this can be filled in for the OWNER row too — it's not a security
+// control, so none of the self-lock protections apply here.
+router.patch("/:userId/employee-details", canManageUsers, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const { address, pan, aadhar } = req.body ?? {};
+
+  const member = await prisma.orgUser.findUnique({
+    where: { organizationId_userId: { organizationId, userId: req.params.userId } },
+  });
+  if (!member) return res.status(404).json({ message: "Team member not found." });
+
+  const data: { address?: string | null; pan?: string | null; aadhar?: string | null } = {};
+
+  if (address !== undefined) data.address = address ? String(address).trim() : null;
+
+  if (pan !== undefined) {
+    if (pan) {
+      const cleaned = String(pan).trim().toUpperCase();
+      if (!/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(cleaned)) {
+        return res.status(400).json({ message: "PAN must be 10 characters in the standard format (e.g. ABCDE1234F)." });
+      }
+      data.pan = cleaned;
+    } else {
+      data.pan = null;
+    }
+  }
+
+  if (aadhar !== undefined) {
+    if (aadhar) {
+      const cleaned = String(aadhar).replace(/\s/g, "");
+      if (!/^[0-9]{12}$/.test(cleaned)) {
+        return res.status(400).json({ message: "Aadhar must be exactly 12 digits." });
+      }
+      data.aadhar = cleaned;
+    } else {
+      data.aadhar = null;
+    }
+  }
+
+  const updated = await prisma.orgUser.update({
+    where: { organizationId_userId: { organizationId, userId: member.userId } },
+    data,
+  });
+
+  logAudit({
+    organizationId, actorUserId: req.user!.userId,
+    action: "UPDATE", entityType: "org_user", entityId: member.userId,
+    summary: "Updated a team member's employee details",
+  });
+
+  res.json({
+    data: { userId: updated.userId, address: updated.address, pan: updated.pan, aadharMasked: maskAadhar(updated.aadhar) },
+  });
 });
 
 // PATCH /org/users/:userId/status — suspend/reactivate a member without

@@ -401,6 +401,13 @@ export function removeMember(userId: string) {
   return request<{ data: { deleted: true } }>(`/org/users/${userId}`, { method: "DELETE" });
 }
 
+export function updateMemberEmployeeDetails(userId: string, body: { address?: string; pan?: string; aadhar?: string }) {
+  return request<{ data: { userId: string; address: string | null; pan: string | null; aadharMasked: string | null } }>(
+    `/org/users/${userId}/employee-details`,
+    { method: "PATCH", body: JSON.stringify(body) }
+  );
+}
+
 export function updateMemberBranch(userId: string, branchId: string | null) {
   return request<{ data: { userId: string; branchId: string | null } }>(`/org/users/${userId}/branch`, {
     method: "PATCH",

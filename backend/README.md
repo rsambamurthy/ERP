@@ -21,6 +21,7 @@ psql "$DATABASE_URL" -f ../db/migration_008_sales_purchase_returns.sql
 psql "$DATABASE_URL" -f ../db/migration_009_custom_roles.sql
 psql "$DATABASE_URL" -f ../db/migration_010_user_management.sql
 psql "$DATABASE_URL" -f ../db/migration_011_custom_role_access_control.sql
+psql "$DATABASE_URL" -f ../db/migration_012_employee_details.sql
 npx prisma generate
 npx prisma db seed         # seeds domain_types, modules, coa_templates
 npm run create-admin -- --email you@example.com --password "something long"   # makes yourself a platform admin
@@ -98,6 +99,7 @@ Always tied to an existing Sales Invoice / Purchase Bill — `GET .../invoice/:i
 | `DELETE /org/users/invites/:id` | Cancel a pending invite. |
 | `PATCH /org/users/:userId/role` | Change a teammate's role (`{ role, customRoleId? }`, same shape as invite). Can't touch the OWNER. |
 | `PATCH /org/users/:userId/branch` | `{ branchId }` (or `null` to clear) — which branch a member belongs to. Informational only today; nothing else in the app scopes reads/writes by it yet. |
+| `PATCH /org/users/:userId/employee-details` | `{ address?, pan?, aadhar? }` — interim employee fields, editable for any member including the OWNER (not a security control, so none of the role/status self-lock protections apply). PAN is validated against the standard 10-character format; Aadhar against 12 digits. `GET /org/users` and this endpoint's response both return `aadharMasked` ("XXXX XXXX 1234") only — the full Aadhar number is never echoed back by any endpoint once stored. See migration_012's note: this is plaintext-at-rest, not a substitute for real encryption if Aadhar capture becomes a genuine compliance requirement. |
 | `PATCH /org/users/:userId/status` | `{ status: "ACTIVE" \| "SUSPENDED" }` — suspend/reactivate without removing membership. Can't touch the OWNER or yourself. A suspended member is refused at `/auth/login`, and `requireActiveSubscription()` re-checks it on every request against an already-issued token (a token issued before suspension is otherwise valid for 30 days). |
 | `DELETE /org/users/:userId` | Revoke access — removes the `org_users` row entirely (distinct from suspend, which keeps it). Can't remove the OWNER or yourself. |
 | `POST /auth/accept-invite` | `{ token, password }` → creates the login, joins the org, returns a session token + resolved `permissions`. |

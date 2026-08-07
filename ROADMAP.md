@@ -76,6 +76,22 @@ would need every module route to filter by the caller's branch, a bigger
 change than this pass. If per-branch data scoping is wanted, that's the
 next layer on top of this.
 
+**Update — employee details (interim).** Discussed as a possible separate
+Employee master (designation, date of joining, statutory IDs, distinct from
+the login account) but deferred; what actually got built instead is
+narrower and lives directly on `org_users`: an **Edit** button per team
+member (Team screen) opens an OWNER/ADMIN-only form for Address, PAN, and
+Aadhar. PAN/Aadhar are format-validated (10-char PAN, 12-digit Aadhar) but
+**not encrypted at rest** — Aadhar is masked in every API response
+("XXXX XXXX 1234", never the full number once stored) as a stopgap against
+accidental exposure through the API surface, but that is not the same as
+real encryption/tokenization and does not on its own satisfy UIDAI storage
+requirements. Treat this as good enough for internal MVP use, not for
+production Aadhar capture, until proper encryption is built. Requires
+`db/migration_012_employee_details.sql`. The full separate Employee master
+(if ever needed — designation/DOJ/independent-of-login-access employees)
+is still an open, unbuilt idea, not this.
+
 ## Custom Roles (built)
 
 Layered on top of the fixed OWNER/ADMIN/ACCOUNTANT/VIEWER four, which stay

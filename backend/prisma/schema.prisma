@@ -249,6 +249,13 @@ model OrgUser {
   // SUSPENDED blocks login/API use for this org without removing
   // membership — see PATCH /org/users/:userId/status.
   status         String  @default("ACTIVE") @db.VarChar(20)
+  // Interim employee-details fields, OWNER/ADMIN-entered via the Team
+  // screen — see migration_012's note on Aadhar's plaintext-at-rest caveat.
+  // Not part of a separate Employee master (deferred); lives directly on
+  // the membership row for now.
+  address        String?
+  pan            String? @db.VarChar(10)
+  aadhar         String? @db.VarChar(12)
 
   organization Organization @relation(fields: [organizationId], references: [id])
   user         User         @relation(fields: [userId], references: [id])
