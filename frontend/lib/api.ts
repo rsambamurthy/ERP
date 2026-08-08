@@ -18,6 +18,8 @@ import type {
   DocumentLineInput,
   DomainDetailsMap,
   DomainType,
+  Gstr1Report,
+  Gstr3bReport,
   Item,
   JournalEntry,
   JournalLineInput,
@@ -327,6 +329,53 @@ export function getReceiptsPayments(params?: { from?: string; to?: string }) {
 export function getDayBook(params?: { from?: string; to?: string }) {
   const qs = new URLSearchParams(cleanParams(params)).toString();
   return request<{ data: JournalEntry[] }>(`/journal/day-book${qs ? `?${qs}` : ""}`);
+}
+
+// ── GST Statutory Reports (GSTR-1 / GSTR-3B) ────────────────────────────────
+
+export function getGstr1(params: { from: string; to: string; branchId?: string }) {
+  const qs = new URLSearchParams(cleanParams(params)).toString();
+  return request<{ data: Gstr1Report }>(`/gst/gstr1?${qs}`);
+}
+
+export function getGstr3b(params: { from: string; to: string; branchId?: string }) {
+  const qs = new URLSearchParams(cleanParams(params)).toString();
+  return request<{ data: Gstr3bReport }>(`/gst/gstr3b?${qs}`);
+}
+
+// Both exports bypass request<T>() the same way downloadBulkTemplate does —
+// a real file download, not JSON.
+async function downloadFile(path: string, filename: string): Promise<void> {
+  const token = getToken();
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  } catch {
+    throw new ApiError("Could not reach the backend to download the report.");
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(body.message ?? `Could not download the report (${res.status}).`, res.status);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export function downloadGstr1(params: { from: string; to: string; branchId?: string }) {
+  const qs = new URLSearchParams(cleanParams(params)).toString();
+  return downloadFile(`/gst/gstr1/export?${qs}`, `GSTR1_${params.from}_to_${params.to}.xlsx`);
+}
+
+export function downloadGstr3b(params: { from: string; to: string; branchId?: string }) {
+  const qs = new URLSearchParams(cleanParams(params)).toString();
+  return downloadFile(`/gst/gstr3b/export?${qs}`, `GSTR3B_${params.from}_to_${params.to}.xlsx`);
 }
 
 // ── Sales / Purchase / Inventory ────────────────────────────────────────────

@@ -69,6 +69,23 @@ All routes below require `Authorization: Bearer <token>` from login/verify-otp.
 | `GET /journal/receipts-payments?from=&to=` | Same Cash+Bank movement, split by direction. |
 | `GET /journal/day-book?from=&to=` | Every posted voucher, chronological. |
 
+### GST Statutory Reports (`/gst`)
+
+Built entirely from data the Discount + GST Split and Sales/Purchase Return
+features already capture — no new migration. MSME-first-pass subset, not a
+full compliance engine (see ROADMAP.md's "GST Statutory Reports" section for
+exactly what's simplified — place of supply, B2C summarization, no cess/
+reverse-charge, GSTR-3B's net-payable not modeling actual ITC set-off order).
+Same read access as the other accounting reports (Trial Balance/P&L/Balance
+Sheet) — no `requirePermission` gate.
+
+| Route | Notes |
+| --- | --- |
+| `GET /gst/gstr1?from=&to=&branchId=` | Outward supplies for a period — B2B (invoice-wise), B2C (summarized by state+rate), HSN summary, and credit notes (Sales Returns). |
+| `GET /gst/gstr1/export?from=&to=&branchId=` | Same data as an `.xlsx`, one sheet per table. |
+| `GET /gst/gstr3b?from=&to=&branchId=` | Outward tax liability vs. ITC available (from Purchase Bills) vs. indicative net payable, both net of the period's Sales/Purchase Returns. |
+| `GET /gst/gstr3b/export?from=&to=&branchId=` | Same data as an `.xlsx`. |
+
 ### Branches (`/branches`)
 
 Full CRUD, not just the read-only list + unauthenticated onboarding create it

@@ -100,4 +100,13 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: "balance_sheet", label: "Balance Sheet", path: "/accounting/balance-sheet", dot: "#7c3aed", roles: ALL_ROLES },
     ],
   },
+  {
+    id: "statutory",
+    label: "Statutory Reports",
+    icon: "G",
+    items: [
+      { id: "gstr1", label: "GSTR-1", path: "/reports/gstr1", dot: "#0891b2", roles: ALL_ROLES },
+      { id: "gstr3b", label: "GSTR-3B", path: "/reports/gstr3b", dot: "#ea580c", roles: ALL_ROLES },
+    ],
+  },
 ];

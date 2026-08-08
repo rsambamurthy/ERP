@@ -275,6 +275,38 @@ old inline expanding form + flat table.
 
 Requires `db/migration_015_journal_ux.sql`.
 
+## GST Statutory Reports (built)
+
+New "Statutory Reports" menu — GSTR-1 and GSTR-3B, both on-screen and as an
+Excel download matching a close approximation of the official column
+layout. Deliberately an MSME-first-pass subset, not a full compliance
+engine:
+
+- **Place of supply** is always the customer/vendor's own state (bill-to)
+  — this app has no separate ship-to address concept anywhere, so there's
+  nothing else to use.
+- **B2C** is one summarized table by state + rate, not the official
+  invoice-wise "B2CL" table for invoices over ₹2.5L — this app doesn't flag
+  large B2C invoices separately.
+- **No cess** (not modeled anywhere), no exempt/nil-rated/zero-rated
+  distinction, no reverse-charge flag — every taxable line is treated as a
+  normal taxable supply.
+- **GSTR-3B's Net Payable** is liability minus ITC per tax head, clamped at
+  zero — it does not model the government's actual cross-utilization
+  set-off order (IGST credit first against IGST, then CGST, then SGST) or
+  carry-forward of unused credit. Flagged in the UI itself as indicative,
+  not filing-ready.
+- Sales Return / Purchase Return don't store their own CGST/SGST/IGST
+  split (only a combined `taxAmount`) — GSTR-1's credit-note table and
+  GSTR-3B's net-of-returns figures recompute it the same way the posting
+  routes do (`lib/gstReports.ts`). Sales Return's known discount-blindness
+  (see above) carries through to these numbers too.
+
+Backend: `lib/gstReports.ts` (`computeGstr1`/`computeGstr3b`) +
+`routes/gst.ts` (`GET /gst/gstr1`, `/gst/gstr1/export`, `/gst/gstr3b`,
+`/gst/gstr3b/export`). No new migration — built entirely from data already
+captured by the Discount + GST Split and Sales/Purchase Return features.
+
 ## From the earlier "what's next" review
 
 Flagged as gaps before Sales/Purchase/Inventory was chosen as the next
@@ -303,10 +335,6 @@ priority; still open.
   response (`devOtp`, `devInviteToken`, gated by `EXPOSE_DEV_OTP`) because
   no provider is wired up. Needs a real provider (e.g. SendGrid/Twilio)
   before anyone but the founding team uses this in production.
-
-- **GST returns / compliance.** GSTIN is already captured (Business
-  Partners, Branches, domain onboarding), but nothing computes GSTR-1 or
-  GSTR-3B from posted transactions yet.
 
 ## Already resolved (kept for context)
 

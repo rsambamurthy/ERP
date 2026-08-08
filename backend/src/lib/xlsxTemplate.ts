@@ -83,6 +83,49 @@ export async function buildTemplateWorkbook(
   return Buffer.from(raw);
 }
 
+// Plain multi-sheet data export (GSTR-1/3B, and any future read-only report
+// download) — one bold header row per sheet, no hint row / sample rows /
+// dropdowns, since there's nothing here for the user to fill in.
+export interface DataSheet {
+  name: string;
+  columns: { header: string; width: number; numFmt?: string }[];
+  rows: (string | number | null)[][];
+}
+
+export async function buildDataWorkbook(sheets: DataSheet[]): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "SmartERP";
+  wb.created = new Date();
+
+  for (const sheet of sheets) {
+    const ws = wb.addWorksheet(sheet.name);
+    ws.columns = sheet.columns.map((c) => ({ width: c.width, style: c.numFmt ? { numFmt: c.numFmt } : undefined }));
+
+    const hdr = ws.getRow(1);
+    hdr.height = 20;
+    hdr.values = sheet.columns.map((c) => c.header);
+    hdr.eachCell({ includeEmpty: true }, (cell) => {
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11, name: "Calibri" };
+      cell.fill = HEADER_FILL;
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.border = { top: THIN_BORDER, bottom: THIN_BORDER, left: THIN_BORDER, right: THIN_BORDER };
+    });
+
+    sheet.rows.forEach((row, idx) => {
+      const r = ws.getRow(idx + 2);
+      r.values = row;
+      r.eachCell({ includeEmpty: true }, (cell) => cell.border = { top: HAIR_BORDER, bottom: HAIR_BORDER, left: HAIR_BORDER, right: HAIR_BORDER });
+    });
+
+    ws.views = [{ state: "frozen", ySplit: 1 }];
+    const lastCol = sheet.columns.length <= 26 ? String.fromCharCode(64 + sheet.columns.length) : "Z";
+    ws.autoFilter = { from: "A1", to: `${lastCol}1` };
+  }
+
+  const raw = await wb.xlsx.writeBuffer();
+  return Buffer.from(raw);
+}
+
 // Loads the first (only) worksheet of an uploaded workbook. Callers iterate
 // rows starting at 3 — rows 1-2 are the header and hint row laid down by
 // buildTemplateWorkbook above.

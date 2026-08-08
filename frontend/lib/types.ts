@@ -124,6 +124,81 @@ export interface JournalEntry {
   stockAdjustment?: { id: string } | null;
 }
 
+export interface Gstr1B2BRow {
+  gstin: string;
+  receiverName: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  invoiceValue: number;
+  placeOfSupply: string;
+  rate: number;
+  taxableValue: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+}
+
+export interface Gstr1B2CRow {
+  placeOfSupply: string;
+  rate: number;
+  taxableValue: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+}
+
+export interface Gstr1HsnRow {
+  hsnCode: string;
+  description: string;
+  uom: string;
+  rate: number;
+  quantity: number;
+  taxableValue: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+}
+
+export interface Gstr1CreditNoteRow {
+  noteNumber: string;
+  noteDate: string;
+  originalInvoiceNumber: string;
+  gstin: string | null;
+  receiverName: string;
+  placeOfSupply: string;
+  rate: number;
+  taxableValue: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+}
+
+export interface Gstr1Report {
+  from: string;
+  to: string;
+  b2b: Gstr1B2BRow[];
+  b2c: Gstr1B2CRow[];
+  hsn: Gstr1HsnRow[];
+  creditNotes: Gstr1CreditNoteRow[];
+  totals: { taxableValue: number; cgst: number; sgst: number; igst: number; invoiceValue: number };
+}
+
+export interface Gstr3bSection {
+  taxableValue: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  total: number;
+}
+
+export interface Gstr3bReport {
+  from: string;
+  to: string;
+  outward: Gstr3bSection;
+  itc: Gstr3bSection;
+  netPayable: { cgst: number; sgst: number; igst: number; total: number };
+}
+
 export interface LedgerRow {
   date: string;
   narration: string;
