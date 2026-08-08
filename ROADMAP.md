@@ -307,6 +307,34 @@ Backend: `lib/gstReports.ts` (`computeGstr1`/`computeGstr3b`) +
 `/gst/gstr3b/export`). No new migration — built entirely from data already
 captured by the Discount + GST Split and Sales/Purchase Return features.
 
+## M-PIN Login (built)
+
+`/login` now matches SmartAppt Gold's actual flow instead of a single
+email/phone + password form: enter an email or phone, then either enter a
+4-digit M-PIN (returning users) or verify an OTP and set one (first time,
+or "forgot M-PIN" — same operation, one endpoint). The "Register
+Association" link SmartAppt Gold shows here is "Register Company" in
+SmartERP, pointing at the existing `/register` wizard (unchanged).
+
+Fully additive, not a replacement: `POST /auth/login` (email/phone +
+password) still works exactly as before for any account that hasn't set an
+M-PIN — the login screen just doesn't surface that path anymore, matching
+the reference screen. Practical effect: every existing account (including
+a freshly created platform admin) needs to go through the OTP → set-M-PIN
+step once before they can log in at all through this screen, since none of
+them have `mpin_hash` set yet. The OTP shows directly on screen either way
+(`devOtp`, same "no real provider" convention as registration/forgot-
+password) until a real SMS/email provider is wired up.
+
+Backend: `users.mpin_hash` (migration_016), reusing the same
+`reset_otp_code`/`reset_otp_expires_at` pair `/forgot-password` already
+uses rather than new OTP columns. New routes: `GET /auth/mpin/status`,
+`POST /auth/mpin/request-otp`, `POST /auth/mpin/verify`, `POST
+/auth/mpin/set`. `POST /auth/login`'s platform-admin/isVerified/suspended
+checks were extracted into a shared `buildLoginResponse()` so all three
+login paths (`/login`, `/mpin/verify`, `/mpin/set`) share one implementation
+instead of three copies.
+
 ## From the earlier "what's next" review
 
 Flagged as gaps before Sales/Purchase/Inventory was chosen as the next

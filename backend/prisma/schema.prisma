@@ -193,7 +193,20 @@ model User {
   passwordHash     String    @map("password_hash")
   isVerified       Boolean   @default(false) @map("is_verified")
   isPlatformAdmin  Boolean   @default(false) @map("is_platform_admin")
+  // M-PIN login (SmartAppt Gold-style phone + OTP + 4-digit PIN) — set the
+  // first time via /auth/mpin/set (after an OTP challenge, reusing the same
+  // resetOtpCode/resetOtpExpiresAt pair below), then used directly via
+  // /auth/mpin/verify for every login after that. Hashed with the same
+  // bcrypt wrapper as passwordHash (lib/password.ts) — a 4-digit PIN hashed
+  // the same way is just a much smaller keyspace, not a different scheme.
+  // Null until the user has gone through the flow once; email/phone +
+  // password (POST /auth/login) keeps working regardless, so this is
+  // additive, not a replacement.
+  mpinHash          String?   @map("mpin_hash")
   // Forgot-password flow — see /auth/forgot-password and /auth/reset-password.
+  // Also reused by the M-PIN flow's OTP step (POST /auth/mpin/request-otp,
+  // /auth/mpin/set) — same "one pending OTP per user" shape, doesn't need
+  // its own separate pair of columns.
   resetOtpCode      String?   @map("reset_otp_code") @db.VarChar(10)
   resetOtpExpiresAt DateTime? @map("reset_otp_expires_at")
   createdAt        DateTime  @default(now()) @map("created_at")

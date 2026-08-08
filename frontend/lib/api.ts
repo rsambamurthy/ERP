@@ -111,6 +111,35 @@ export function login(payload: { email?: string; phone?: string; password: strin
   }>("/auth/login", { method: "POST", body: JSON.stringify(payload) });
 }
 
+// Same response shape as login() above — all three log the user in the same
+// way, just via a different credential.
+export interface MpinLoginResponse {
+  token: string; organizationId: string | null; role: string | null;
+  isPlatformAdmin: boolean; name: string | null; permissions?: Permission[]; customRoleId?: string | null;
+}
+
+export function getMpinStatus(identifier: string) {
+  return request<{ data: { hasMpin: boolean } }>(`/auth/mpin/status?identifier=${encodeURIComponent(identifier)}`);
+}
+
+export function requestMpinOtp(identifier: string) {
+  return request<{ data: { sent: true; devOtp?: string } }>("/auth/mpin/request-otp", {
+    method: "POST", body: JSON.stringify({ identifier }),
+  });
+}
+
+export function verifyMpin(identifier: string, mpin: string) {
+  return request<MpinLoginResponse>("/auth/mpin/verify", {
+    method: "POST", body: JSON.stringify({ identifier, mpin }),
+  });
+}
+
+export function setMpin(identifier: string, otp: string, mpin: string) {
+  return request<MpinLoginResponse>("/auth/mpin/set", {
+    method: "POST", body: JSON.stringify({ identifier, otp, mpin }),
+  });
+}
+
 // POST /auth/accept-invite
 export function acceptInvite(token: string, name: string, password: string) {
   return request<{

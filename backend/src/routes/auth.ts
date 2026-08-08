@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { OrgUser, User } from "@prisma/client";
 import { prisma } from "../db";
 import { hashPassword, verifyPassword } from "../lib/password";
 import { generateOtp, otpExpiry, sendOtp } from "../lib/otp";
@@ -6,6 +7,53 @@ import { signToken } from "../lib/jwt";
 import { builtInPermissions, Permission } from "../lib/permissions";
 
 const router = Router();
+
+// email vs. phone identifier — same "@ means email" convention the frontend
+// already uses (LoginPage's identifier field).
+function identifierWhere(identifier: string) {
+  return identifier.includes("@") ? { email: identifier } : { phone: identifier };
+}
+
+// Thrown by buildLoginResponse for a case the caller should turn straight
+// into an HTTP error, without duplicating the platform-admin/isVerified/
+// suspended checks at every one of the three routes that log someone in
+// (POST /login, POST /mpin/verify, POST /mpin/set).
+class LoginBlocked extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function buildLoginResponse(user: User & { orgUsers: OrgUser[] }) {
+  // Platform admins aren't members of any organization — they don't need
+  // isVerified (they never go through the OTP wizard) and route straight to
+  // the /admin area on the frontend.
+  if (user.isPlatformAdmin) {
+    const token = signToken({
+      userId: user.id, organizationId: null, role: null, customRoleId: null, branchId: null, isPlatformAdmin: true,
+    });
+    return { token, organizationId: null, role: null, isPlatformAdmin: true, name: user.name };
+  }
+
+  if (!user.isVerified) throw new LoginBlocked(403, "Account not verified yet — complete OTP verification first.");
+
+  const orgUser = user.orgUsers[0];
+  if (!orgUser) throw new LoginBlocked(409, "This account isn't linked to an organization.");
+  if (orgUser.status === "SUSPENDED") throw new LoginBlocked(403, "Your access has been suspended. Contact your organization admin.");
+
+  const token = signToken({
+    userId: user.id, organizationId: orgUser.organizationId, role: orgUser.role,
+    customRoleId: orgUser.customRoleId, branchId: orgUser.branchId, isPlatformAdmin: false,
+  });
+  const permissions = await resolvePermissions(orgUser.role, orgUser.customRoleId);
+
+  return {
+    token, organizationId: orgUser.organizationId, role: orgUser.role, isPlatformAdmin: false, name: user.name,
+    permissions, customRoleId: orgUser.customRoleId,
+  };
+}
 
 // Resolves the permission list to hand back in the login/verify/accept
 // response — built-in roles resolve locally, a "CUSTOM" role needs its
@@ -143,45 +191,106 @@ router.post("/login", async (req, res) => {
   const ok = await verifyPassword(password, user.passwordHash);
   if (!ok) return res.status(401).json({ message: "Incorrect email/phone or password." });
 
-  // Platform admins aren't members of any organization — they don't need
-  // isVerified (they never go through the OTP wizard) and route straight to
-  // the /admin area on the frontend.
-  if (user.isPlatformAdmin) {
-    const token = signToken({
-      userId: user.id,
-      organizationId: null,
-      role: null,
-      customRoleId: null,
-      branchId: null,
-      isPlatformAdmin: true,
-    });
-    return res.json({ token, organizationId: null, role: null, isPlatformAdmin: true, name: user.name });
+  try {
+    res.json(await buildLoginResponse(user));
+  } catch (err) {
+    if (err instanceof LoginBlocked) return res.status(err.status).json({ message: err.message });
+    throw err;
+  }
+});
+
+// ── M-PIN login (SmartAppt Gold-style: phone/email → OTP first time → set a
+// 4-digit M-PIN → phone/email + M-PIN for every login after that). Fully
+// additive — POST /login above keeps working exactly as it did, for anyone
+// who never sets an M-PIN. See migration_016's note on why the OTP step
+// reuses resetOtpCode/resetOtpExpiresAt rather than new columns.
+
+// GET /auth/mpin/status?identifier= — lets the login screen skip straight
+// to the M-PIN box for a returning user instead of always starting at OTP.
+router.get("/mpin/status", async (req, res) => {
+  const identifier = String(req.query.identifier ?? "");
+  if (!identifier) return res.status(400).json({ message: "identifier is required." });
+  const user = await prisma.user.findFirst({ where: identifierWhere(identifier) });
+  res.json({ data: { hasMpin: !!user?.mpinHash } });
+});
+
+// POST /auth/mpin/request-otp { identifier }
+router.post("/mpin/request-otp", async (req, res) => {
+  const { identifier } = req.body ?? {};
+  if (!identifier) return res.status(400).json({ message: "identifier is required." });
+
+  const user = await prisma.user.findFirst({ where: identifierWhere(identifier) });
+  if (!user) return res.status(404).json({ message: "No account found for that email/phone — register a company first." });
+
+  const otp = generateOtp();
+  await prisma.user.update({ where: { id: user.id }, data: { resetOtpCode: otp, resetOtpExpiresAt: otpExpiry() } });
+  sendOtp(identifier, otp);
+
+  const exposeDevOtp = process.env.EXPOSE_DEV_OTP !== "false";
+  res.json({ data: { sent: true, ...(exposeDevOtp ? { devOtp: otp } : {}) } });
+});
+
+// POST /auth/mpin/verify { identifier, mpin } — the normal returning-user
+// login once an M-PIN is set.
+router.post("/mpin/verify", async (req, res) => {
+  const { identifier, mpin } = req.body ?? {};
+  if (!identifier || !mpin) return res.status(400).json({ message: "identifier and mpin are required." });
+
+  const user = await prisma.user.findFirst({ where: identifierWhere(identifier), include: { orgUsers: true } });
+  if (!user?.mpinHash || !(await verifyPassword(mpin, user.mpinHash))) {
+    return res.status(401).json({ message: "Incorrect M-PIN." });
   }
 
-  if (!user.isVerified) {
-    return res.status(403).json({ message: "Account not verified yet — complete OTP verification first." });
+  try {
+    res.json(await buildLoginResponse(user));
+  } catch (err) {
+    if (err instanceof LoginBlocked) return res.status(err.status).json({ message: err.message });
+    throw err;
+  }
+});
+
+// POST /auth/mpin/set { identifier, otp, mpin } — verify the OTP from
+// /mpin/request-otp, store the new M-PIN, and log straight in. Covers both
+// "first time setting an M-PIN" and "forgot M-PIN" — both are just "prove
+// you control the phone/email, then set a new PIN," so there's no need for
+// two separate endpoints the way SmartAppt Gold's mobile app has (set_mpin
+// vs reset_mpin) — its split exists for its own token/session plumbing,
+// which SmartERP's single-JWT model doesn't need.
+router.post("/mpin/set", async (req, res) => {
+  const { identifier, otp, mpin } = req.body ?? {};
+  if (!identifier || !otp || !mpin) {
+    return res.status(400).json({ message: "identifier, otp, and mpin are required." });
+  }
+  if (!/^\d{4}$/.test(mpin)) {
+    return res.status(400).json({ message: "M-PIN must be exactly 4 digits." });
   }
 
-  const orgUser = user.orgUsers[0];
-  if (!orgUser) return res.status(409).json({ message: "This account isn't linked to an organization." });
-  if (orgUser.status === "SUSPENDED") {
-    return res.status(403).json({ message: "Your access has been suspended. Contact your organization admin." });
+  const user = await prisma.user.findFirst({ where: identifierWhere(identifier) });
+  if (!user || !user.resetOtpCode || user.resetOtpCode !== otp) {
+    return res.status(400).json({ message: "Incorrect or expired code." });
+  }
+  if (!user.resetOtpExpiresAt || user.resetOtpExpiresAt < new Date()) {
+    return res.status(400).json({ message: "Incorrect or expired code." });
   }
 
-  const token = signToken({
-    userId: user.id,
-    organizationId: orgUser.organizationId,
-    role: orgUser.role,
-    customRoleId: orgUser.customRoleId,
-    branchId: orgUser.branchId,
-    isPlatformAdmin: false,
+  const mpinHash = await hashPassword(mpin);
+  const updatedUser = await prisma.user.update({
+    where: { id: user.id },
+    // Proving control of the phone/email via OTP here is exactly what the
+    // registration wizard's own OTP step already establishes — if this
+    // account somehow reached here without having gone through that yet,
+    // this satisfies the same bar, rather than leaving isVerified stuck
+    // false for a user who can clearly receive the OTP.
+    data: { mpinHash, resetOtpCode: null, resetOtpExpiresAt: null, isVerified: true },
+    include: { orgUsers: true },
   });
-  const permissions = await resolvePermissions(orgUser.role, orgUser.customRoleId);
 
-  res.json({
-    token, organizationId: orgUser.organizationId, role: orgUser.role, isPlatformAdmin: false, name: user.name,
-    permissions, customRoleId: orgUser.customRoleId,
-  });
+  try {
+    res.json(await buildLoginResponse(updatedUser));
+  } catch (err) {
+    if (err instanceof LoginBlocked) return res.status(err.status).json({ message: err.message });
+    throw err;
+  }
 });
 
 // POST /auth/accept-invite — the link an invited teammate gets. Creates

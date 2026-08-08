@@ -47,6 +47,10 @@ doesn't need a DB connection.
 | `POST /auth/login` | Returning users: email/phone + password → JWT. Rejects (403) a `SUSPENDED` member — see Team / user management below. |
 | `POST /auth/forgot-password` | `{ email\|phone }` → generates a reset OTP if the account exists, returns the same generic message either way (no account enumeration). Returns `devOtp` until a real provider exists. |
 | `POST /auth/reset-password` | `{ email\|phone, otp, newPassword }` → verifies the OTP and sets a new password. Logged-out flow — distinct from `POST /me/change-password` below. |
+| `GET /auth/mpin/status?identifier=` | `{ hasMpin }` — lets the login screen jump straight to the M-PIN box for a returning user. |
+| `POST /auth/mpin/request-otp` | `{ identifier }` → 404 if no account matches, else sends an OTP (reuses `reset_otp_code`/`reset_otp_expires_at` — same pair `/forgot-password` uses). Returns `devOtp` until a real provider exists. |
+| `POST /auth/mpin/verify` | `{ identifier, mpin }` → JWT, same response shape as `/auth/login`. The normal returning-user login once an M-PIN is set. |
+| `POST /auth/mpin/set` | `{ identifier, otp, mpin }` → verifies the OTP, hashes and stores the M-PIN (`users.mpin_hash`), logs straight in. Covers both first-time setup and "forgot M-PIN" — see `routes/auth.ts`'s note on why that's one endpoint instead of two. |
 | `GET /domain-types` | Reads from the `domain_types` seed. |
 | `POST /onboarding/domain` | Upserts `org_domains` (one or more). Rejects with 409 once `domain_locked_at` is set. |
 | `POST /onboarding/provision` | Seeds `accounts` from core + selected domains' `coa_templates` (flagged `is_system`), enables modules, creates the head-office `branches` row. |
