@@ -231,6 +231,69 @@ export function createJournalEntry(body: {
   return request<{ data: JournalEntry }>("/journal", { method: "POST", body: JSON.stringify(body) });
 }
 
+// Only manual entries (referenceType null) accept this — the backend
+// 409s on anything auto-posted.
+export function updateJournalEntry(id: string, body: {
+  entryDate: string;
+  narration: string;
+  lines: JournalLineInput[];
+}) {
+  return request<{ data: JournalEntry }>(`/journal/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function getJournalEntry(id: string) {
+  return request<{ data: JournalEntry }>(`/journal/${id}`);
+}
+
+// Multipart upload — bypasses request<T>() the same way bulk-upload does,
+// so the browser can set its own multipart Content-Type boundary.
+export async function uploadJournalAttachment(id: string, file: File) {
+  const token = getToken();
+  const fd = new FormData();
+  fd.append("file", file);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/journal/${id}/attachment`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: fd,
+    });
+  } catch {
+    throw new ApiError("Could not reach the backend to upload the attachment.");
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(body.message ?? `Could not upload the attachment (${res.status}).`, res.status);
+  }
+  return res.json() as Promise<{ data: { attachmentFilename: string; attachmentMimeType: string; attachmentSize: number } }>;
+}
+
+export async function downloadJournalAttachment(id: string, filename: string): Promise<void> {
+  const token = getToken();
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/journal/${id}/attachment`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch {
+    throw new ApiError("Could not reach the backend to download the attachment.");
+  }
+  if (!res.ok) throw new ApiError(`Could not download the attachment (${res.status}).`, res.status);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export function removeJournalAttachment(id: string) {
+  return request<{ data: { removed: true } }>(`/journal/${id}/attachment`, { method: "DELETE" });
+}
+
 export function getLedger(params: { accountId: string; businessPartnerId?: string; from?: string; to?: string }) {
   const qs = new URLSearchParams(cleanParams(params)).toString();
   return request<{ data: LedgerResponse }>(`/journal/ledger?${qs}`);

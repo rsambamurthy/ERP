@@ -57,7 +57,10 @@ All routes below require `Authorization: Bearer <token>` from login/verify-otp.
 |---|---|
 | `GET/POST /accounts`, `PATCH /accounts/:id`, `PATCH /accounts/:id/toggle`, `DELETE /accounts/:id` | Chart of Accounts. System (templated) accounts keep code/type/hierarchy fixed; everything else is editable. |
 | `GET/POST /business-partners`, `PATCH /business-partners/:id`, `PATCH /business-partners/:id/toggle`, `DELETE /business-partners/:id` | Customer/vendor master — the sub-ledger behind control accounts. `?bpType=CUSTOMER\|VENDOR` filters the list. |
-| `GET/POST /journal` | List (most recent 200) / post a balanced double-entry voucher. Control-account lines require a `businessPartnerId`. Posting locks the org's domain selection (DB trigger). |
+| `GET/POST /journal` | List (most recent 200) / post a balanced double-entry voucher. Control-account lines require a `businessPartnerId`. Posting locks the org's domain selection (DB trigger). A manual post gets a sequential `voucherNumber` (`JV-0001`/`BV-0001`/`CV-0001`, scoped per org per voucher type, no FY logic); auto-posted entries (Sales Invoice, Purchase Bill, Returns, Stock Adjustment) leave it null. |
+| `GET /journal/:id` | Single entry with lines + the sibling document's number (`salesInvoice.invoiceNumber` etc.) for auto-posted entries. |
+| `PATCH /journal/:id` | Edit a MANUAL entry in place (date/narration/lines) — 409s on anything auto-posted (`referenceType` set). `voucherType` is frozen once created. |
+| `POST/GET/DELETE /journal/:id/attachment` | One supporting document per entry (any entry, manual or auto-posted), stored as `bytea` in Postgres — no cloud storage exists in this app, so this is a deliberate simplification, not best practice for high volume. 5MB cap via the existing upload middleware. |
 | `GET /journal/ledger?accountId=&businessPartnerId=&from=&to=` | Running balance for one account, or one partner's cut of a control account. |
 | `GET /journal/trial-balance?asOf=&branchId=` | Net debit/credit per account as of a date. |
 | `GET /journal/pnl?from=&to=` | Income vs expense for a period. |

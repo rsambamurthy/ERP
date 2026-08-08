@@ -243,6 +243,38 @@ stock lot that bill created (falls back to oldest-first FIFO for any
 shortfall) — see `returnStockToVendor()` in `lib/costing.ts`. Requires
 `db/migration_008_sales_purchase_returns.sql`.
 
+## Journal Entries UX (built)
+
+Rebuilt to match SmartAppt Gold's Journal Entries screen: a master-detail
+layout (fixed list on the left, detail/form on the right) instead of the
+old inline expanding form + flat table.
+
+- **Voucher-class abstraction.** Posting starts from a Bank / Cash /
+  Journal class picker instead of a raw BV/CV/JV dropdown. For Bank/Cash,
+  a Receipt/Payment direction picker follows, and the "money" line (the
+  org's Cash-in-Hand/Bank Account, codes `1001`/`1002`) is never typed in
+  — it's auto-computed as the total of whatever contra line(s) the user
+  enters. The class + direction only collapse into a stored `voucherType`
+  (`BV`/`CV`/`JV`) at save time.
+- **Sequential voucher numbering.** Manual entries get a `JV-0001` /
+  `BV-0001` / `CV-0001` style `voucherNumber`, scoped per organization per
+  voucher type — no fiscal-year logic, matching the plain-sequential
+  convention `SalesInvoice.invoiceNumber` etc. already use. Auto-posted
+  entries (Sales Invoice, Purchase Bill, Sales/Purchase Return, Stock
+  Adjustment) leave this null and show their own document's number
+  instead.
+- **Editing.** `PATCH /journal/:id` lets a MANUAL entry (`referenceType`
+  null) be corrected in place — date, narration, lines. Auto-posted
+  entries stay read-only here; correcting one means posting through its
+  own module. `voucherType` itself is frozen once created.
+- **Attachments.** One supporting document per entry (replaces on
+  re-upload), on any entry — manual or auto-posted. Stored directly in
+  Postgres as `bytea` (no cloud storage exists anywhere in this app yet);
+  fine for occasional scanned bills, not meant for high volume. 5MB cap
+  enforced by the existing upload middleware.
+
+Requires `db/migration_015_journal_ux.sql`.
+
 ## From the earlier "what's next" review
 
 Flagged as gaps before Sales/Purchase/Inventory was chosen as the next
@@ -265,9 +297,6 @@ priority; still open.
   balances into the new financial year, lock the prior year against further
   posting. SmartAppt has this as a dedicated flow (`fy_closure` in its
   mobile/web menu catalogue); SmartERP doesn't have an equivalent yet.
-
-- **Voucher attachments.** Attach a scanned bill/receipt image or PDF to a
-  Journal Entry / Sales Invoice / Purchase Bill.
 
 - **Real email/SMS provider.** OTP (`/auth/register`) and team invites
   (`/org/users/invite`) currently expose the code/link directly in the API

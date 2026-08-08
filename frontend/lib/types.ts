@@ -107,8 +107,21 @@ export interface JournalEntry {
   entryDate: string;
   narration: string;
   voucherType: "BV" | "CV" | "JV" | null;
+  // Sequential JV-0001/BV-0001/CV-0001 style code — null for auto-posted
+  // entries (referenceType set), which show their sibling document's own
+  // number instead (see salesInvoice/purchaseBill/etc. below).
+  voucherNumber: string | null;
+  referenceType: string | null;
   branchId: string | null;
+  attachmentFilename: string | null;
+  attachmentMimeType: string | null;
+  attachmentSize: number | null;
   journalLines: JournalLine[];
+  salesInvoice?: { invoiceNumber: string } | null;
+  purchaseBill?: { billNumber: string } | null;
+  salesReturn?: { returnNumber: string } | null;
+  purchaseReturn?: { returnNumber: string } | null;
+  stockAdjustment?: { id: string } | null;
 }
 
 export interface LedgerRow {

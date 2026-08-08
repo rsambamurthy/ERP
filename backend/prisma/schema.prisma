@@ -798,7 +798,21 @@ model JournalEntry {
   entryDate      DateTime  @map("entry_date") @db.Date
   narration      String    @default("") @db.VarChar(255)
   voucherType    String?   @map("voucher_type") @db.VarChar(4)
+  // Sequential reference code for manual entries only (JV-0001/BV-0001/
+  // CV-0001) — auto-posted entries (referenceType set) keep using their own
+  // document's number (SalesInvoice.invoiceNumber etc.) instead, so this
+  // stays null for them. Unique per org among non-null values only — see
+  // migration_015's partial index (Prisma can't express that here, same
+  // gap BusinessPartner.code already has).
+  voucherNumber  String?   @map("voucher_number") @db.VarChar(30)
   referenceType  String?   @map("reference_type") @db.VarChar(30)
+  // Supporting document — one per entry, replacing on re-upload. See
+  // migration_015's note on why this is a plain bytea column rather than
+  // cloud storage.
+  attachmentFilename String? @map("attachment_filename") @db.VarChar(255)
+  attachmentMimeType String? @map("attachment_mime_type") @db.VarChar(100)
+  attachmentSize     Int?    @map("attachment_size")
+  attachmentData     Bytes?  @map("attachment_data")
   createdBy      String?   @map("created_by") @db.Uuid
   postedAt       DateTime? @map("posted_at")
   createdAt      DateTime  @default(now()) @map("created_at")
