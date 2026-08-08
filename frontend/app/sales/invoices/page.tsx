@@ -7,8 +7,9 @@ import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import { ApiError, createSalesInvoice, getBranches, getBusinessPartners, getItems, getSalesInvoice, getSalesInvoices } from "@/lib/api";
 import { computeDiscountedLines, isInterState, round2 } from "@/lib/discountGst";
 import type { Branch, BusinessPartner, DiscountType, Item, SalesInvoice, SalesLineInput } from "@/lib/types";
+import { SUPPORTED_CURRENCIES, currencySymbol } from "@/lib/types";
 
-const emptyLine = (): SalesLineInput => ({ itemId: "", quantity: 0, rate: 0, taxRate: 0, discountType: null, discountValue: 0 });
+const emptyLine = (): SalesLineInput => ({ itemId: "", quantity: 0, rate: 0, rateFc: 0, taxRate: 0, discountType: null, discountValue: 0 });
 
 function SalesInvoicesInner() {
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
@@ -26,6 +27,9 @@ function SalesInvoicesInner() {
   const [lines, setLines] = useState<SalesLineInput[]>([emptyLine()]);
   const [invoiceDiscountType, setInvoiceDiscountType] = useState<DiscountType | "">("");
   const [invoiceDiscountValue, setInvoiceDiscountValue] = useState("");
+  const [currency, setCurrency] = useState("INR");
+  const [exchangeRate, setExchangeRate] = useState("1");
+  const isForeign = currency !== "INR";
 
   const [detail, setDetail] = useState<SalesInvoice | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -92,7 +96,23 @@ function SalesInvoicesInner() {
   }
 
   function updateLine(i: number, patch: Partial<SalesLineInput>) {
-    setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+    setLines((ls) => ls.map((l, idx) => {
+      if (idx !== i) return l;
+      const next = { ...l, ...patch };
+      // rateFc is authoritative for a foreign-currency invoice — rate (INR)
+      // is always the derived figure the discount/tax preview actually
+      // uses, kept in lockstep here so it matches what the server computes.
+      if (isForeign && patch.rateFc !== undefined) {
+        next.rate = round2(Number(next.rateFc || 0) * Number(exchangeRate || 0));
+      }
+      return next;
+    }));
+  }
+
+  function handleExchangeRateChange(v: string) {
+    setExchangeRate(v);
+    const fx = Number(v || 0);
+    setLines((ls) => ls.map((l) => ({ ...l, rate: round2(Number(l.rateFc || 0) * fx) })));
   }
 
   function pickItem(i: number, itemId: string) {
@@ -100,7 +120,10 @@ function SalesInvoicesInner() {
     const defaultDiscount = item?.defaultDiscountPct ? Number(item.defaultDiscountPct) : 0;
     updateLine(i, {
       itemId,
-      rate: item?.salesRate ? Number(item.salesRate) : 0,
+      // Item master rates are always INR — only useful as a default when
+      // the invoice itself is in INR. A foreign-currency line starts blank.
+      rate: !isForeign && item?.salesRate ? Number(item.salesRate) : 0,
+      rateFc: 0,
       taxRate: item?.taxRate ? Number(item.taxRate) : 0,
       discountType: defaultDiscount > 0 ? "PERCENT" : null,
       discountValue: defaultDiscount,
@@ -117,10 +140,12 @@ function SalesInvoicesInner() {
         lines: lines.filter((l) => l.itemId && l.quantity > 0),
         discountType: invoiceDiscountType || null,
         discountValue: invoiceDiscountValue ? Number(invoiceDiscountValue) : 0,
+        currency, exchangeRate: isForeign ? Number(exchangeRate) : undefined,
       });
       setShowForm(false);
       setBusinessPartnerId(""); setNarration(""); setLines([emptyLine()]);
       setInvoiceDiscountType(""); setInvoiceDiscountValue("");
+      setCurrency("INR"); setExchangeRate("1");
       await loadAll();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not post invoice.");
@@ -162,9 +187,32 @@ function SalesInvoicesInner() {
             </div>
           </div>
 
+          <div className="ent-form-grid" style={{ gridTemplateColumns: isForeign ? "1fr 1fr 2fr" : "1fr 3fr" }}>
+            <div className="ent-fg">
+              <label className="ent-fl">Currency</label>
+              <select className="ent-fc" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+                {SUPPORTED_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.name}</option>)}
+              </select>
+            </div>
+            {isForeign && (
+              <div className="ent-fg">
+                <label className="ent-fl">Exchange Rate (1 {currency} = ₹)</label>
+                <input type="number" min={0} step="0.000001" className="ent-fc" value={exchangeRate} onChange={(e) => handleExchangeRateChange(e.target.value)} required />
+              </div>
+            )}
+            <div className="ent-fg">
+              <label className="ent-fl">&nbsp;</label>
+              <span style={{ fontSize: 12, color: "var(--color-muted)" }}>
+                {isForeign
+                  ? "Export invoice — enter each line's rate in " + currency + "; everything else (GST, journal posting) is computed and posted in INR."
+                  : "Domestic invoice — INR only."}
+              </span>
+            </div>
+          </div>
+
           <div style={{ padding: "0 14px" }}>
             <table className="ent-table">
-              <thead><tr><th style={{ width: "30%" }}>Item</th><th>Qty</th><th>Rate</th><th>Discount</th><th>Tax %</th><th /></tr></thead>
+              <thead><tr><th style={{ width: "30%" }}>Item</th><th>Qty</th><th>Rate{isForeign ? ` (${currency})` : ""}</th>{isForeign && <th>Rate (₹)</th>}<th>Discount</th><th>Tax %</th><th /></tr></thead>
               <tbody>
                 {lines.map((line, i) => (
                   <tr key={i}>
@@ -175,7 +223,14 @@ function SalesInvoicesInner() {
                       </select>
                     </td>
                     <td><input type="number" min={0} step="0.0001" className="ent-fc" value={line.quantity || ""} onChange={(e) => updateLine(i, { quantity: Number(e.target.value) })} /></td>
-                    <td><input type="number" min={0} step="0.01" className="ent-fc" value={line.rate || ""} onChange={(e) => updateLine(i, { rate: Number(e.target.value) })} /></td>
+                    {isForeign ? (
+                      <>
+                        <td><input type="number" min={0} step="0.01" className="ent-fc" value={line.rateFc || ""} onChange={(e) => updateLine(i, { rateFc: Number(e.target.value) })} /></td>
+                        <td style={{ color: "var(--color-muted)" }}>{(line.rate || 0).toFixed(2)}</td>
+                      </>
+                    ) : (
+                      <td><input type="number" min={0} step="0.01" className="ent-fc" value={line.rate || ""} onChange={(e) => updateLine(i, { rate: Number(e.target.value) })} /></td>
+                    )}
                     <td>
                       <div style={{ display: "flex", gap: 4 }}>
                         <select className="ent-fc" style={{ width: 62 }} value={line.discountType ?? ""} onChange={(e) => updateLine(i, { discountType: (e.target.value || null) as DiscountType | null })}>
@@ -236,6 +291,9 @@ function SalesInvoicesInner() {
                 </>
               )}
               <span>Grand Total: <strong>{totals.grand.toFixed(2)}</strong></span>
+              {isForeign && Number(exchangeRate) > 0 && (
+                <span>≈ <strong>{currencySymbol(currency)}{round2(totals.grand / Number(exchangeRate)).toFixed(2)}</strong></span>
+              )}
             </div>
           </div>
 
@@ -258,17 +316,19 @@ function SalesInvoicesInner() {
           {detailError && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 14px" }}>{detailError}</p>}
           {detail && (() => {
             const docInterState = Number(detail.igstTotal) > 0;
+            const docForeign = detail.currency !== "INR";
             return (
               <>
                 <div style={{ padding: "0 14px 10px", fontSize: 13, color: "var(--color-muted)" }}>
                   {new Date(detail.invoiceDate).toLocaleDateString()} · {detail.businessPartner.name}
                   {detail.narration ? ` · ${detail.narration}` : ""}
+                  {docForeign && ` · ${detail.currency} @ ${Number(detail.exchangeRate).toFixed(4)}`}
                 </div>
                 <div style={{ padding: "0 14px" }}>
                   <table className="ent-table">
                     <thead>
                       <tr>
-                        <th>Item</th><th>Qty</th><th>Rate</th><th>Discount</th><th>Taxable Value</th>
+                        <th>Item</th><th>Qty</th><th>Rate</th>{docForeign && <th>Rate ({detail.currency})</th>}<th>Discount</th><th>Taxable Value</th>
                         {docInterState ? <th>IGST</th> : <><th>CGST</th><th>SGST</th></>}
                         <th style={{ textAlign: "right" }}>Line Total</th>
                       </tr>
@@ -281,6 +341,7 @@ function SalesInvoicesInner() {
                             <td>{l.item.sku} — {l.item.name}</td>
                             <td>{l.quantity}</td>
                             <td>{Number(l.rate).toFixed(2)}</td>
+                            {docForeign && <td>{Number(l.rateFc ?? 0).toFixed(2)}</td>}
                             <td>{lineDiscount > 0 ? lineDiscount.toFixed(2) : "—"}</td>
                             <td>{Number(l.taxableValue).toFixed(2)}</td>
                             {docInterState ? (
@@ -314,6 +375,9 @@ function SalesInvoicesInner() {
                     </>
                   )}
                   <span>Grand Total: <strong>{Number(detail.grandTotal).toFixed(2)}</strong></span>
+                  {docForeign && detail.grandTotalFc != null && (
+                    <span>≈ <strong>{currencySymbol(detail.currency)}{Number(detail.grandTotalFc).toFixed(2)}</strong></span>
+                  )}
                 </div>
               </>
             );
@@ -332,7 +396,12 @@ function SalesInvoicesInner() {
                 <td style={{ fontWeight: 500 }}>{inv.invoiceNumber}</td>
                 <td style={{ color: "var(--color-muted)" }}>{new Date(inv.invoiceDate).toLocaleDateString()}</td>
                 <td>{inv.businessPartner.name}</td>
-                <td style={{ textAlign: "right" }}>{Number(inv.grandTotal).toFixed(2)}</td>
+                <td style={{ textAlign: "right" }}>
+                  {Number(inv.grandTotal).toFixed(2)}
+                  {inv.currency !== "INR" && inv.grandTotalFc != null && (
+                    <div style={{ fontSize: 11, color: "var(--color-muted)" }}>{currencySymbol(inv.currency)}{Number(inv.grandTotalFc).toFixed(2)}</div>
+                  )}
+                </td>
                 <td style={{ textAlign: "right" }}>
                   <Link className="ent-ia ent-ia-edit" href={`/sales/returns?invoiceId=${inv.id}`} onClick={(e) => e.stopPropagation()}>Return</Link>
                 </td>

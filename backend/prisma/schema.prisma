@@ -572,6 +572,14 @@ model SalesInvoice {
   cgstTotal         Decimal  @default(0) @map("cgst_total") @db.Decimal(14, 2)
   sgstTotal         Decimal  @default(0) @map("sgst_total") @db.Decimal(14, 2)
   igstTotal         Decimal  @default(0) @map("igst_total") @db.Decimal(14, 2)
+  // Foreign-currency support (exports) — see lib/currencies.ts. currency
+  // stays "INR"/exchangeRate stays 1 for every domestic invoice, unchanged
+  // from before this feature existed. grandTotalFc is a display-only
+  // round2(grandTotal / exchangeRate) derivative — INR (above) remains the
+  // sole figure GST/accounting/reports rely on.
+  currency          String   @default("INR") @db.VarChar(3)
+  exchangeRate      Decimal  @default(1) @map("exchange_rate") @db.Decimal(12, 6)
+  grandTotalFc      Decimal? @map("grand_total_fc") @db.Decimal(14, 2)
   createdBy         String?  @map("created_by") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at")
 
@@ -610,6 +618,11 @@ model SalesInvoiceLine {
   cgstAmount            Decimal  @default(0) @map("cgst_amount") @db.Decimal(14, 2)
   sgstAmount            Decimal  @default(0) @map("sgst_amount") @db.Decimal(14, 2)
   igstAmount            Decimal  @default(0) @map("igst_amount") @db.Decimal(14, 2)
+  // rateFc: unit rate as entered, in the invoice's currency (null for INR
+  // invoices — `rate` above is already the only figure that exists then).
+  // lineTotalFc: display-only round2(lineTotal / exchangeRate).
+  rateFc                Decimal? @map("rate_fc") @db.Decimal(14, 4)
+  lineTotalFc           Decimal? @map("line_total_fc") @db.Decimal(14, 2)
 
   salesInvoice SalesInvoice      @relation(fields: [salesInvoiceId], references: [id])
   item         Item              @relation(fields: [itemId], references: [id])
@@ -633,6 +646,11 @@ model PurchaseBill {
   cgstTotal         Decimal  @default(0) @map("cgst_total") @db.Decimal(14, 2)
   sgstTotal         Decimal  @default(0) @map("sgst_total") @db.Decimal(14, 2)
   igstTotal         Decimal  @default(0) @map("igst_total") @db.Decimal(14, 2)
+  // Foreign-currency support (imports) — see lib/currencies.ts and the
+  // matching note on SalesInvoice above; same semantics.
+  currency          String   @default("INR") @db.VarChar(3)
+  exchangeRate      Decimal  @default(1) @map("exchange_rate") @db.Decimal(12, 6)
+  grandTotalFc      Decimal? @map("grand_total_fc") @db.Decimal(14, 2)
   createdBy         String?  @map("created_by") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at")
 
@@ -660,6 +678,8 @@ model PurchaseBillLine {
   cgstAmount     Decimal @default(0) @map("cgst_amount") @db.Decimal(14, 2)
   sgstAmount     Decimal @default(0) @map("sgst_amount") @db.Decimal(14, 2)
   igstAmount     Decimal @default(0) @map("igst_amount") @db.Decimal(14, 2)
+  rateFc         Decimal? @map("rate_fc") @db.Decimal(14, 4)
+  lineTotalFc    Decimal? @map("line_total_fc") @db.Decimal(14, 2)
 
   purchaseBill PurchaseBill         @relation(fields: [purchaseBillId], references: [id])
   item         Item                 @relation(fields: [itemId], references: [id])

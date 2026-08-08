@@ -4,6 +4,7 @@ import { authenticate, requirePermission, requireActiveSubscription, resolveOrgI
 import { logAudit } from "../lib/audit";
 import { receiveStock } from "../lib/costing";
 import { isInterState, round2, splitGst } from "../lib/discountGst";
+import { isSupportedCurrency } from "../lib/currencies";
 
 // Every org's core COA (seed.ts) always includes these — same convention
 // journal.ts uses for CASH_BANK_CODES.
@@ -29,6 +30,8 @@ interface LineInput {
   itemId: string;
   quantity: number;
   rate: number;
+  // Foreign-currency bills only — same semantics as salesInvoices.ts.
+  rateFc?: number;
   taxRate?: number;
 }
 
@@ -64,9 +67,21 @@ router.post("/", canPost, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
 
-  const { businessPartnerId, billDate, branchId, narration, lines } = req.body ?? {};
+  const { businessPartnerId, billDate, branchId, narration, lines, currency, exchangeRate } = req.body ?? {};
   if (!businessPartnerId || !billDate || !Array.isArray(lines) || lines.length === 0) {
     return res.status(400).json({ message: "businessPartnerId, billDate, and at least one line are required." });
+  }
+
+  // Foreign currency (import bills) — see lib/currencies.ts and the matching
+  // note in salesInvoices.ts; same semantics, same INR-is-authoritative rule.
+  const currencyCode = String(currency || "INR").toUpperCase();
+  if (!isSupportedCurrency(currencyCode)) {
+    return res.status(400).json({ message: `Unsupported currency "${currencyCode}".` });
+  }
+  const isForeign = currencyCode !== "INR";
+  const fxRate = isForeign ? Number(exchangeRate) : 1;
+  if (isForeign && !(fxRate > 0)) {
+    return res.status(400).json({ message: "exchangeRate must be greater than 0 for a non-INR bill." });
   }
 
   const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { costingMethod: true } });
@@ -92,16 +107,28 @@ router.post("/", canPost, async (req, res) => {
   const interState = isInterState(branch?.stateCode, vendor.stateCode);
   let subtotal = 0, taxTotal = 0, cgstTotal = 0, sgstTotal = 0, igstTotal = 0;
   const computed = typedLines.map((l) => {
-    if (!l.itemId || !(l.quantity > 0) || !(l.rate >= 0)) {
+    if (isForeign) {
+      if (!l.itemId || !(l.quantity > 0) || !(l.rateFc! >= 0)) {
+        throw Object.assign(new Error("Every line needs itemId, quantity > 0, and rateFc >= 0."), { status: 400 });
+      }
+      // rateFc is authoritative for a foreign-currency bill — overwrite
+      // rate so tax/costing below (and receiveStock's unitCost) run on the
+      // correct INR figure without any further change.
+      l.rate = round2(l.rateFc! * fxRate);
+    } else if (!l.itemId || !(l.quantity > 0) || !(l.rate >= 0)) {
       throw Object.assign(new Error("Every line needs itemId, quantity > 0, and rate >= 0."), { status: 400 });
     }
     const lineSubtotal = round2(l.quantity * l.rate);
     const taxAmount = round2(lineSubtotal * (l.taxRate ?? 0) / 100);
     const { cgst, sgst, igst } = splitGst(taxAmount, interState);
     subtotal += lineSubtotal; taxTotal += taxAmount; cgstTotal += cgst; sgstTotal += sgst; igstTotal += igst;
-    return { ...l, lineSubtotal, taxAmount, lineTotal: lineSubtotal + taxAmount, cgstAmount: cgst, sgstAmount: sgst, igstAmount: igst };
+    return {
+      ...l, lineSubtotal, taxAmount, lineTotal: lineSubtotal + taxAmount, cgstAmount: cgst, sgstAmount: sgst, igstAmount: igst,
+      rateFc: isForeign ? l.rateFc : undefined,
+    };
   });
   const grandTotal = subtotal + taxTotal;
+  const grandTotalFc = isForeign ? round2(grandTotal / fxRate) : null;
 
   const [cgstInput, sgstInput, igstInput, tradePayables] = await Promise.all([
     prisma.account.findFirst({ where: { organizationId, accountCode: CGST_INPUT_CODE } }),
@@ -149,6 +176,7 @@ router.post("/", canPost, async (req, res) => {
           billNumber, billDate: new Date(billDate), narration: narration ?? "",
           journalEntryId: journalEntry.id, subtotal, taxTotal, grandTotal,
           cgstTotal, sgstTotal, igstTotal,
+          currency: currencyCode, exchangeRate: fxRate, grandTotalFc,
           createdBy: req.user!.userId,
         },
       });
@@ -158,6 +186,7 @@ router.post("/", canPost, async (req, res) => {
           purchaseBillId: created.id, itemId: l.itemId, quantity: l.quantity, rate: l.rate,
           taxRate: l.taxRate ?? 0, lineSubtotal: l.lineSubtotal, taxAmount: l.taxAmount, lineTotal: l.lineTotal,
           cgstAmount: l.cgstAmount, sgstAmount: l.sgstAmount, igstAmount: l.igstAmount,
+          rateFc: l.rateFc ?? null, lineTotalFc: isForeign ? round2(l.lineTotal / fxRate) : null,
         })),
       });
 

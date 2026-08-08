@@ -502,6 +502,7 @@ export function getPurchaseBill(id: string) {
 
 export function createPurchaseBill(body: {
   businessPartnerId: string; billDate: string; branchId?: string; narration?: string; lines: DocumentLineInput[];
+  currency?: string; exchangeRate?: number;
 }) {
   return request<{ data: PurchaseBill }>("/purchase-bills", { method: "POST", body: JSON.stringify(body) });
 }
@@ -517,6 +518,7 @@ export function getSalesInvoice(id: string) {
 export function createSalesInvoice(body: {
   businessPartnerId: string; invoiceDate: string; branchId?: string; narration?: string; lines: SalesLineInput[];
   discountType?: DiscountType | null; discountValue?: number;
+  currency?: string; exchangeRate?: number;
 }) {
   return request<{ data: SalesInvoice }>("/sales-invoices", { method: "POST", body: JSON.stringify(body) });
 }

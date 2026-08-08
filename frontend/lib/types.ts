@@ -424,7 +424,40 @@ export interface DocumentLineInput {
   itemId: string;
   quantity: number;
   rate: number;
+  // Foreign-currency Sales Invoices / Purchase Bills only — the unit rate
+  // as entered, in the document's currency. See CURRENCIES below and the
+  // currency handling note on SalesInvoice/PurchaseBill.
+  rateFc?: number;
   taxRate?: number;
+}
+
+// ── Foreign currency (exports/imports) ───────────────────────────────────
+// Fixed list — mirrors backend/src/lib/currencies.ts by hand (same
+// duplication convention as SCHEDULE_III_HEADS; no shared package between
+// the two apps). Exchange rate is always manual entry — see the backend
+// file's comment for why there's no live FX API.
+export interface CurrencyDef {
+  code: string;
+  symbol: string;
+  name: string;
+}
+
+export const SUPPORTED_CURRENCIES: CurrencyDef[] = [
+  { code: "INR", symbol: "₹", name: "Indian Rupee" },
+  { code: "USD", symbol: "$", name: "US Dollar" },
+  { code: "EUR", symbol: "€", name: "Euro" },
+  { code: "GBP", symbol: "£", name: "British Pound" },
+  { code: "AED", symbol: "AED", name: "UAE Dirham" },
+  { code: "SGD", symbol: "S$", name: "Singapore Dollar" },
+  { code: "JPY", symbol: "¥", name: "Japanese Yen" },
+  { code: "AUD", symbol: "A$", name: "Australian Dollar" },
+  { code: "CAD", symbol: "C$", name: "Canadian Dollar" },
+  { code: "CHF", symbol: "CHF", name: "Swiss Franc" },
+  { code: "CNY", symbol: "¥", name: "Chinese Yuan" },
+];
+
+export function currencySymbol(code: string): string {
+  return SUPPORTED_CURRENCIES.find((c) => c.code === code)?.symbol ?? code;
 }
 
 // Sales Invoice lines additionally carry a discount — Purchase Bill lines
@@ -443,6 +476,8 @@ export interface DocumentLine extends DocumentLineInput {
   cgstAmount: string;
   sgstAmount: string;
   igstAmount: string;
+  // Display-only — null for INR documents. See SalesInvoice.grandTotalFc.
+  lineTotalFc?: string | null;
 }
 
 export interface SalesInvoiceLine extends DocumentLine, SalesLineInput {
@@ -467,6 +502,12 @@ export interface SalesInvoice {
   cgstTotal: string;
   sgstTotal: string;
   igstTotal: string;
+  // Foreign currency (exports) — currency is "INR" and grandTotalFc is null
+  // for every domestic invoice. grandTotalFc is display-only; grandTotal
+  // (INR) is what accounting/GST/reports use.
+  currency: string;
+  exchangeRate: string;
+  grandTotalFc: string | null;
   lines: SalesInvoiceLine[];
 }
 
@@ -482,6 +523,9 @@ export interface PurchaseBill {
   cgstTotal: string;
   sgstTotal: string;
   igstTotal: string;
+  currency: string;
+  exchangeRate: string;
+  grandTotalFc: string | null;
   lines: DocumentLine[];
 }
 

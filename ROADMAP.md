@@ -378,6 +378,44 @@ Statement of Profit and Loss in Schedule III format (Part II) isn't built
 
 Requires `db/migration_017_company_master.sql`.
 
+## Foreign Currency Support (built)
+
+First slice of the "Export/Import invoices" gap flagged after Company
+Master — scoped down to just foreign-currency support on Sales Invoices
+and Purchase Bills, with export/import-specific compliance fields (LUT/
+bond vs. IGST-paid classification, shipping bill/bill of entry, GSTR-1
+Table 6A) left for a later pass. Two decisions made upfront: exchange rate
+is always manual entry (no live FX API/subscription dependency), and only
+Sales Invoices + Purchase Bills get currency support for now — Journal
+Entries and bank accounts stay INR-only (no foreign-currency bank/EEFC
+accounts yet).
+
+A fixed currency list (`lib/currencies.ts`, mirrored by hand in
+`frontend/lib/types.ts` — same duplication convention as
+`SCHEDULE_III_HEADS`): INR + USD/EUR/GBP/AED/SGD/JPY/AUD/CAD/CHF/CNY.
+`currency` + `exchangeRate` on the invoice/bill header, `rateFc` (the unit
+rate as entered, in that currency) on each line. The key design decision:
+`rateFc * exchangeRate` gets computed into `rate` (INR) server-side
+*before* any existing discount/tax/costing/journal-posting logic runs — so
+none of that logic changed at all, and a foreign invoice/bill posts
+exactly like a domestic one internally (correct in GSTR-1/GSTR-3B/ledgers/
+Balance Sheet without any changes to those reports). `grandTotalFc` /
+`lineTotalFc` are separate display-only fields (`round2(amount /
+exchangeRate)`) shown alongside the INR figures on the create form, detail
+view, and list — never read by anything else. Every domestic (INR)
+invoice/bill is untouched — `currency` defaults to `"INR"`, `exchangeRate`
+defaults to `1`, and the old `rate`-only code path runs exactly as before.
+
+Known gaps, deliberately deferred: no forex gain/loss postings (there's no
+invoice-to-payment settlement/allocation feature in this app at all yet, in
+any currency, to anchor a realized-gain calculation to); no export/import
+compliance fields (LUT/bond, shipping bill, bill of entry, customs duty,
+GSTR-1 Table 6A) — that's the rest of the original "Export/Import invoices"
+scope, not started; a `FLAT` invoice-level discount on a foreign Sales
+Invoice is still entered in INR, not the invoice's currency.
+
+Requires `db/migration_018_foreign_currency.sql`.
+
 ## From the earlier "what's next" review
 
 Flagged as gaps before Sales/Purchase/Inventory was chosen as the next

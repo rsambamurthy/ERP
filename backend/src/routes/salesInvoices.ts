@@ -5,6 +5,7 @@ import { authenticate, requirePermission, requireActiveSubscription, resolveOrgI
 import { logAudit } from "../lib/audit";
 import { consumeStock, InsufficientStockError } from "../lib/costing";
 import { computeDiscountedLines, isInterState, round2, type DiscountType } from "../lib/discountGst";
+import { isSupportedCurrency } from "../lib/currencies";
 
 const TRADE_RECEIVABLES_CODE = "1005";
 const SALES_REVENUE_CODE = "5001";
@@ -31,6 +32,11 @@ interface LineInput {
   itemId: string;
   quantity: number;
   rate: number;
+  // Foreign-currency invoices only — the unit rate as entered, in the
+  // invoice's currency. When present, it (not `rate`) is authoritative:
+  // rate gets overwritten server-side as round2(rateFc * exchangeRate)
+  // before anything else runs. See the currency handling note in POST /.
+  rateFc?: number;
   taxRate?: number;
   discountType?: DiscountType | null;
   discountValue?: number;
@@ -72,9 +78,22 @@ router.post("/", canPost, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
 
-  const { businessPartnerId, invoiceDate, branchId, narration, lines, discountType, discountValue } = req.body ?? {};
+  const { businessPartnerId, invoiceDate, branchId, narration, lines, discountType, discountValue, currency, exchangeRate } = req.body ?? {};
   if (!businessPartnerId || !invoiceDate || !Array.isArray(lines) || lines.length === 0) {
     return res.status(400).json({ message: "businessPartnerId, invoiceDate, and at least one line are required." });
+  }
+
+  // Foreign currency (export invoices) — see lib/currencies.ts. Defaults
+  // keep every domestic invoice byte-for-byte identical to before this
+  // feature existed: currencyCode "INR", fxRate 1, isForeign false.
+  const currencyCode = String(currency || "INR").toUpperCase();
+  if (!isSupportedCurrency(currencyCode)) {
+    return res.status(400).json({ message: `Unsupported currency "${currencyCode}".` });
+  }
+  const isForeign = currencyCode !== "INR";
+  const fxRate = isForeign ? Number(exchangeRate) : 1;
+  if (isForeign && !(fxRate > 0)) {
+    return res.status(400).json({ message: "exchangeRate must be greater than 0 for a non-INR invoice." });
   }
 
   const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { costingMethod: true } });
@@ -98,7 +117,15 @@ router.post("/", canPost, async (req, res) => {
   const itemById = new Map(items.map((i) => [i.id, i]));
 
   for (const l of typedLines) {
-    if (!l.itemId || !(l.quantity > 0) || !(l.rate >= 0)) {
+    if (isForeign) {
+      if (!l.itemId || !(l.quantity > 0) || !(l.rateFc! >= 0)) {
+        return res.status(400).json({ message: "Every line needs itemId, quantity > 0, and rateFc >= 0." });
+      }
+      // rateFc is authoritative for a foreign-currency invoice — overwrite
+      // rate so every existing computation below (discount, tax, journal
+      // posting) runs on the correct INR figure without any further change.
+      l.rate = round2(l.rateFc! * fxRate);
+    } else if (!l.itemId || !(l.quantity > 0) || !(l.rate >= 0)) {
       return res.status(400).json({ message: "Every line needs itemId, quantity > 0, and rate >= 0." });
     }
   }
@@ -186,6 +213,11 @@ router.post("/", canPost, async (req, res) => {
         ],
       });
 
+      // Display-only FC derivatives — see the schema comment on
+      // SalesInvoice.grandTotalFc. Not used anywhere else (GST reports,
+      // ledgers, journal posting all read the INR fields above).
+      const grandTotalFc = isForeign ? round2(grandTotal / fxRate) : null;
+
       const created = await tx.salesInvoice.create({
         data: {
           id: invoiceId,
@@ -194,6 +226,7 @@ router.post("/", canPost, async (req, res) => {
           journalEntryId: journalEntry.id, subtotal, taxTotal, grandTotal, totalCogs,
           discountType: discountType ?? null, discountValue: discountValue ?? 0, discountTotal,
           cgstTotal, sgstTotal, igstTotal,
+          currency: currencyCode, exchangeRate: fxRate, grandTotalFc,
           createdBy: req.user!.userId,
         },
       });
@@ -206,6 +239,7 @@ router.post("/", canPost, async (req, res) => {
           discountType: l.discountType ?? null, discountValue: l.discountValue ?? 0,
           lineDiscountAmount: l.lineDiscountAmount, invoiceDiscountShare: l.invoiceDiscountShare, taxableValue: l.taxableValue,
           cgstAmount: l.cgstAmount, sgstAmount: l.sgstAmount, igstAmount: l.igstAmount,
+          rateFc: isForeign ? l.rateFc : null, lineTotalFc: isForeign ? round2(l.lineTotal / fxRate) : null,
         })),
       });
 

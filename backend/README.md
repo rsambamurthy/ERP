@@ -177,6 +177,35 @@ original invoice line and has no discount awareness, so returning a
 discounted line refunds it at the pre-discount rate. Not fixed in this pass
 — flagged for whenever Returns gets revisited.
 
+### Foreign Currency (Sales Invoice, Purchase Bill)
+
+Export invoices and import bills — `lib/currencies.ts` has the fixed
+supported-currency list (INR + USD/EUR/GBP/AED/SGD/JPY/AUD/CAD/CHF/CNY).
+Exchange rate is always manual entry (no live FX API) — the user types the
+rate they looked up (e.g. CBIC's notified rate) into `exchangeRate` on the
+request body. When `currency` isn't `"INR"`, every line must send `rateFc`
+(the unit rate in that currency) instead of `rate` — the server overwrites
+`rate` server-side as `round2(rateFc * exchangeRate)` before anything else
+runs, so every existing computation (discount proration, GST split, item
+costing, journal posting) executes completely unchanged, entirely in INR.
+INR remains the sole figure GST/accounting/reports ever read — a foreign
+invoice posts, and appears in GSTR-1/GSTR-3B/ledgers/Balance Sheet, exactly
+like a domestic one. `grandTotalFc` (header) and `lineTotalFc` (line) are
+display-only `round2(amount / exchangeRate)` derivatives shown alongside
+the INR figures — not independently computed, so they're indicative, not a
+second authoritative ledger.
+
+Known gaps, deliberately out of scope for this pass: no realized/unrealized
+forex gain-or-loss postings (this app has no invoice-to-payment settlement/
+allocation feature at all yet, in any currency, so there's nothing to
+anchor a realized-gain calculation to); no LUT/bond vs. IGST-paid export
+classification, shipping bill/bill of entry fields, or GSTR-1 Table 6A
+(exports) — those are the separate "Export/Import invoices" scope, not yet
+built (see ROADMAP.md). A `FLAT`-type invoice-level discount on a foreign
+invoice is still entered/interpreted in INR, not the invoice's currency.
+
+Requires `db/migration_018_foreign_currency.sql`, then `npx prisma generate`.
+
 ### Bulk upload (`/accounts`, `/items`, `/business-partners` — `/bulk-upload/*`)
 
 Same three-step flow on all three, ported from SmartAppt Gold's vendor/bank upload pattern (`lib/xlsxTemplate.ts` + `lib/upload.ts` are the shared pieces): `GET .../bulk-upload/template` downloads a styled `.xlsx` (header row, inline hints, dropdown validation on enum columns); `POST .../bulk-upload/preview` (multipart, field name `file`) parses it server-side and returns every row tagged `create` / `update` / `error` — nothing is written yet; `POST .../bulk-upload/apply` takes back only the rows the user confirmed (body `{ rows: [...] }`) and commits them. Matching an uploaded row to an existing record: Chart of Accounts by Account Code, Items by SKU, Business Partners by the optional `code` field (blank code always creates new — see `migration_007`). Requires `db/migration_007_user_name_and_bp_code.sql`.
