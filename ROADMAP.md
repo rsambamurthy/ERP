@@ -335,6 +335,49 @@ checks were extracted into a shared `buildLoginResponse()` so all three
 login paths (`/login`, `/mpin/verify`, `/mpin/set`) share one implementation
 instead of three copies.
 
+## Company Master + Schedule III Balance Sheet (built)
+
+Two pieces scoped together after asking "do we have what AOC-4 needs" —
+these are the two that were actually buildable as software features; XBRL
+export and the Board's/Auditor's narrative reports were scoped but
+deliberately not built (see that conversation — XBRL needs a taxonomy-
+compliant generator best left to dedicated tools/a CA, and the narrative
+reports are legal documents someone still has to write, not data).
+
+**Company Master.** New Settings screen — CIN, company PAN, company type,
+incorporation date, registered office address on the org itself, plus
+Directors and Auditors as their own small history-kept lists (isActive
+rather than delete, since a filing cares who held office/audited during
+the period, not just who currently does). None of this feeds any posting
+anywhere — it's purely for statutory filings. OWNER/ADMIN only, gated by a
+new `company.manage` permission (also grantable to a custom role, same as
+every other module permission).
+
+**Schedule III Balance Sheet.** A new `Account.scheduleIiiHead` field
+(Share Capital, Reserves and Surplus, Long/Short-Term Borrowings, Trade
+Payables, Fixed Assets, Inventories, Trade Receivables, Cash and Cash
+Equivalents, etc. — the full Division I catalogue, see
+`lib/scheduleIII.ts`) and a new report that groups the existing Balance
+Sheet figures into the real Schedule III hierarchy (Shareholders' Funds /
+Non-Current Liabilities / Current Liabilities / Non-Current Assets /
+Current Assets) instead of a flat Assets/Liabilities/Equity list. Every
+shipped COA template got a sensible default classification (Cash → Cash
+and Cash Equivalents, Trade Receivables/Payables → their own heads,
+Inventory/Raw Materials/WIP/Finished Goods → Inventories, GST accounts →
+Other Current Assets/Liabilities), backfilled onto every already-
+provisioned org's accounts too (migration_017). Anything without a head —
+including every EQUITY account, since **no Share Capital/Reserves template
+exists at all today**, equity accounts are always manually created — shows
+up under an explicit "Unclassified" bucket in the report rather than being
+silently dropped, and Chart of Accounts now has an actual Edit capability
+(it only had create + activate/deactivate before) so existing accounts can
+be classified after the fact.
+
+Statement of Profit and Loss in Schedule III format (Part II) isn't built
+— this pass covers the Balance Sheet only.
+
+Requires `db/migration_017_company_master.sql`.
+
 ## From the earlier "what's next" review
 
 Flagged as gaps before Sales/Purchase/Inventory was chosen as the next

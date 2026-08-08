@@ -31,6 +31,7 @@ import purchaseReturnsRoutes from "./routes/purchaseReturns";
 import orgRolesRoutes from "./routes/orgRoles";
 import meRoutes from "./routes/me";
 import gstRoutes from "./routes/gst";
+import companyMasterRoutes from "./routes/companyMaster";
 
 // Last-resort net for anything outside Express's request cycle entirely
 // (a rejected promise with no .catch anywhere, a timer callback that
@@ -71,6 +72,7 @@ app.use("/purchase-returns", purchaseReturnsRoutes);
 app.use("/org-roles", orgRolesRoutes);
 app.use("/me", meRoutes);
 app.use("/gst", gstRoutes);
+app.use("/company-master", companyMasterRoutes);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

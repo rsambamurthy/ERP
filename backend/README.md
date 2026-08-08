@@ -69,6 +69,7 @@ All routes below require `Authorization: Bearer <token>` from login/verify-otp.
 | `GET /journal/trial-balance?asOf=&branchId=` | Net debit/credit per account as of a date. |
 | `GET /journal/pnl?from=&to=` | Income vs expense for a period. |
 | `GET /journal/balance-sheet?asOf=` | Assets vs liabilities+equity as of a date, with current earnings folded into equity. |
+| `GET /journal/schedule-iii-balance-sheet?asOf=&branchId=` | Same underlying figures, grouped into the Companies Act Schedule III hierarchy (Shareholders' Funds / Non-Current/Current Liabilities / Non-Current/Current Assets) via `Account.scheduleIiiHead` — see `lib/scheduleIII.ts`. Anything unclassified surfaces in its own bucket rather than being dropped. |
 | `GET /journal/cash-book?from=&to=` | Combined Cash+Bank running balance. |
 | `GET /journal/receipts-payments?from=&to=` | Same Cash+Bank movement, split by direction. |
 | `GET /journal/day-book?from=&to=` | Every posted voucher, chronological. |
@@ -89,6 +90,23 @@ Sheet) — no `requirePermission` gate.
 | `GET /gst/gstr1/export?from=&to=&branchId=` | Same data as an `.xlsx`, one sheet per table. |
 | `GET /gst/gstr3b?from=&to=&branchId=` | Outward tax liability vs. ITC available (from Purchase Bills) vs. indicative net payable, both net of the period's Sales/Purchase Returns. |
 | `GET /gst/gstr3b/export?from=&to=&branchId=` | Same data as an `.xlsx`. |
+
+### Company Master (`/company-master`)
+
+Identity/compliance data (CIN, PAN, company type, incorporation date,
+registered office, Directors, Auditors) that AOC-4 and other statutory
+filings need but nothing in the app posts against — purely descriptive,
+never touched by accounting logic. `GET /` has the normal any-member read
+access; every write (`PATCH /`, and all Director/Auditor CRUD) requires the
+`company.manage` permission (grantable to custom roles, defaults to
+OWNER/ADMIN).
+
+| Route | Notes |
+| --- | --- |
+| `GET /company-master` | Org's identity fields plus its `directors`/`auditors` lists. |
+| `PATCH /company-master` | Updates `cin`, `companyPan`, `companyType`, `incorporationDate`, `registeredOfficeAddress` — all optional, no validation beyond basic format (this app doesn't verify CIN/PAN checksums against MCA/IT department data). |
+| `POST/PATCH/DELETE /company-master/directors(/:id)` | DIN, name, designation, appointment/cessation dates. |
+| `POST/PATCH/DELETE /company-master/auditors(/:id)` | Firm name, membership/FRN number, appointment period. |
 
 ### Branches (`/branches`)
 

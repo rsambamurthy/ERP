@@ -10,8 +10,11 @@ import type {
   BranchSummary,
   BusinessPartner,
   CashBookResponse,
+  CompanyMaster,
   CostingMethod,
   CustomRole,
+  Director,
+  Auditor,
   MemberStatus,
   MyProfile,
   Permission,
@@ -21,6 +24,7 @@ import type {
   Gstr1Report,
   Gstr3bReport,
   Item,
+  ScheduleIIIBalanceSheet,
   JournalEntry,
   JournalLineInput,
   LedgerResponse,
@@ -194,6 +198,43 @@ export function toggleAccount(id: string) {
   return request<{ data: Account }>(`/accounts/${id}/toggle`, { method: "PATCH" });
 }
 
+// ── Company Master ───────────────────────────────────────────────────────
+
+export function getCompanyMaster() {
+  return request<{ data: CompanyMaster }>("/company-master");
+}
+
+export function updateCompanyMaster(body: {
+  cin?: string | null; companyPan?: string | null; companyType?: string | null;
+  incorporationDate?: string | null; registeredOfficeAddress?: string | null;
+}) {
+  return request<{ data: CompanyMaster }>("/company-master", { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function createDirector(body: { name: string; din?: string; designation?: string; appointmentDate?: string }) {
+  return request<{ data: Director }>("/company-master/directors", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function updateDirector(id: string, body: Partial<Director>) {
+  return request<{ data: Director }>(`/company-master/directors/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function deleteDirector(id: string) {
+  return request<{ data: { deleted: true } }>(`/company-master/directors/${id}`, { method: "DELETE" });
+}
+
+export function createAuditor(body: { name: string; membershipNumber?: string; firmRegistrationNumber?: string; appointmentDate?: string }) {
+  return request<{ data: Auditor }>("/company-master/auditors", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function updateAuditor(id: string, body: Partial<Auditor>) {
+  return request<{ data: Auditor }>(`/company-master/auditors/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function deleteAuditor(id: string) {
+  return request<{ data: { deleted: true } }>(`/company-master/auditors/${id}`, { method: "DELETE" });
+}
+
 // Re-runs provisioning's account seeding for an org that already exists —
 // picks up any template account added since this org signed up (e.g. GST
 // Input/Output, COGS, Sales Revenue — added with Sales/Purchase/Inventory).
@@ -343,6 +384,11 @@ export function getPnL(params?: { from?: string; to?: string }) {
 export function getBalanceSheet(params?: { asOf?: string }) {
   const qs = new URLSearchParams(cleanParams(params)).toString();
   return request<{ data: BalanceSheetResponse }>(`/journal/balance-sheet${qs ? `?${qs}` : ""}`);
+}
+
+export function getScheduleIIIBalanceSheet(params?: { asOf?: string; branchId?: string }) {
+  const qs = new URLSearchParams(cleanParams(params)).toString();
+  return request<{ data: ScheduleIIIBalanceSheet }>(`/journal/schedule-iii-balance-sheet${qs ? `?${qs}` : ""}`);
 }
 
 export function getCashBook(params?: { from?: string; to?: string }) {

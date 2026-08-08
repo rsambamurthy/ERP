@@ -4,6 +4,7 @@ import { prisma } from "../db";
 import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { upload } from "../lib/upload";
+import { computeScheduleIIIBalanceSheet } from "../lib/scheduleIII";
 
 function orgIdOr400(req: import("express").Request, res: import("express").Response): string | null {
   const organizationId = resolveOrgId(req);
@@ -537,6 +538,24 @@ router.get("/balance-sheet", async (req, res) => {
       balanced: Math.abs(totalAssets - (totalLiabilities + totalEquity + netProfitToDate)) < 0.01,
     },
   });
+});
+
+// GET /journal/schedule-iii-balance-sheet?asOf=&branchId= — the same
+// underlying figures as /balance-sheet above, grouped into the Companies
+// Act Schedule III hierarchy instead of a flat Assets/Liabilities/Equity
+// list — see lib/scheduleIII.ts for the full computation and its
+// documented simplifications.
+router.get("/schedule-iii-balance-sheet", async (req, res) => {
+  const { asOf, branchId } = req.query;
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+
+  const report = await computeScheduleIIIBalanceSheet(
+    organizationId,
+    asOf ? new Date(String(asOf)) : undefined,
+    branchId ? String(branchId) : undefined
+  );
+  res.json({ data: report });
 });
 
 // GET /journal/cash-book?from=&to=&branchId= — ledger of the Cash + Bank

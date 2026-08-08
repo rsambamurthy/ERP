@@ -54,6 +54,7 @@ export async function provisionOrganization(organizationId: string) {
         accountType: t.accountType,
         isControlAccount: t.isControlAccount,
         defaultBpType: t.defaultBpType,
+        scheduleIiiHead: t.scheduleIiiHead,
         // Templated accounts are the org's standard COA — protected from
         // structural edits/deletes (see accounts.ts), same as SmartAppt's
         // is_system convention.

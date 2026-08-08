@@ -5,6 +5,7 @@ import { logAudit } from "../lib/audit";
 import { upload } from "../lib/upload";
 import { buildTemplateWorkbook, loadUploadedWorksheet, cellText, cellDateIso } from "../lib/xlsxTemplate";
 import { provisionOrganization } from "../lib/provisioning";
+import { isValidHeadForAccountType } from "../lib/scheduleIII";
 
 // Resolves the target org for this request (the caller's own org, or — for
 // a platform admin — whichever org they passed via ?organizationId=/body).
@@ -73,7 +74,7 @@ router.post("/", canManageCoa, async (req, res) => {
   if (!organizationId) return;
   const {
     accountCode, accountName, accountType, subType, description,
-    parentId, isGroup, isControlAccount, defaultBpType,
+    parentId, isGroup, isControlAccount, defaultBpType, scheduleIiiHead,
     openingBalance, openingBalanceType, openingBalanceDate,
   } = req.body ?? {};
 
@@ -85,6 +86,9 @@ router.post("/", canManageCoa, async (req, res) => {
   }
   if (defaultBpType && !BP_TYPES.includes(defaultBpType)) {
     return res.status(400).json({ message: `defaultBpType must be one of ${BP_TYPES.join(", ")}.` });
+  }
+  if (scheduleIiiHead && !isValidHeadForAccountType(scheduleIiiHead, accountType)) {
+    return res.status(400).json({ message: `scheduleIiiHead "${scheduleIiiHead}" isn't valid for a ${accountType} account.` });
   }
 
   const existing = await prisma.account.findUnique({
@@ -102,6 +106,7 @@ router.post("/", canManageCoa, async (req, res) => {
       isGroup: !!isGroup,
       isControlAccount: !!isControlAccount,
       defaultBpType: isControlAccount ? (defaultBpType ?? null) : null,
+      scheduleIiiHead: scheduleIiiHead ?? null,
       isSystem: false,
       openingBalance: openingBalance ?? null,
       openingBalanceType: openingBalanceType ?? null,
@@ -129,17 +134,27 @@ router.patch("/:id", canManageCoa, async (req, res) => {
   const body = req.body ?? {};
   const openingBalanceDate = body.openingBalanceDate ? new Date(body.openingBalanceDate) : undefined;
 
+  // scheduleIiiHead isn't a structural field (code/type/hierarchy) — it's
+  // just a reporting classification, so it's editable on system accounts
+  // too, unlike the rest of that branch's whitelist. Validated against the
+  // account's own (fixed) accountType either way.
+  if (body.scheduleIiiHead && !isValidHeadForAccountType(body.scheduleIiiHead, account.accountType)) {
+    return res.status(400).json({ message: `scheduleIiiHead "${body.scheduleIiiHead}" isn't valid for a ${account.accountType} account.` });
+  }
+  const scheduleIiiHead = "scheduleIiiHead" in body ? (body.scheduleIiiHead ?? null) : undefined;
+
   const data = account.isSystem
     ? {
         accountName: body.accountName,
         description: body.description,
         isControlAccount: body.isControlAccount,
         defaultBpType: body.isControlAccount ? body.defaultBpType : null,
+        scheduleIiiHead,
         openingBalance: body.openingBalance,
         openingBalanceType: body.openingBalanceType,
         openingBalanceDate,
       }
-    : { ...body, openingBalanceDate };
+    : { ...body, scheduleIiiHead, openingBalanceDate };
 
   const updated = await prisma.account.update({ where: { id: account.id }, data });
   logAudit({

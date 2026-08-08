@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
-import { ApiError, createAccount, getAccounts, syncAccountTemplates, toggleAccount } from "@/lib/api";
+import { ApiError, createAccount, getAccounts, syncAccountTemplates, toggleAccount, updateAccount } from "@/lib/api";
 import { useBulkUpload } from "@/components/shared/BulkUpload";
+import { SCHEDULE_III_HEADS } from "@/lib/types";
 import type { Account, AccountType, CoaUploadRow } from "@/lib/types";
 
 const ACCOUNT_TYPES: AccountType[] = ["ASSET", "LIABILITY", "EQUITY", "INCOME", "EXPENSE"];
@@ -21,18 +22,25 @@ export default function ChartOfAccountsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
-  const [form, setForm] = useState({
+  const emptyForm = () => ({
     accountCode: "",
     accountName: "",
     accountType: "ASSET" as AccountType,
     subType: "",
     isControlAccount: false,
     defaultBpType: "CUSTOMER" as "CUSTOMER" | "VENDOR" | "ITEM",
+    scheduleIiiHead: "",
   });
+  const [form, setForm] = useState(emptyForm());
+
+  // Schedule III heads only make sense for ASSET/LIABILITY/EQUITY, and only
+  // the ones defined for the form's current account type.
+  const availableHeads = SCHEDULE_III_HEADS.filter((h) => (h.accountTypes as string[]).includes(form.accountType));
 
   async function load() {
     setLoading(true);
@@ -50,24 +58,48 @@ export default function ChartOfAccountsPage() {
 
   const bulk = useBulkUpload<CoaUploadRow>("accounts", "SmartERP_ChartOfAccounts_Template.xlsx", COA_UPLOAD_COLUMNS, load);
 
-  async function handleCreate(e: React.FormEvent) {
+  function startNew() {
+    setEditingId(null);
+    setForm(emptyForm());
+    setError(null);
+    setShowForm(true);
+  }
+
+  function startEdit(a: Account) {
+    setEditingId(a.id);
+    setForm({
+      accountCode: a.accountCode, accountName: a.accountName, accountType: a.accountType,
+      subType: a.subType ?? "", isControlAccount: a.isControlAccount,
+      defaultBpType: (a.defaultBpType ?? "CUSTOMER") as "CUSTOMER" | "VENDOR" | "ITEM",
+      scheduleIiiHead: a.scheduleIiiHead ?? "",
+    });
+    setError(null);
+    setShowForm(true);
+  }
+
+  async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     setError(null);
     try {
-      await createAccount({
-        accountCode: form.accountCode,
+      const body = {
         accountName: form.accountName,
-        accountType: form.accountType,
         subType: form.subType || null,
         isControlAccount: form.isControlAccount,
         defaultBpType: form.isControlAccount ? form.defaultBpType : null,
-      });
+        scheduleIiiHead: form.scheduleIiiHead || null,
+      };
+      if (editingId) {
+        await updateAccount(editingId, body);
+      } else {
+        await createAccount({ ...body, accountCode: form.accountCode, accountType: form.accountType });
+      }
       setShowForm(false);
-      setForm({ accountCode: "", accountName: "", accountType: "ASSET", subType: "", isControlAccount: false, defaultBpType: "CUSTOMER" });
+      setEditingId(null);
+      setForm(emptyForm());
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not create account.");
+      setError(err instanceof ApiError ? err.message : "Could not save account.");
     } finally {
       setSaving(false);
     }
@@ -116,7 +148,7 @@ export default function ChartOfAccountsPage() {
           {syncing ? "Syncing…" : "⟳ Sync from Templates"}
         </button>
         {bulk.buttons}
-        <button className="ent-btn-add" onClick={() => setShowForm((s) => !s)}>
+        <button className="ent-btn-add" onClick={() => (showForm ? setShowForm(false) : startNew())}>
           {showForm ? "Cancel" : "+ Add Account"}
         </button>
       </div>
@@ -124,12 +156,15 @@ export default function ChartOfAccountsPage() {
       {bulk.panel}
 
       {showForm && (
-        <form onSubmit={handleCreate} className="ent-section">
-          <div className="ent-section-hdr"><span className="ent-section-title">New Account</span></div>
+        <form onSubmit={handleSave} className="ent-section">
+          <div className="ent-section-hdr"><span className="ent-section-title">{editingId ? "Edit Account" : "New Account"}</span></div>
           <div className="ent-form-grid">
             <div className="ent-fg">
               <label className="ent-fl">Account Code</label>
-              <input className="ent-fc" value={form.accountCode} onChange={(e) => setForm((f) => ({ ...f, accountCode: e.target.value }))} required />
+              <input
+                className="ent-fc" value={form.accountCode} disabled={!!editingId}
+                onChange={(e) => setForm((f) => ({ ...f, accountCode: e.target.value }))} required
+              />
             </div>
             <div className="ent-fg">
               <label className="ent-fl">Account Name</label>
@@ -137,7 +172,10 @@ export default function ChartOfAccountsPage() {
             </div>
             <div className="ent-fg">
               <label className="ent-fl">Account Type</label>
-              <select className="ent-fc" value={form.accountType} onChange={(e) => setForm((f) => ({ ...f, accountType: e.target.value as AccountType }))}>
+              <select
+                className="ent-fc" value={form.accountType} disabled={!!editingId}
+                onChange={(e) => setForm((f) => ({ ...f, accountType: e.target.value as AccountType, scheduleIiiHead: "" }))}
+              >
                 {ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
@@ -145,6 +183,15 @@ export default function ChartOfAccountsPage() {
               <label className="ent-fl">Sub-type (optional)</label>
               <input className="ent-fc" value={form.subType} onChange={(e) => setForm((f) => ({ ...f, subType: e.target.value }))} />
             </div>
+            {availableHeads.length > 0 && (
+              <div className="ent-fg">
+                <label className="ent-fl">Schedule III Head</label>
+                <select className="ent-fc" value={form.scheduleIiiHead} onChange={(e) => setForm((f) => ({ ...f, scheduleIiiHead: e.target.value }))}>
+                  <option value="">Not classified yet</option>
+                  {availableHeads.map((h) => <option key={h.code} value={h.code}>{h.groupLabel} — {h.label}</option>)}
+                </select>
+              </div>
+            )}
             <div className="ent-fg" style={{ gridColumn: "1 / -1" }}>
               <label className="ent-fl" style={{ textTransform: "none" }}>
                 <input
@@ -169,7 +216,9 @@ export default function ChartOfAccountsPage() {
           </div>
           {error && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 10px" }}>{error}</p>}
           <div style={{ display: "flex", gap: 8, padding: "0 14px 14px" }}>
-            <button type="submit" className="ent-btn-save" disabled={saving}>{saving ? "Saving…" : "Save Account"}</button>
+            <button type="submit" className="ent-btn-save" disabled={saving}>
+              {saving ? "Saving…" : editingId ? "Save Changes" : "Save Account"}
+            </button>
           </div>
         </form>
       )}
@@ -185,36 +234,45 @@ export default function ChartOfAccountsPage() {
               <th>Name</th>
               <th>Type</th>
               <th>Control?</th>
+              <th>Schedule III Head</th>
               <th>Status</th>
               <th />
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={6} className="ent-empty">Loading…</td></tr>}
-            {!loading && accounts.length === 0 && <tr><td colSpan={6} className="ent-empty">No accounts yet.</td></tr>}
-            {accounts.map((a) => (
-              <tr key={a.id}>
-                <td style={{ fontFamily: "monospace", fontSize: 12, color: "var(--color-muted)" }}>{a.accountCode}</td>
-                <td style={{ fontWeight: 500 }}>
-                  {a.accountName}
-                  {a.isSystem && <span style={{ marginLeft: 6, fontSize: 11, color: "var(--color-muted)" }}>(system)</span>}
-                </td>
-                <td>{a.accountType}</td>
-                <td>{a.isControlAccount ? a.defaultBpType : "—"}</td>
-                <td>
-                  <span className={a.isActive ? "badge badge-green" : "badge badge-gray"}>
-                    {a.isActive ? "Active" : "Inactive"}
-                  </span>
-                </td>
-                <td style={{ textAlign: "right" }}>
-                  {!a.isSystem && (
-                    <button className="ent-ia ent-ia-edit" onClick={() => handleToggle(a.id)}>
-                      {a.isActive ? "Deactivate" : "Activate"}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {loading && <tr><td colSpan={7} className="ent-empty">Loading…</td></tr>}
+            {!loading && accounts.length === 0 && <tr><td colSpan={7} className="ent-empty">No accounts yet.</td></tr>}
+            {accounts.map((a) => {
+              const head = SCHEDULE_III_HEADS.find((h) => h.code === a.scheduleIiiHead);
+              const needsHead = ["ASSET", "LIABILITY", "EQUITY"].includes(a.accountType);
+              return (
+                <tr key={a.id}>
+                  <td style={{ fontFamily: "monospace", fontSize: 12, color: "var(--color-muted)" }}>{a.accountCode}</td>
+                  <td style={{ fontWeight: 500 }}>
+                    {a.accountName}
+                    {a.isSystem && <span style={{ marginLeft: 6, fontSize: 11, color: "var(--color-muted)" }}>(system)</span>}
+                  </td>
+                  <td>{a.accountType}</td>
+                  <td>{a.isControlAccount ? a.defaultBpType : "—"}</td>
+                  <td>
+                    {head ? head.label : needsHead ? <span style={{ color: "#a16207", fontSize: 11 }}>⚠ not classified</span> : "—"}
+                  </td>
+                  <td>
+                    <span className={a.isActive ? "badge badge-green" : "badge badge-gray"}>
+                      {a.isActive ? "Active" : "Inactive"}
+                    </span>
+                  </td>
+                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                    <button className="ent-ia ent-ia-edit" onClick={() => startEdit(a)}>Edit</button>
+                    {!a.isSystem && (
+                      <button className="ent-ia ent-ia-edit" onClick={() => handleToggle(a.id)}>
+                        {a.isActive ? "Deactivate" : "Activate"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

@@ -59,6 +59,11 @@ model CoaTemplate {
   accountType      String  @map("account_type") @db.VarChar(20)
   isControlAccount Boolean @default(false) @map("is_control_account")
   defaultBpType    String? @map("default_bp_type") @db.VarChar(20)
+  // Default Schedule III classification copied onto the Account row when
+  // provisioning creates it from this template — see lib/provisioning.ts.
+  // Null for INCOME/EXPENSE templates (Schedule III P&L formatting is a
+  // separate, not-yet-built piece).
+  scheduleIiiHead  String? @map("schedule_iii_head") @db.VarChar(40)
 
   domainType DomainType? @relation(fields: [domainTypeId], references: [id])
 
@@ -77,9 +82,20 @@ model Organization {
   // ItemStock/StockLot row that follows is computed under this rule.
   costingMethod       String?   @map("costing_method") @db.VarChar(20)
   domainLockedAt      DateTime? @map("domain_locked_at")
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at")
-  deletedAt           DateTime? @map("deleted_at")
+  // Company Master data — for statutory filings (AOC-4 etc.), not used by
+  // any transactional posting anywhere. All nullable and unvalidated in
+  // format (beyond length) since this app isn't the source of truth for
+  // whether a CIN/PAN is actually well-formed — whoever files still needs
+  // to check that. registeredOfficeAddress is a single free-text field in a
+  // Json column, same convention Branch.address already uses.
+  cin                     String?   @db.VarChar(21)
+  companyPan              String?   @map("company_pan") @db.VarChar(10)
+  companyType             String?   @map("company_type") @db.VarChar(30)
+  incorporationDate       DateTime? @map("incorporation_date") @db.Date
+  registeredOfficeAddress Json?     @map("registered_office_address")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @default(now()) @updatedAt @map("updated_at")
+  deletedAt               DateTime? @map("deleted_at")
 
   orgDomains       OrgDomain[]
   branches         Branch[]
@@ -102,8 +118,48 @@ model Organization {
   purchaseReturns  PurchaseReturn[]
   stockMovements   StockMovement[]
   stockLots        StockLot[]
+  directors        Director[]
+  auditors         Auditor[]
 
   @@map("organizations")
+}
+
+// Company Master — one row per director. History kept (isActive rather than
+// delete) since AOC-4/MGT-7 style filings care about who held office during
+// the filing period, not just who currently does.
+model Director {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String    @map("organization_id") @db.Uuid
+  name            String    @db.VarChar(150)
+  din             String?   @db.VarChar(20)
+  designation     String?   @db.VarChar(50) // e.g. "Director", "Managing Director", "Whole-time Director"
+  appointmentDate DateTime? @map("appointment_date") @db.Date
+  cessationDate   DateTime? @map("cessation_date") @db.Date
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@map("directors")
+}
+
+// One row per auditor appointment — same history-kept convention as
+// Director above (a company changes auditors over its life; AOC-4 cares
+// which one covered the filing year).
+model Auditor {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId         String    @map("organization_id") @db.Uuid
+  name                   String    @db.VarChar(150)
+  membershipNumber       String?   @map("membership_number") @db.VarChar(20)
+  firmRegistrationNumber String?   @map("firm_registration_number") @db.VarChar(20)
+  appointmentDate        DateTime? @map("appointment_date") @db.Date
+  tenureEndDate          DateTime? @map("tenure_end_date") @db.Date
+  isActive               Boolean   @default(true) @map("is_active")
+  createdAt              DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@map("auditors")
 }
 
 model OrgDomain {
@@ -161,6 +217,13 @@ model Account {
   accountName         String    @map("account_name") @db.VarChar(100)
   accountType         String    @map("account_type") @db.VarChar(20)
   subType             String?   @map("sub_type") @db.VarChar(60)
+  // Schedule III classification (Balance Sheet only — see
+  // lib/scheduleIII.ts for the full catalog) — only meaningful for ASSET/
+  // LIABILITY/EQUITY accounts, null for INCOME/EXPENSE and for anything not
+  // classified yet. Separate from subType above (which nothing populates
+  // today) rather than overloading it, since this one has an actual
+  // controlled vocabulary the report groups by.
+  scheduleIiiHead     String?   @map("schedule_iii_head") @db.VarChar(40)
   description         String?   @db.VarChar(255)
   sortOrder           Int       @default(0) @map("sort_order")
   parentId            String?   @map("parent_id") @db.Uuid

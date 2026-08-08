@@ -49,6 +49,7 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: "⚙",
     items: [
       { id: "my_profile", label: "My Profile", path: "/settings/profile", dot: "#64748b", roles: ALL_ROLES },
+      { id: "company_master", label: "Company Master", path: "/settings/company-master", dot: "#0d9488", roles: ["OWNER", "ADMIN"], permission: "company.manage" },
       { id: "chart_of_accounts", label: "Chart of Accounts", path: "/accounting/chart-of-accounts", dot: "#2563eb", roles: ALL_ROLES },
       { id: "business_partners", label: "Business Partners", path: "/accounting/business-partners", dot: "#0891b2", roles: ALL_ROLES },
       { id: "items", label: "Items", path: "/inventory/items", dot: "#0d9488", roles: ALL_ROLES },
@@ -107,6 +108,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: "gstr1", label: "GSTR-1", path: "/reports/gstr1", dot: "#0891b2", roles: ALL_ROLES },
       { id: "gstr3b", label: "GSTR-3B", path: "/reports/gstr3b", dot: "#ea580c", roles: ALL_ROLES },
+      { id: "schedule_iii_balance_sheet", label: "Schedule III Balance Sheet", path: "/reports/schedule-iii-balance-sheet", dot: "#7c3aed", roles: ALL_ROLES },
     ],
   },
 ];

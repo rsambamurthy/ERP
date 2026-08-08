@@ -71,6 +71,117 @@ export interface Account {
   isActive: boolean;
   openingBalance: string | null;
   openingBalanceType: BalanceType | null;
+  // Schedule III Balance Sheet classification — see
+  // ScheduleIIIHeadCode/SCHEDULE_III_HEADS below. Only meaningful for
+  // ASSET/LIABILITY/EQUITY accounts; null means "not classified yet".
+  scheduleIiiHead: string | null;
+}
+
+// ── Schedule III Balance Sheet ──────────────────────────────────────────────
+// Mirrors backend/src/lib/scheduleIII.ts's catalog exactly — keep both in
+// sync if the heads ever change.
+export type ScheduleIIIGroup =
+  | "SHAREHOLDERS_FUNDS"
+  | "NON_CURRENT_LIABILITIES"
+  | "CURRENT_LIABILITIES"
+  | "NON_CURRENT_ASSETS"
+  | "CURRENT_ASSETS";
+
+export interface ScheduleIIIHeadDef {
+  code: string;
+  label: string;
+  side: "EQUITY_AND_LIABILITIES" | "ASSETS";
+  group: ScheduleIIIGroup;
+  groupLabel: string;
+  accountTypes: ("ASSET" | "LIABILITY" | "EQUITY")[];
+}
+
+export const SCHEDULE_III_HEADS: ScheduleIIIHeadDef[] = [
+  { code: "SHARE_CAPITAL", label: "Share Capital", side: "EQUITY_AND_LIABILITIES", group: "SHAREHOLDERS_FUNDS", groupLabel: "Shareholders' Funds", accountTypes: ["EQUITY"] },
+  { code: "RESERVES_AND_SURPLUS", label: "Reserves and Surplus", side: "EQUITY_AND_LIABILITIES", group: "SHAREHOLDERS_FUNDS", groupLabel: "Shareholders' Funds", accountTypes: ["EQUITY"] },
+  { code: "LONG_TERM_BORROWINGS", label: "Long-Term Borrowings", side: "EQUITY_AND_LIABILITIES", group: "NON_CURRENT_LIABILITIES", groupLabel: "Non-Current Liabilities", accountTypes: ["LIABILITY"] },
+  { code: "DEFERRED_TAX_LIABILITIES", label: "Deferred Tax Liabilities (Net)", side: "EQUITY_AND_LIABILITIES", group: "NON_CURRENT_LIABILITIES", groupLabel: "Non-Current Liabilities", accountTypes: ["LIABILITY"] },
+  { code: "OTHER_LONG_TERM_LIABILITIES", label: "Other Long-Term Liabilities", side: "EQUITY_AND_LIABILITIES", group: "NON_CURRENT_LIABILITIES", groupLabel: "Non-Current Liabilities", accountTypes: ["LIABILITY"] },
+  { code: "LONG_TERM_PROVISIONS", label: "Long-Term Provisions", side: "EQUITY_AND_LIABILITIES", group: "NON_CURRENT_LIABILITIES", groupLabel: "Non-Current Liabilities", accountTypes: ["LIABILITY"] },
+  { code: "SHORT_TERM_BORROWINGS", label: "Short-Term Borrowings", side: "EQUITY_AND_LIABILITIES", group: "CURRENT_LIABILITIES", groupLabel: "Current Liabilities", accountTypes: ["LIABILITY"] },
+  { code: "TRADE_PAYABLES", label: "Trade Payables", side: "EQUITY_AND_LIABILITIES", group: "CURRENT_LIABILITIES", groupLabel: "Current Liabilities", accountTypes: ["LIABILITY"] },
+  { code: "OTHER_CURRENT_LIABILITIES", label: "Other Current Liabilities", side: "EQUITY_AND_LIABILITIES", group: "CURRENT_LIABILITIES", groupLabel: "Current Liabilities", accountTypes: ["LIABILITY"] },
+  { code: "SHORT_TERM_PROVISIONS", label: "Short-Term Provisions", side: "EQUITY_AND_LIABILITIES", group: "CURRENT_LIABILITIES", groupLabel: "Current Liabilities", accountTypes: ["LIABILITY"] },
+  { code: "FIXED_ASSETS", label: "Fixed Assets", side: "ASSETS", group: "NON_CURRENT_ASSETS", groupLabel: "Non-Current Assets", accountTypes: ["ASSET"] },
+  { code: "NON_CURRENT_INVESTMENTS", label: "Non-Current Investments", side: "ASSETS", group: "NON_CURRENT_ASSETS", groupLabel: "Non-Current Assets", accountTypes: ["ASSET"] },
+  { code: "DEFERRED_TAX_ASSETS", label: "Deferred Tax Assets (Net)", side: "ASSETS", group: "NON_CURRENT_ASSETS", groupLabel: "Non-Current Assets", accountTypes: ["ASSET"] },
+  { code: "LONG_TERM_LOANS_AND_ADVANCES", label: "Long-Term Loans and Advances", side: "ASSETS", group: "NON_CURRENT_ASSETS", groupLabel: "Non-Current Assets", accountTypes: ["ASSET"] },
+  { code: "OTHER_NON_CURRENT_ASSETS", label: "Other Non-Current Assets", side: "ASSETS", group: "NON_CURRENT_ASSETS", groupLabel: "Non-Current Assets", accountTypes: ["ASSET"] },
+  { code: "CURRENT_INVESTMENTS", label: "Current Investments", side: "ASSETS", group: "CURRENT_ASSETS", groupLabel: "Current Assets", accountTypes: ["ASSET"] },
+  { code: "INVENTORIES", label: "Inventories", side: "ASSETS", group: "CURRENT_ASSETS", groupLabel: "Current Assets", accountTypes: ["ASSET"] },
+  { code: "TRADE_RECEIVABLES", label: "Trade Receivables", side: "ASSETS", group: "CURRENT_ASSETS", groupLabel: "Current Assets", accountTypes: ["ASSET"] },
+  { code: "CASH_AND_CASH_EQUIVALENTS", label: "Cash and Cash Equivalents", side: "ASSETS", group: "CURRENT_ASSETS", groupLabel: "Current Assets", accountTypes: ["ASSET"] },
+  { code: "SHORT_TERM_LOANS_AND_ADVANCES", label: "Short-Term Loans and Advances", side: "ASSETS", group: "CURRENT_ASSETS", groupLabel: "Current Assets", accountTypes: ["ASSET"] },
+  { code: "OTHER_CURRENT_ASSETS", label: "Other Current Assets", side: "ASSETS", group: "CURRENT_ASSETS", groupLabel: "Current Assets", accountTypes: ["ASSET"] },
+];
+
+export interface ScheduleIIILineItem {
+  accountId: string;
+  accountCode: string;
+  accountName: string;
+  amount: number;
+}
+
+export interface ScheduleIIIHeadResult {
+  code: string;
+  label: string;
+  items: ScheduleIIILineItem[];
+  total: number;
+}
+
+export interface ScheduleIIIGroupResult {
+  group: ScheduleIIIGroup;
+  groupLabel: string;
+  heads: ScheduleIIIHeadResult[];
+  total: number;
+}
+
+export interface ScheduleIIIBalanceSheet {
+  asOf: string | null;
+  equityAndLiabilities: { groups: ScheduleIIIGroupResult[]; total: number };
+  assets: { groups: ScheduleIIIGroupResult[]; total: number };
+  unclassified: { assets: ScheduleIIILineItem[]; liabilities: ScheduleIIILineItem[]; equity: ScheduleIIILineItem[]; total: number };
+  balanced: boolean;
+  difference: number;
+}
+
+// ── Company Master ───────────────────────────────────────────────────────
+
+export interface Director {
+  id: string;
+  name: string;
+  din: string | null;
+  designation: string | null;
+  appointmentDate: string | null;
+  cessationDate: string | null;
+  isActive: boolean;
+}
+
+export interface Auditor {
+  id: string;
+  name: string;
+  membershipNumber: string | null;
+  firmRegistrationNumber: string | null;
+  appointmentDate: string | null;
+  tenureEndDate: string | null;
+  isActive: boolean;
+}
+
+export interface CompanyMaster {
+  id: string;
+  name: string;
+  cin: string | null;
+  companyPan: string | null;
+  companyType: string | null;
+  incorporationDate: string | null;
+  registeredOfficeAddress: string | null;
+  directors: Director[];
+  auditors: Auditor[];
 }
 
 export interface BusinessPartner {
@@ -579,6 +690,7 @@ export const PERMISSIONS = [
   "purchase.post",
   "inventory.post",
   "journal.post",
+  "company.manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -592,6 +704,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "purchase.post": "Post Purchase Bills & Purchase Returns",
   "inventory.post": "Post Stock Adjustments",
   "journal.post": "Post Journal Entries",
+  "company.manage": "Manage Company Master Data (CIN, directors, auditors)",
 };
 
 export interface CustomRole {

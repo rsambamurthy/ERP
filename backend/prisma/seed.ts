@@ -74,12 +74,16 @@ async function main() {
     accountType: string;
     isControlAccount?: boolean;
     defaultBpType?: string;
+    // Default Schedule III Balance Sheet head — see lib/scheduleIII.ts.
+    // Left undefined for INCOME/EXPENSE rows (Schedule III P&L formatting
+    // isn't built yet).
+    scheduleIiiHead?: string;
   };
 
   const coaRows: CoaRow[] = [
     // core — applied to every org regardless of domain
-    { domainTypeId: null, accountCode: "1001", accountName: "Cash in Hand", accountType: "ASSET" },
-    { domainTypeId: null, accountCode: "1002", accountName: "Bank Account", accountType: "ASSET" },
+    { domainTypeId: null, accountCode: "1001", accountName: "Cash in Hand", accountType: "ASSET", scheduleIiiHead: "CASH_AND_CASH_EQUIVALENTS" },
+    { domainTypeId: null, accountCode: "1002", accountName: "Bank Account", accountType: "ASSET", scheduleIiiHead: "CASH_AND_CASH_EQUIVALENTS" },
     { domainTypeId: null, accountCode: "4008", accountName: "Administrative", accountType: "EXPENSE" },
     // Trade Receivables/Payables used to be Trading-only, but a
     // Manufacturing org sells finished goods and buys raw materials from
@@ -92,6 +96,7 @@ async function main() {
       accountType: "ASSET",
       isControlAccount: true,
       defaultBpType: "CUSTOMER",
+      scheduleIiiHead: "TRADE_RECEIVABLES",
     },
     {
       domainTypeId: null,
@@ -100,6 +105,7 @@ async function main() {
       accountType: "LIABILITY",
       isControlAccount: true,
       defaultBpType: "VENDOR",
+      scheduleIiiHead: "TRADE_PAYABLES",
     },
     // Sales/Purchase/Inventory v1 — see routes/salesInvoices.ts,
     // purchaseBills.ts, stockAdjustments.ts for how these get posted to.
@@ -107,17 +113,17 @@ async function main() {
     // postings against them (trial balance integrity), but Sales
     // Invoice/Purchase Bill no longer post new transactions here — see the
     // CGST/SGST/IGST split accounts below.
-    { domainTypeId: null, accountCode: "1101", accountName: "GST Input Credit", accountType: "ASSET" },
-    { domainTypeId: null, accountCode: "2101", accountName: "GST Output Payable", accountType: "LIABILITY" },
+    { domainTypeId: null, accountCode: "1101", accountName: "GST Input Credit", accountType: "ASSET", scheduleIiiHead: "OTHER_CURRENT_ASSETS" },
+    { domainTypeId: null, accountCode: "2101", accountName: "GST Output Payable", accountType: "LIABILITY", scheduleIiiHead: "OTHER_CURRENT_LIABILITIES" },
     // CGST/SGST/IGST split — see routes/salesInvoices.ts and
     // routes/purchaseBills.ts for the intra-state (CGST+SGST) vs
     // inter-state (IGST) determination this feeds.
-    { domainTypeId: null, accountCode: "1102", accountName: "CGST Input Credit", accountType: "ASSET" },
-    { domainTypeId: null, accountCode: "1103", accountName: "SGST Input Credit", accountType: "ASSET" },
-    { domainTypeId: null, accountCode: "1104", accountName: "IGST Input Credit", accountType: "ASSET" },
-    { domainTypeId: null, accountCode: "2102", accountName: "CGST Output Payable", accountType: "LIABILITY" },
-    { domainTypeId: null, accountCode: "2103", accountName: "SGST Output Payable", accountType: "LIABILITY" },
-    { domainTypeId: null, accountCode: "2104", accountName: "IGST Output Payable", accountType: "LIABILITY" },
+    { domainTypeId: null, accountCode: "1102", accountName: "CGST Input Credit", accountType: "ASSET", scheduleIiiHead: "OTHER_CURRENT_ASSETS" },
+    { domainTypeId: null, accountCode: "1103", accountName: "SGST Input Credit", accountType: "ASSET", scheduleIiiHead: "OTHER_CURRENT_ASSETS" },
+    { domainTypeId: null, accountCode: "1104", accountName: "IGST Input Credit", accountType: "ASSET", scheduleIiiHead: "OTHER_CURRENT_ASSETS" },
+    { domainTypeId: null, accountCode: "2102", accountName: "CGST Output Payable", accountType: "LIABILITY", scheduleIiiHead: "OTHER_CURRENT_LIABILITIES" },
+    { domainTypeId: null, accountCode: "2103", accountName: "SGST Output Payable", accountType: "LIABILITY", scheduleIiiHead: "OTHER_CURRENT_LIABILITIES" },
+    { domainTypeId: null, accountCode: "2104", accountName: "IGST Output Payable", accountType: "LIABILITY", scheduleIiiHead: "OTHER_CURRENT_LIABILITIES" },
     { domainTypeId: null, accountCode: "4001", accountName: "Cost of Goods Sold", accountType: "EXPENSE" },
     // Gross-method Sales Invoice discount posting: Sales Revenue posts at
     // full pre-discount value, this contra account absorbs everything taken
@@ -140,6 +146,7 @@ async function main() {
       accountType: "ASSET",
       isControlAccount: true,
       defaultBpType: "ITEM",
+      scheduleIiiHead: "INVENTORIES",
     },
     // Manufacturing overlay
     {
@@ -149,12 +156,14 @@ async function main() {
       accountType: "ASSET",
       isControlAccount: true,
       defaultBpType: "ITEM",
+      scheduleIiiHead: "INVENTORIES",
     },
     {
       domainTypeId: manufacturing.id,
       accountCode: "1302",
       accountName: "Work in Progress",
       accountType: "ASSET",
+      scheduleIiiHead: "INVENTORIES",
     },
     {
       domainTypeId: manufacturing.id,
@@ -163,6 +172,7 @@ async function main() {
       accountType: "ASSET",
       isControlAccount: true,
       defaultBpType: "ITEM",
+      scheduleIiiHead: "INVENTORIES",
     },
   ];
 
