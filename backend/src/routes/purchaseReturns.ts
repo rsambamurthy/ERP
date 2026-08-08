@@ -4,9 +4,12 @@ import { prisma } from "../db";
 import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { returnStockToVendor, InsufficientStockError } from "../lib/costing";
+import { isInterState, splitGst } from "../lib/discountGst";
 
 const TRADE_PAYABLES_CODE = "2001";
-const GST_INPUT_CODE = "1101";
+const CGST_INPUT_CODE = "1102";
+const SGST_INPUT_CODE = "1103";
+const IGST_INPUT_CODE = "1104";
 
 const router = Router();
 router.use(authenticate, requireActiveSubscription);
@@ -95,7 +98,10 @@ router.get("/bill/:billId/lines", async (req, res) => {
 // Stock leaves at the bill line's own rate (mirroring how it arrived —
 // receiveStock took that same rate as an explicit cost, not a computed
 // one), preferring to drain the lot(s) that exact bill created. Reduces
-// Trade Payables and reverses GST Input for the full returned amount.
+// Trade Payables and reverses CGST+SGST or IGST Input for the full
+// returned amount — the inter/intra-state split is recomputed the same way
+// the original bill determined it (branch vs vendor state), not copied
+// from the bill, since neither document stores that flag.
 router.post("/", canPost, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
@@ -116,6 +122,8 @@ router.post("/", canPost, async (req, res) => {
 
   const resolvedBranchId: string | null = branchId ?? bill.branchId ?? null;
   if (!resolvedBranchId) return res.status(400).json({ message: "No branch found — provide branchId." });
+  const branch = await prisma.branch.findFirst({ where: { id: resolvedBranchId, organizationId }, select: { stateCode: true } });
+  const interState = isInterState(branch?.stateCode, bill.businessPartner.stateCode);
 
   const typedLines: LineInput[] = lines;
   for (const l of typedLines) {
@@ -166,12 +174,17 @@ router.post("/", canPost, async (req, res) => {
   const items = await prisma.item.findMany({ where: { id: { in: itemIds }, organizationId } });
   const itemById = new Map(items.map((i) => [i.id, i]));
 
-  const [tradePayables, gstInput] = await Promise.all([
+  const [tradePayables, cgstInput, sgstInput, igstInput] = await Promise.all([
     prisma.account.findFirst({ where: { organizationId, accountCode: TRADE_PAYABLES_CODE } }),
-    prisma.account.findFirst({ where: { organizationId, accountCode: GST_INPUT_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: CGST_INPUT_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: SGST_INPUT_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: IGST_INPUT_CODE } }),
   ]);
   if (!tradePayables) return res.status(500).json({ message: "Trade Payables account not found — re-run provisioning." });
-  if (taxTotal > 0 && !gstInput) return res.status(500).json({ message: "GST Input Credit account not found — re-run provisioning." });
+  const { cgst: cgstTotal, sgst: sgstTotal, igst: igstTotal } = splitGst(taxTotal, interState);
+  if (cgstTotal > 0 && !cgstInput) return res.status(500).json({ message: "CGST Input Credit account not found — re-run provisioning." });
+  if (sgstTotal > 0 && !sgstInput) return res.status(500).json({ message: "SGST Input Credit account not found — re-run provisioning." });
+  if (igstTotal > 0 && !igstInput) return res.status(500).json({ message: "IGST Input Credit account not found — re-run provisioning." });
 
   const count = await prisma.purchaseReturn.count({ where: { organizationId } });
   const returnNumber = `PR-${String(count + 1).padStart(4, "0")}`;
@@ -206,7 +219,9 @@ router.post("/", canPost, async (req, res) => {
             debit: 0, credit: l.lineSubtotal,
             narration: `${itemById.get(l.itemId)!.sku} x ${l.quantity}`,
           })),
-          ...(taxTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: gstInput!.id, businessPartnerId: null, debit: 0, credit: taxTotal, narration: "GST Input reversed" }] : []),
+          ...(cgstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: cgstInput!.id, businessPartnerId: null, debit: 0, credit: cgstTotal, narration: "CGST Input reversed" }] : []),
+          ...(sgstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: sgstInput!.id, businessPartnerId: null, debit: 0, credit: sgstTotal, narration: "SGST Input reversed" }] : []),
+          ...(igstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: igstInput!.id, businessPartnerId: null, debit: 0, credit: igstTotal, narration: "IGST Input reversed" }] : []),
         ],
       });
 

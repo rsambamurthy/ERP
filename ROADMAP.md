@@ -165,6 +165,15 @@ Chart of Accounts → Sync from Templates (same mechanism `POST /accounts/
 sync-templates` already provided for the original GST/COGS/Sales Revenue
 rollout).
 
+**Update — Returns now post to the split accounts too.** Sales Return and
+Purchase Return originally kept reversing into the old single `2101`/`1101`
+accounts even after Sales Invoice/Purchase Bill moved to the CGST/SGST/IGST
+split — meaning any return against a post-split document would have
+permanently overstated the split accounts (never reduced) while the old
+accounts went the wrong direction. Fixed: both routes now recompute the
+same branch-vs-customer/vendor state comparison the original document used
+and reverse into whichever of `2102-2104`/`1102-1104` that split lands on.
+
 Deliberately not covered by this pass:
 
 - **Sales Return doesn't know about discount.** It still reads `rate`/

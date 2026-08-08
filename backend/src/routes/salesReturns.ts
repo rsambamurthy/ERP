@@ -4,10 +4,13 @@ import { prisma } from "../db";
 import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { receiveStock } from "../lib/costing";
+import { isInterState, splitGst } from "../lib/discountGst";
 
 const TRADE_RECEIVABLES_CODE = "1005";
 const SALES_REVENUE_CODE = "5001";
-const GST_OUTPUT_CODE = "2101";
+const CGST_OUTPUT_CODE = "2102";
+const SGST_OUTPUT_CODE = "2103";
+const IGST_OUTPUT_CODE = "2104";
 const COGS_CODE = "4001";
 const INVENTORY_ADJUSTMENTS_CODE = "4002"; // where a DAMAGED line's cost writes off to, instead of back to stock
 
@@ -102,8 +105,11 @@ router.get("/invoice/:invoiceId/lines", async (req, res) => {
 // (receiveStock — a new FIFO lot, or folded into the weighted average);
 // DAMAGED lines skip the stock movement entirely and write the cost off to
 // Inventory Adjustments instead. Either way the customer is credited and
-// Sales Revenue/GST Output/COGS are reversed for the full returned amount
-// — the GOOD/DAMAGED split only changes which account absorbs the cost.
+// Sales Revenue/CGST+SGST or IGST Output/COGS are reversed for the full
+// returned amount — the GOOD/DAMAGED split only changes which account
+// absorbs the cost. The inter/intra-state split is recomputed the same way
+// the original invoice determined it (branch vs customer state), not
+// copied from the invoice, since neither document stores that flag.
 router.post("/", canPost, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
@@ -124,6 +130,8 @@ router.post("/", canPost, async (req, res) => {
 
   const resolvedBranchId: string | null = branchId ?? invoice.branchId ?? null;
   if (!resolvedBranchId) return res.status(400).json({ message: "No branch found — provide branchId." });
+  const branch = await prisma.branch.findFirst({ where: { id: resolvedBranchId, organizationId }, select: { stateCode: true } });
+  const interState = isInterState(branch?.stateCode, invoice.businessPartner.stateCode);
 
   const typedLines: LineInput[] = lines;
   for (const l of typedLines) {
@@ -184,17 +192,22 @@ router.post("/", canPost, async (req, res) => {
   const items = await prisma.item.findMany({ where: { id: { in: itemIds }, organizationId } });
   const itemById = new Map(items.map((i) => [i.id, i]));
 
-  const [tradeReceivables, salesRevenue, gstOutput, cogs, inventoryAdjustments] = await Promise.all([
+  const [tradeReceivables, salesRevenue, cgstOutput, sgstOutput, igstOutput, cogs, inventoryAdjustments] = await Promise.all([
     prisma.account.findFirst({ where: { organizationId, accountCode: TRADE_RECEIVABLES_CODE } }),
     prisma.account.findFirst({ where: { organizationId, accountCode: SALES_REVENUE_CODE } }),
-    prisma.account.findFirst({ where: { organizationId, accountCode: GST_OUTPUT_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: CGST_OUTPUT_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: SGST_OUTPUT_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: IGST_OUTPUT_CODE } }),
     prisma.account.findFirst({ where: { organizationId, accountCode: COGS_CODE } }),
     prisma.account.findFirst({ where: { organizationId, accountCode: INVENTORY_ADJUSTMENTS_CODE } }),
   ]);
   if (!tradeReceivables || !salesRevenue || !cogs) {
     return res.status(500).json({ message: "Core Sales accounts not found — re-run provisioning." });
   }
-  if (taxTotal > 0 && !gstOutput) return res.status(500).json({ message: "GST Output Payable account not found — re-run provisioning." });
+  const { cgst: cgstTotal, sgst: sgstTotal, igst: igstTotal } = splitGst(taxTotal, interState);
+  if (cgstTotal > 0 && !cgstOutput) return res.status(500).json({ message: "CGST Output Payable account not found — re-run provisioning." });
+  if (sgstTotal > 0 && !sgstOutput) return res.status(500).json({ message: "SGST Output Payable account not found — re-run provisioning." });
+  if (igstTotal > 0 && !igstOutput) return res.status(500).json({ message: "IGST Output Payable account not found — re-run provisioning." });
   if (damagedTotal > 0 && !inventoryAdjustments) return res.status(500).json({ message: "Inventory Adjustments account not found — re-run provisioning." });
 
   const count = await prisma.salesReturn.count({ where: { organizationId } });
@@ -226,7 +239,9 @@ router.post("/", canPost, async (req, res) => {
       await tx.journalLine.createMany({
         data: [
           { journalEntryId: journalEntry.id, accountId: salesRevenue.id, businessPartnerId: null, debit: subtotal, credit: 0, narration: `Sales return — ${returnNumber}` },
-          ...(taxTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: gstOutput!.id, businessPartnerId: null, debit: taxTotal, credit: 0, narration: "GST Output reversed" }] : []),
+          ...(cgstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: cgstOutput!.id, businessPartnerId: null, debit: cgstTotal, credit: 0, narration: "CGST Output reversed" }] : []),
+          ...(sgstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: sgstOutput!.id, businessPartnerId: null, debit: sgstTotal, credit: 0, narration: "SGST Output reversed" }] : []),
+          ...(igstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: igstOutput!.id, businessPartnerId: null, debit: igstTotal, credit: 0, narration: "IGST Output reversed" }] : []),
           { journalEntryId: journalEntry.id, accountId: tradeReceivables.id, businessPartnerId: invoice.businessPartnerId, debit: 0, credit: grandTotal, narration: `Credited to ${invoice.businessPartner.name}` },
           { journalEntryId: journalEntry.id, accountId: cogs.id, businessPartnerId: null, debit: 0, credit: totalCogsReversed, narration: `Cost of goods sold reversed — ${returnNumber}` },
           ...computed.filter((l) => l.condition === "GOOD").map((l) => ({
