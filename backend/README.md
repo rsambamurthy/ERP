@@ -195,6 +195,15 @@ display-only `round2(amount / exchangeRate)` derivatives shown alongside
 the INR figures — not independently computed, so they're indicative, not a
 second authoritative ledger.
 
+The tax rate itself is never assumed by the server — it posts whatever
+`taxRate` each line sends, in INR, same as a domestic invoice. The Sales
+Invoice frontend defaults a foreign-currency line's tax rate to 0% (rather
+than the item's usual domestic rate) when an item is picked or the
+currency is switched to non-INR, since exports are zero-rated under GST
+(LUT/bond — the common case). That's a UI default only, not a backend
+rule — a line can still be given a positive `taxRate` for the pay-IGST-
+and-claim-refund route.
+
 Known gaps, deliberately out of scope for this pass: no realized/unrealized
 forex gain-or-loss postings (this app has no invoice-to-payment settlement/
 allocation feature at all yet, in any currency, so there's nothing to

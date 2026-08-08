@@ -115,6 +115,19 @@ function SalesInvoicesInner() {
     setLines((ls) => ls.map((l) => ({ ...l, rate: round2(Number(l.rateFc || 0) * fx) })));
   }
 
+  function handleCurrencyChange(code: string) {
+    const wasForeign = isForeign;
+    const nowForeign = code !== "INR";
+    setCurrency(code);
+    // Switching INR → foreign mid-form: any tax rate already on a line
+    // came from the item's domestic default and no longer applies (see
+    // pickItem's note on exports being zero-rated by default) — reset it
+    // rather than silently keep taxing a zero-rated export.
+    if (!wasForeign && nowForeign) {
+      setLines((ls) => ls.map((l) => ({ ...l, taxRate: 0 })));
+    }
+  }
+
   function pickItem(i: number, itemId: string) {
     const item = itemById.get(itemId);
     const defaultDiscount = item?.defaultDiscountPct ? Number(item.defaultDiscountPct) : 0;
@@ -124,7 +137,11 @@ function SalesInvoicesInner() {
       // the invoice itself is in INR. A foreign-currency line starts blank.
       rate: !isForeign && item?.salesRate ? Number(item.salesRate) : 0,
       rateFc: 0,
-      taxRate: item?.taxRate ? Number(item.taxRate) : 0,
+      // Exports are zero-rated under GST (LUT/bond — the common case — or
+      // IGST-paid-then-refunded). Default to 0% rather than the item's
+      // domestic rate; override manually per line if this export is on the
+      // pay-IGST-and-claim-refund route instead of LUT.
+      taxRate: isForeign ? 0 : item?.taxRate ? Number(item.taxRate) : 0,
       discountType: defaultDiscount > 0 ? "PERCENT" : null,
       discountValue: defaultDiscount,
     });
@@ -190,7 +207,7 @@ function SalesInvoicesInner() {
           <div className="ent-form-grid" style={{ gridTemplateColumns: isForeign ? "1fr 1fr 2fr" : "1fr 3fr" }}>
             <div className="ent-fg">
               <label className="ent-fl">Currency</label>
-              <select className="ent-fc" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+              <select className="ent-fc" value={currency} onChange={(e) => handleCurrencyChange(e.target.value)}>
                 {SUPPORTED_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.name}</option>)}
               </select>
             </div>
@@ -204,7 +221,7 @@ function SalesInvoicesInner() {
               <label className="ent-fl">&nbsp;</label>
               <span style={{ fontSize: 12, color: "var(--color-muted)" }}>
                 {isForeign
-                  ? "Export invoice — enter each line's rate in " + currency + "; everything else (GST, journal posting) is computed and posted in INR."
+                  ? "Export invoice — zero-rated by default (LUT/bond), tax rate reset to 0% on each line. Override per line if this export pays IGST for refund instead."
                   : "Domestic invoice — INR only."}
               </span>
             </div>
