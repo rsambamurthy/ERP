@@ -572,6 +572,12 @@ export function cancelPurchaseOrder(id: string) {
   return request<{ data: PurchaseOrder }>(`/purchase-orders/${id}/cancel`, { method: "POST" });
 }
 
+// Same bypass-request<T>() pattern as downloadGstr1/downloadGstr3b — a real
+// file download, not JSON.
+export function downloadPurchaseOrderPdf(id: string, poNumber: string) {
+  return downloadFile(`/purchase-orders/${id}/pdf`, `${poNumber}.pdf`);
+}
+
 export function getSalesInvoices() {
   return request<{ data: SalesInvoice[] }>("/sales-invoices");
 }

@@ -353,6 +353,7 @@ be linked into a Purchase Bill (see below). Full state machine on the
 | `POST /purchase-orders/:id/reject` | `PENDING_APPROVAL` only → `REJECTED`. Body `{ reason }`, required (400 without it). `purchase.approve`. |
 | `POST /purchase-orders/:id/reopen` | `REJECTED` only → `DRAFT`, editable and resubmittable. Rejection reason/who/when stays on the record as history, not cleared. `purchase.post`. |
 | `POST /purchase-orders/:id/cancel` | `DRAFT`/`PENDING_APPROVAL`/`APPROVED` (only if nothing's been billed against any line yet) → `CANCELLED`. `purchase.post`. |
+| `GET /purchase-orders/:id/pdf` | Streams a formal PDF of the order (`application/pdf`, `Content-Disposition: attachment`). Read/export action — no permission gate beyond org membership, available at any status. See PDF export below. |
 
 **Approval permission.** New `purchase.approve` in `lib/permissions.ts`,
 deliberately excluded from `ACCOUNTANT`'s built-in permission set —
@@ -392,6 +393,18 @@ the intended 400.
 
 Requires `db/migration_022_purchase_orders.sql`. No new GL accounts and no
 `prisma db seed` step — a Purchase Order never posts to the journal.
+
+**PDF export.** `lib/purchaseOrderPdf.ts` builds the document with `pdfkit`
+(pure JS — no headless-browser/Chromium dependency, so it's reliable in a
+plain Node container; chosen over `puppeteer` for that reason). Includes
+company header (name, registered office address, CIN, branch GSTIN), PO
+number/date/expected-delivery/status, side-by-side Vendor/Deliver-To
+boxes, a paginated line-items table, totals, narration as notes, and a
+signature block. No logo/letterhead — `Organization` has no logo field
+yet; deliberately out of scope for this pass. Adds `pdfkit` and
+`@types/pdfkit` as new dependencies (`package.json`) — the next deploy
+needs `npm install` before `npm run build` succeeds, unlike prior features
+in this app's history which only touched already-installed packages.
 
 ### Bulk upload (`/accounts`, `/items`, `/business-partners` — `/bulk-upload/*`)
 

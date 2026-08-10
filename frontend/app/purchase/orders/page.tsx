@@ -4,9 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
 import {
-  ApiError, approvePurchaseOrder, cancelPurchaseOrder, createPurchaseOrder, getBranches, getBusinessPartners,
-  getItems, getPurchaseOrder, getPurchaseOrders, rejectPurchaseOrder, reopenPurchaseOrder, submitPurchaseOrder,
-  updatePurchaseOrder,
+  ApiError, approvePurchaseOrder, cancelPurchaseOrder, createPurchaseOrder, downloadPurchaseOrderPdf, getBranches,
+  getBusinessPartners, getItems, getPurchaseOrder, getPurchaseOrders, rejectPurchaseOrder, reopenPurchaseOrder,
+  submitPurchaseOrder, updatePurchaseOrder,
 } from "@/lib/api";
 import { round2 } from "@/lib/discountGst";
 import { canApprovePurchaseOrders } from "@/lib/auth";
@@ -61,6 +61,7 @@ function PurchaseOrdersInner() {
 
   const [rejecting, setRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
   const canApprove = canApprovePurchaseOrders();
@@ -196,6 +197,18 @@ function PurchaseOrdersInner() {
     }
   }
 
+  async function handleDownloadPdf(order: PurchaseOrder) {
+    setDownloadingPdf(true);
+    setActionError(null);
+    try {
+      await downloadPurchaseOrderPdf(order.id, order.poNumber);
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Could not download the PDF.");
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
+
   return (
     <>
       <div className="ent-page-hdr">
@@ -293,6 +306,11 @@ function PurchaseOrdersInner() {
               {detail ? `${detail.poNumber} ` : "Loading…"}
               {detail && <StatusBadge status={detail.status} />}
             </span>
+            {detail && (
+              <button type="button" className="ent-ia ent-ia-edit" disabled={downloadingPdf} onClick={() => handleDownloadPdf(detail)}>
+                {downloadingPdf ? "Downloading…" : "Download PDF"}
+              </button>
+            )}
             <button type="button" className="ent-ia ent-ia-edit" onClick={() => { setDetail(null); setDetailError(null); }}>Close</button>
           </div>
           {detailLoading && <p style={{ padding: "0 14px 14px", fontSize: 13, color: "var(--color-muted)" }}>Loading…</p>}

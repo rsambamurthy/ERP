@@ -3,6 +3,7 @@ import { prisma } from "../db";
 import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { round2 } from "../lib/discountGst";
+import { buildPurchaseOrderPdf } from "../lib/purchaseOrderPdf";
 
 // A Purchase Order never touches the journal or stock — it's a
 // pre-commitment/approval document only. See the schema.prisma comment on
@@ -62,6 +63,61 @@ router.get("/:id", async (req, res) => {
   });
   if (!order) return res.status(404).json({ message: "Purchase order not found." });
   res.json({ data: order });
+});
+
+// GET /purchase-orders/:id/pdf — the same information already on the
+// detail screen, rendered as a downloadable document to actually send to
+// the vendor. No extra permission beyond viewing the PO itself (this is a
+// read/export action, not a workflow transition). See lib/purchaseOrderPdf.ts.
+router.get("/:id/pdf", async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const order = await prisma.purchaseOrder.findFirst({
+    where: { id: req.params.id, organizationId },
+    include: {
+      businessPartner: { select: { name: true, gstin: true, address: true, phone: true, email: true } },
+      branch: { select: { name: true, gstin: true, address: true, phone: true, email: true } },
+      lines: { include: { item: { select: { sku: true, name: true, hsnCode: true, uom: true } } } },
+    },
+  });
+  if (!order) return res.status(404).json({ message: "Purchase order not found." });
+
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { name: true, registeredOfficeAddress: true, cin: true },
+  });
+  if (!organization) return res.status(404).json({ message: "Organization not found." });
+
+  const buffer = await buildPurchaseOrderPdf({
+    poNumber: order.poNumber,
+    poDate: order.poDate,
+    expectedDeliveryDate: order.expectedDeliveryDate,
+    status: order.status,
+    narration: order.narration,
+    subtotal: Number(order.subtotal),
+    taxTotal: Number(order.taxTotal),
+    grandTotal: Number(order.grandTotal),
+    organization: {
+      name: organization.name,
+      registeredOfficeAddress: organization.registeredOfficeAddress as string | null,
+      cin: organization.cin,
+    },
+    branch: order.branch
+      ? { name: order.branch.name, gstin: order.branch.gstin, address: order.branch.address, phone: order.branch.phone, email: order.branch.email }
+      : null,
+    vendor: {
+      name: order.businessPartner.name, gstin: order.businessPartner.gstin,
+      address: order.businessPartner.address, phone: order.businessPartner.phone, email: order.businessPartner.email,
+    },
+    lines: order.lines.map((l) => ({
+      itemSku: l.item.sku, itemName: l.item.name, hsnCode: l.item.hsnCode, uom: l.item.uom,
+      quantity: Number(l.quantity), rate: Number(l.rate), taxRate: Number(l.taxRate), lineTotal: Number(l.lineTotal),
+    })),
+  });
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${order.poNumber}.pdf"`);
+  res.send(buffer);
 });
 
 // Shared by POST / and PATCH /:id — validates + computes lines. Throws

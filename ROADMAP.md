@@ -637,6 +637,23 @@ properly caught and returns the real error.
 Requires `db/migration_022_purchase_orders.sql`. No new GL accounts, no
 `prisma db seed` step needed — a Purchase Order never posts.
 
+**PDF export.** `GET /purchase-orders/:id/pdf` renders the PO as a formal,
+downloadable document (`lib/purchaseOrderPdf.ts`), built with `pdfkit`
+(pure JS, no headless-browser dependency, so it runs in any Node
+container — chosen over `puppeteer` for reliability on Railway) rather
+than an HTML→PDF renderer. Layout: company header (name, registered
+office address, CIN, branch GSTIN), PO number/date/expected-delivery/
+status, side-by-side Vendor/Deliver-To boxes, a paginated line-items
+table (Item, HSN, Qty, UOM, Rate, Tax%, Amount), totals, the narration as
+notes, and a signature block. Deliberately plain and single-column — no
+logo or letterhead template, since `Organization` has no logo field;
+good enough to send to a vendor, a branded template is future scope. The
+"Download PDF" button lives on the PO detail screen's header
+(`app/purchase/orders/page.tsx`), next to Close, for every status (a
+vendor may want the document at any stage, not just once Approved).
+Adds `pdfkit`/`@types/pdfkit` as new dependencies — the next Railway
+deploy needs a fresh `npm install` before `npm run build` will succeed.
+
 ## From the earlier "what's next" review
 
 Flagged as gaps before Sales/Purchase/Inventory was chosen as the next
