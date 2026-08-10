@@ -38,6 +38,10 @@ import type {
   PurchaseOrderLineInput,
   GoodsReceiptNote,
   GoodsReceiptNoteLineInput,
+  SalesOrder,
+  SalesOrderLineInput,
+  DeliveryNote,
+  DeliveryNoteLineInput,
   PurchaseReturn,
   PurchaseReturnableResponse,
   PurchaseReturnLineInput,
@@ -212,6 +216,7 @@ export function updateCompanyMaster(body: {
   cin?: string | null; companyPan?: string | null; companyType?: string | null;
   incorporationDate?: string | null; registeredOfficeAddress?: string | null;
   poApprovalThreshold?: number | null; priceVarianceTolerancePct?: number | null;
+  soApprovalThreshold?: number | null;
 }) {
   return request<{ data: CompanyMaster }>("/company-master", { method: "PATCH", body: JSON.stringify(body) });
 }
@@ -615,6 +620,79 @@ export function createGoodsReceiptNote(body: {
   return request<{ data: GoodsReceiptNote }>("/goods-receipt-notes", { method: "POST", body: JSON.stringify(body) });
 }
 
+// ── Sales Orders ──────────────────────────────────────────────────────────
+
+export function getSalesOrders(params?: { status?: string; businessPartnerId?: string }) {
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set("status", params.status);
+  if (params?.businessPartnerId) qs.set("businessPartnerId", params.businessPartnerId);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request<{ data: SalesOrder[] }>(`/sales-orders${suffix}`);
+}
+
+export function getSalesOrder(id: string) {
+  return request<{ data: SalesOrder }>(`/sales-orders/${id}`);
+}
+
+export function createSalesOrder(body: {
+  businessPartnerId: string; soDate: string; branchId?: string; expectedDeliveryDate?: string; narration?: string;
+  lines: SalesOrderLineInput[];
+}) {
+  return request<{ data: SalesOrder }>("/sales-orders", { method: "POST", body: JSON.stringify(body) });
+}
+
+// Full edit — Draft only (the backend 400s otherwise). See PATCH
+// /sales-orders/:id.
+export function updateSalesOrder(id: string, body: {
+  businessPartnerId?: string; soDate?: string; branchId?: string | null; expectedDeliveryDate?: string | null; narration?: string;
+  lines: SalesOrderLineInput[];
+}) {
+  return request<{ data: SalesOrder }>(`/sales-orders/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function submitSalesOrder(id: string) {
+  return request<{ data: SalesOrder }>(`/sales-orders/${id}/submit`, { method: "POST" });
+}
+
+export function approveSalesOrder(id: string) {
+  return request<{ data: SalesOrder }>(`/sales-orders/${id}/approve`, { method: "POST" });
+}
+
+export function rejectSalesOrder(id: string, reason: string) {
+  return request<{ data: SalesOrder }>(`/sales-orders/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+}
+
+export function reopenSalesOrder(id: string) {
+  return request<{ data: SalesOrder }>(`/sales-orders/${id}/reopen`, { method: "POST" });
+}
+
+export function cancelSalesOrder(id: string) {
+  return request<{ data: SalesOrder }>(`/sales-orders/${id}/cancel`, { method: "POST" });
+}
+
+// ── Delivery Notes ────────────────────────────────────────────────────────
+// Records physical dispatch against an APPROVED Sales Order and moves
+// stock immediately — creates and posts in one step, no separate "post"
+// call (same UX as Sales Invoices). See SalesOrder above and
+// ROADMAP.md's "Delivery Note" section.
+
+export function getDeliveryNotes(params?: { salesOrderId?: string }) {
+  const qs = new URLSearchParams();
+  if (params?.salesOrderId) qs.set("salesOrderId", params.salesOrderId);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request<{ data: DeliveryNote[] }>(`/delivery-notes${suffix}`);
+}
+
+export function getDeliveryNote(id: string) {
+  return request<{ data: DeliveryNote }>(`/delivery-notes/${id}`);
+}
+
+export function createDeliveryNote(body: {
+  salesOrderId: string; dnDate: string; narration?: string; lines: DeliveryNoteLineInput[];
+}) {
+  return request<{ data: DeliveryNote }>("/delivery-notes", { method: "POST", body: JSON.stringify(body) });
+}
+
 export function getSalesInvoices() {
   return request<{ data: SalesInvoice[] }>("/sales-invoices");
 }
@@ -624,11 +702,15 @@ export function getSalesInvoice(id: string) {
 }
 
 export function createSalesInvoice(body: {
-  businessPartnerId: string; invoiceDate: string; branchId?: string; narration?: string; lines: SalesLineInput[];
+  businessPartnerId?: string; invoiceDate: string; branchId?: string; narration?: string; lines: SalesLineInput[];
   discountType?: DiscountType | null; discountValue?: number;
   currency?: string; exchangeRate?: number;
   exportType?: string; lutBondNumber?: string; lutBondDate?: string;
   shippingBillNumber?: string; shippingBillDate?: string; portCode?: string;
+  // Sales-Order-linked invoice — see SalesOrder above. When set,
+  // businessPartnerId is optional (derived from the SO server-side), and
+  // every line must carry a deliveryNoteLineId (3-way match).
+  salesOrderId?: string;
 }) {
   return request<{ data: SalesInvoice }>("/sales-invoices", { method: "POST", body: JSON.stringify(body) });
 }

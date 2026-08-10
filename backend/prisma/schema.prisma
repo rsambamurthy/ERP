@@ -105,6 +105,10 @@ model Organization {
   // the safe default, same "null = most cautious" convention as
   // poApprovalThreshold above. See routes/purchaseBills.ts.
   priceVarianceTolerancePct Decimal? @map("price_variance_tolerance_pct") @db.Decimal(5, 2)
+  // Sales Order approval workflow — the exact sales-side mirror of
+  // poApprovalThreshold above. Null means "always require manual
+  // approval". See routes/salesOrders.ts POST /:id/submit.
+  soApprovalThreshold     Decimal?  @map("so_approval_threshold") @db.Decimal(14, 2)
   createdAt               DateTime  @default(now()) @map("created_at")
   updatedAt               DateTime  @default(now()) @updatedAt @map("updated_at")
   deletedAt               DateTime? @map("deleted_at")
@@ -134,6 +138,8 @@ model Organization {
   auditors         Auditor[]
   purchaseOrders   PurchaseOrder[]
   goodsReceiptNotes GoodsReceiptNote[]
+  salesOrders      SalesOrder[]
+  deliveryNotes    DeliveryNote[]
 
   @@map("organizations")
 }
@@ -221,6 +227,8 @@ model Branch {
   purchaseReturns  PurchaseReturn[]
   purchaseOrders   PurchaseOrder[]
   goodsReceiptNotes GoodsReceiptNote[]
+  salesOrders      SalesOrder[]
+  deliveryNotes    DeliveryNote[]
 
   @@unique([organizationId, code])
   @@map("branches")
@@ -496,6 +504,8 @@ model Item {
   purchaseReturnLines  PurchaseReturnLine[]
   purchaseOrderLines   PurchaseOrderLine[]
   goodsReceiptNoteLines GoodsReceiptNoteLine[]
+  salesOrderLines      SalesOrderLine[]
+  deliveryNoteLines    DeliveryNoteLine[]
 
   @@unique([organizationId, sku])
   @@map("items")
@@ -614,6 +624,17 @@ model SalesInvoice {
   shippingBillNumber String?  @map("shipping_bill_number") @db.VarChar(30)
   shippingBillDate   DateTime? @map("shipping_bill_date") @db.Date
   portCode           String?  @map("port_code") @db.VarChar(10)
+  // Optional — set when this invoice was raised against an approved Sales
+  // Order rather than created standalone. See routes/salesInvoices.ts: when
+  // present, businessPartnerId is derived from the SO (not taken from the
+  // request), and every line must carry its own deliveryNoteLineId (3-way
+  // qty match — see SalesInvoiceLine below); none of this invoice's lines
+  // call consumeStock, since the linked Delivery Note(s) already moved that
+  // stock out (their captured unitCost is reused for the COGS journal
+  // line instead). An invoice with no salesOrderId is unaffected by any of
+  // this — it still moves its own stock exactly as it did before this
+  // feature.
+  salesOrderId       String?  @map("sales_order_id") @db.Uuid
   createdBy         String?  @map("created_by") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at")
 
@@ -621,6 +642,7 @@ model SalesInvoice {
   branch          Branch?            @relation(fields: [branchId], references: [id])
   businessPartner BusinessPartner    @relation(fields: [businessPartnerId], references: [id])
   journalEntry    JournalEntry       @relation(fields: [journalEntryId], references: [id])
+  salesOrder      SalesOrder?        @relation(fields: [salesOrderId], references: [id])
   lines           SalesInvoiceLine[]
   returns         SalesReturn[]
 
@@ -657,10 +679,20 @@ model SalesInvoiceLine {
   // lineTotalFc: display-only round2(lineTotal / exchangeRate).
   rateFc                Decimal? @map("rate_fc") @db.Decimal(14, 4)
   lineTotalFc           Decimal? @map("line_total_fc") @db.Decimal(14, 2)
+  // Only meaningful when the parent invoice has a salesOrderId — mirrors
+  // purchaseOrderLineId/goodsReceiptNoteLineId on PurchaseBillLine exactly.
+  // salesOrderLineId feeds the SalesOrderLine.billedQuantity rollup (and PO
+  // auto-close); deliveryNoteLineId is the actual 3-way match enforcement
+  // point (this line's quantity can never exceed what's still unbilled on
+  // that Delivery Note line).
+  salesOrderLineId     String?  @map("sales_order_line_id") @db.Uuid
+  deliveryNoteLineId   String?  @map("delivery_note_line_id") @db.Uuid
 
-  salesInvoice SalesInvoice      @relation(fields: [salesInvoiceId], references: [id])
-  item         Item              @relation(fields: [itemId], references: [id])
-  returnLines  SalesReturnLine[]
+  salesInvoice     SalesInvoice      @relation(fields: [salesInvoiceId], references: [id])
+  item             Item              @relation(fields: [itemId], references: [id])
+  returnLines      SalesReturnLine[]
+  salesOrderLine   SalesOrderLine?   @relation(fields: [salesOrderLineId], references: [id])
+  deliveryNoteLine DeliveryNoteLine? @relation(fields: [deliveryNoteLineId], references: [id])
 
   @@map("sales_invoice_lines")
 }
@@ -943,6 +975,155 @@ model GoodsReceiptNoteLine {
   @@map("goods_receipt_note_lines")
 }
 
+// ── Sales Order ──────────────────────────────────────────────────────────
+// The sales-side mirror of PurchaseOrder — same status state machine:
+// DRAFT -> submit -> APPROVED (auto, when soApprovalThreshold is set and
+// this SO's grandTotal is strictly below it) or PENDING_APPROVAL ->
+// approve/reject -> APPROVED/REJECTED. REJECTED -> reopen -> DRAFT (history
+// kept, not cleared). Cancel blocks if anything's been delivered or
+// billed. Auto-CLOSED once every line is fully billed. Never touches the
+// journal or stock itself — purely a pre-commitment/approval document,
+// same as PurchaseOrder. See routes/salesOrders.ts.
+model SalesOrder {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String    @map("organization_id") @db.Uuid
+  branchId          String?   @map("branch_id") @db.Uuid
+  businessPartnerId String    @map("business_partner_id") @db.Uuid
+  soNumber          String    @map("so_number") @db.VarChar(30)
+  soDate            DateTime  @map("so_date") @db.Date
+  expectedDeliveryDate DateTime? @map("expected_delivery_date") @db.Date
+  narration         String    @default("") @db.VarChar(255)
+  status            String    @default("DRAFT") @db.VarChar(20)
+  subtotal          Decimal   @default(0) @db.Decimal(14, 2)
+  taxTotal          Decimal   @default(0) @map("tax_total") @db.Decimal(14, 2)
+  grandTotal        Decimal   @default(0) @map("grand_total") @db.Decimal(14, 2)
+
+  submittedBy    String?   @map("submitted_by") @db.Uuid
+  submittedAt    DateTime? @map("submitted_at")
+  approvedBy     String?   @map("approved_by") @db.Uuid
+  approvedAt     DateTime? @map("approved_at")
+  // True when APPROVED was reached automatically via soApprovalThreshold
+  // rather than a human clicking Approve — same audit-trail convention as
+  // PurchaseOrder.autoApproved.
+  autoApproved   Boolean   @default(false) @map("auto_approved")
+  rejectedBy     String?   @map("rejected_by") @db.Uuid
+  rejectedAt     DateTime? @map("rejected_at")
+  rejectionReason String?  @map("rejection_reason") @db.VarChar(500)
+  cancelledBy    String?   @map("cancelled_by") @db.Uuid
+  cancelledAt    DateTime? @map("cancelled_at")
+
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  organization    Organization     @relation(fields: [organizationId], references: [id])
+  branch          Branch?          @relation(fields: [branchId], references: [id])
+  businessPartner BusinessPartner  @relation(fields: [businessPartnerId], references: [id])
+  lines           SalesOrderLine[]
+  salesInvoices   SalesInvoice[]
+  deliveryNotes   DeliveryNote[]
+
+  @@unique([organizationId, soNumber])
+  @@map("sales_orders")
+}
+
+model SalesOrderLine {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  salesOrderId String  @map("sales_order_id") @db.Uuid
+  itemId       String  @map("item_id") @db.Uuid
+  quantity     Decimal @db.Decimal(14, 4)
+  rate         Decimal @db.Decimal(14, 2)
+  taxRate      Decimal @map("tax_rate") @db.Decimal(5, 2)
+  lineSubtotal Decimal @map("line_subtotal") @db.Decimal(14, 2)
+  taxAmount    Decimal @map("tax_amount") @db.Decimal(14, 2)
+  lineTotal    Decimal @map("line_total") @db.Decimal(14, 2)
+  // Running total of quantity already dispatched against this line across
+  // every Delivery Note — see routes/deliveryNotes.ts. Never exceeds
+  // `quantity` (enforced server-side at delivery-note-post time). This is
+  // the actual stock-out signal; billedQuantity below tracks the separate,
+  // always-lagging-or-equal financial side.
+  deliveredQuantity Decimal @default(0) @map("delivered_quantity") @db.Decimal(14, 4)
+  // Running total of quantity already invoiced against this line across
+  // every linked Sales Invoice — see routes/salesInvoices.ts. Never exceeds
+  // `quantity` (enforced server-side at invoice-post time). Invoices
+  // against an SO are additionally checked, per line, against that line's
+  // own DeliveryNoteLine.quantityDelivered (the 3-way match) — this field
+  // is the SO-level rollup used to decide when the whole SO can CLOSE.
+  billedQuantity    Decimal @default(0) @map("billed_quantity") @db.Decimal(14, 4)
+
+  salesOrder        SalesOrder         @relation(fields: [salesOrderId], references: [id])
+  item               Item               @relation(fields: [itemId], references: [id])
+  salesInvoiceLines  SalesInvoiceLine[]
+  deliveryNoteLines  DeliveryNoteLine[]
+
+  @@map("sales_order_lines")
+}
+
+// ── Delivery Note ────────────────────────────────────────────────────────
+// Records the physical dispatch of goods against an APPROVED Sales Order —
+// this, not the eventual Sales Invoice, is what actually moves stock (see
+// lib/costing.ts consumeStock, called from routes/deliveryNotes.ts). A
+// Delivery Note posts immediately on creation, the same create-and-post-
+// in-one-step UX as a Sales Invoice — no draft/approval workflow of its
+// own (that already happened at the SO stage; a Delivery Note just
+// confirms what physically shipped).
+//
+// Only meaningful in the SO-linked sales path — see the note on
+// SalesInvoice.salesOrderId. A Sales Invoice raised without an SO never
+// touches a DeliveryNote and keeps moving its own stock exactly as it
+// always has.
+model DeliveryNote {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String   @map("organization_id") @db.Uuid
+  branchId          String   @map("branch_id") @db.Uuid
+  businessPartnerId String   @map("business_partner_id") @db.Uuid
+  salesOrderId      String   @map("sales_order_id") @db.Uuid
+  dnNumber          String   @map("dn_number") @db.VarChar(30)
+  dnDate            DateTime @map("dn_date") @db.Date
+  narration         String   @default("") @db.VarChar(255)
+  createdBy         String?  @map("created_by") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  organization    Organization       @relation(fields: [organizationId], references: [id])
+  branch          Branch             @relation(fields: [branchId], references: [id])
+  businessPartner BusinessPartner    @relation(fields: [businessPartnerId], references: [id])
+  salesOrder      SalesOrder         @relation(fields: [salesOrderId], references: [id])
+  lines           DeliveryNoteLine[]
+
+  @@unique([organizationId, dnNumber])
+  @@map("delivery_notes")
+}
+
+model DeliveryNoteLine {
+  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  deliveryNoteId    String  @map("delivery_note_id") @db.Uuid
+  salesOrderLineId  String  @map("sales_order_line_id") @db.Uuid
+  itemId            String  @map("item_id") @db.Uuid
+  quantityDelivered Decimal @map("quantity_delivered") @db.Decimal(14, 4)
+  // Carried in at the SO line's own selling rate — a Delivery Note doesn't
+  // set a new price, it just confirms quantity physically shipped. Purely
+  // descriptive/audit; the eventual Sales Invoice sets its own rate
+  // independently (same convention as GoodsReceiptNoteLine.unitCost vs a
+  // Purchase Bill's own rate).
+  rate              Decimal @db.Decimal(14, 2)
+  // The actual blended cost consumeStock returned when this note posted
+  // (FIFO/weighted-avg as of that moment) — captured here so the eventual
+  // Sales Invoice's COGS debit reuses this exact figure instead of calling
+  // consumeStock a second time, which would double-consume stock.
+  unitCost          Decimal @map("unit_cost") @db.Decimal(14, 4)
+  // Running total of quantity already invoiced against this specific
+  // Delivery Note line — see routes/salesInvoices.ts. Never exceeds
+  // quantityDelivered (enforced server-side at invoice-post time) — this
+  // is the 3-way match.
+  billedQuantity    Decimal @default(0) @map("billed_quantity") @db.Decimal(14, 4)
+
+  deliveryNote      DeliveryNote       @relation(fields: [deliveryNoteId], references: [id])
+  salesOrderLine    SalesOrderLine     @relation(fields: [salesOrderLineId], references: [id])
+  item              Item               @relation(fields: [itemId], references: [id])
+  salesInvoiceLines SalesInvoiceLine[]
+
+  @@map("delivery_note_lines")
+}
+
 // ── Sales Return (Credit Note) ──────────────────────────────────────────
 // Always tied to the original Sales Invoice — never freeform — so a line
 // can never return more than (invoiced qty - already returned qty). Each
@@ -1140,6 +1321,8 @@ model BusinessPartner {
   purchaseReturns PurchaseReturn[]
   purchaseOrders  PurchaseOrder[]
   goodsReceiptNotes GoodsReceiptNote[]
+  salesOrders     SalesOrder[]
+  deliveryNotes   DeliveryNote[]
 
   @@map("business_partners")
 }

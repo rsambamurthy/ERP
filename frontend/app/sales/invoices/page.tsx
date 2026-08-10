@@ -1,17 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
-import { ApiError, createSalesInvoice, getBranches, getBusinessPartners, getItems, getSalesInvoice, getSalesInvoices, updateSalesInvoiceReference } from "@/lib/api";
+import {
+  ApiError, createSalesInvoice, getBranches, getBusinessPartners, getDeliveryNotes, getItems, getSalesInvoice,
+  getSalesInvoices, getSalesOrder, getSalesOrders, updateSalesInvoiceReference,
+} from "@/lib/api";
 import { computeDiscountedLines, isInterState, round2 } from "@/lib/discountGst";
-import type { Branch, BusinessPartner, DiscountType, ExportType, Item, SalesInvoice, SalesLineInput } from "@/lib/types";
+import type { Branch, BusinessPartner, DiscountType, ExportType, Item, SalesInvoice, SalesLineInput, SalesOrder } from "@/lib/types";
 import { SUPPORTED_CURRENCIES, currencySymbol, EXPORT_TYPE_LABELS } from "@/lib/types";
 
 const emptyLine = (): SalesLineInput => ({ itemId: "", quantity: 0, rate: 0, rateFc: 0, taxRate: 0, discountType: null, discountValue: 0 });
 
 function SalesInvoicesInner() {
+  const searchParams = useSearchParams();
+  const initialSoId = searchParams.get("salesOrderId") ?? "";
+
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [customers, setCustomers] = useState<BusinessPartner[]>([]);
@@ -42,6 +49,14 @@ function SalesInvoicesInner() {
   const [newPortCode, setNewPortCode] = useState("");
   const isZeroRatedExport = isForeign && (exportType === "LUT" || exportType === "BOND");
   const hasLineTax = lines.some((l) => Number(l.taxRate || 0) > 0);
+
+  // Optional — raising this invoice against an approved Sales Order. Only
+  // ever offered for a domestic (INR) invoice: Sales Orders don't carry a
+  // currency/exchange-rate concept yet, so linking one to a foreign invoice
+  // isn't supported. See routes/salesInvoices.ts's salesOrderId handling.
+  const [linkedSO, setLinkedSO] = useState<SalesOrder | null>(null);
+  const [availableSOs, setAvailableSOs] = useState<SalesOrder[]>([]);
+  const [soLoadError, setSoLoadError] = useState<string | null>(null);
 
   const [detail, setDetail] = useState<SalesInvoice | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -94,11 +109,18 @@ function SalesInvoicesInner() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [invRes, itemsRes, custRes, branchRes] = await Promise.all([getSalesInvoices(), getItems(), getBusinessPartners("CUSTOMER"), getBranches()]);
+      const [invRes, itemsRes, custRes, branchRes, soRes] = await Promise.all([
+        getSalesInvoices(), getItems(), getBusinessPartners("CUSTOMER"), getBranches(), getSalesOrders({ status: "APPROVED" }),
+      ]);
       setInvoices(invRes.data);
       setItems(itemsRes.data);
       setCustomers(custRes.data);
       setBranches(branchRes.data);
+      // Only orders with at least one line that's been delivered but not yet
+      // fully invoiced are worth offering — a proxy for "has an open
+      // Delivery Note line to invoice against" without fetching every
+      // order's Delivery Notes just to populate the dropdown.
+      setAvailableSOs(soRes.data.filter((so) => so.lines.some((l) => Number(l.billedQuantity) < Number(l.deliveredQuantity))));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load sales invoices.");
     } finally {
@@ -107,6 +129,63 @@ function SalesInvoicesInner() {
   }
 
   useEffect(() => { loadAll(); }, []);
+
+  // Deep link from the Sales Order detail screen ("Create Sales Invoice"
+  // button) — ?salesOrderId=<id> opens the form pre-linked.
+  useEffect(() => {
+    if (!initialSoId) return;
+    (async () => {
+      try {
+        const res = await getSalesOrder(initialSoId);
+        await linkSO(res.data);
+        setShowForm(true);
+      } catch (err) {
+        setSoLoadError(err instanceof ApiError ? err.message : "Could not load the linked Sales Order.");
+      }
+    })();
+    // Only meant to run once, off the URL param present at first render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSoId]);
+
+  // Lines are pre-filled from this SO's Delivery Notes, not the order
+  // directly — the 3-way match means what's invoiceable is what's actually
+  // been delivered (and not yet invoiced), which can lag behind what was
+  // ordered. Each pre-filled line carries a deliveryNoteLineId, not a
+  // salesOrderLineId — see DocumentLineInput and routes/salesInvoices.ts.
+  async function linkSO(so: SalesOrder) {
+    setLinkedSO(so);
+    setBusinessPartnerId(so.businessPartner.id);
+    setCurrency("INR");
+    setSoLoadError(null);
+    try {
+      const dnRes = await getDeliveryNotes({ salesOrderId: so.id });
+      const soLineById = new Map(so.lines.map((l) => [l.id, l]));
+      const openLines = dnRes.data
+        .flatMap((d) => d.lines)
+        .map((dl) => ({
+          dl,
+          remaining: round2(Number(dl.quantityDelivered) - Number(dl.billedQuantity)),
+          soLine: soLineById.get(dl.salesOrderLineId),
+        }))
+        .filter((x) => x.remaining > 0 && x.soLine);
+      setLines(openLines.map(({ dl, remaining, soLine }) => ({
+        itemId: dl.item.id,
+        quantity: remaining,
+        rate: Number(dl.rate),
+        taxRate: Number(soLine!.taxRate),
+        discountType: null,
+        discountValue: 0,
+        deliveryNoteLineId: dl.id,
+      })));
+    } catch (err) {
+      setSoLoadError(err instanceof ApiError ? err.message : "Could not load Delivery Notes for this order.");
+    }
+  }
+
+  function unlinkSO() {
+    setLinkedSO(null);
+    setLines([emptyLine()]);
+  }
 
   async function openDetail(id: string) {
     setShowForm(false);
@@ -211,7 +290,7 @@ function SalesInvoicesInner() {
     setError(null);
     try {
       await createSalesInvoice({
-        businessPartnerId, invoiceDate, narration,
+        businessPartnerId: linkedSO ? undefined : businessPartnerId, invoiceDate, narration,
         lines: lines.filter((l) => l.itemId && l.quantity > 0),
         discountType: invoiceDiscountType || null,
         discountValue: invoiceDiscountValue ? Number(invoiceDiscountValue) : 0,
@@ -222,6 +301,7 @@ function SalesInvoicesInner() {
         shippingBillNumber: isForeign ? newShippingBillNumber || undefined : undefined,
         shippingBillDate: isForeign ? newShippingBillDate || undefined : undefined,
         portCode: isForeign ? newPortCode || undefined : undefined,
+        salesOrderId: linkedSO?.id,
       });
       setShowForm(false);
       setBusinessPartnerId(""); setNarration(""); setLines([emptyLine()]);
@@ -229,6 +309,7 @@ function SalesInvoicesInner() {
       setCurrency("INR"); setExchangeRate("1");
       setExportType("LUT"); setLutBondNumber(""); setLutBondDate("");
       setNewShippingBillNumber(""); setNewShippingBillDate(""); setNewPortCode("");
+      setLinkedSO(null);
       await loadAll();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not post invoice.");
@@ -252,10 +333,43 @@ function SalesInvoicesInner() {
       {showForm && (
         <form onSubmit={handleCreate} className="ent-section">
           <div className="ent-section-hdr"><span className="ent-section-title">New Sales Invoice</span></div>
+
+          {soLoadError && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 10px" }}>{soLoadError}</p>}
+
+          <div style={{ padding: "0 14px 10px" }}>
+            {!linkedSO ? (
+              <div className="ent-fg" style={{ maxWidth: 420 }}>
+                <label className="ent-fl">From Sales Order <span style={{ fontWeight: 400, color: "var(--color-muted)" }}>(optional)</span></label>
+                <select
+                  className="ent-fc"
+                  value=""
+                  onChange={(e) => {
+                    const so = availableSOs.find((s) => s.id === e.target.value);
+                    if (so) linkSO(so);
+                  }}
+                >
+                  <option value="">Not linked to a Sales Order</option>
+                  {availableSOs.map((so) => (
+                    <option key={so.id} value={so.id}>{so.soNumber} — {so.businessPartner.name} (₹{Number(so.grandTotal).toFixed(2)})</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div style={{
+                display: "flex", flexWrap: "wrap", gap: "6px 18px", alignItems: "center",
+                background: "#f5f3ff", border: "1px solid #ddd6fe", borderRadius: 6,
+                padding: "8px 14px", fontSize: 13,
+              }}>
+                <span>Linked to <strong>{linkedSO.soNumber}</strong> — {linkedSO.businessPartner.name}. Lines pre-filled from what's been delivered (via Delivery Note) but not yet invoiced.</span>
+                <button type="button" className="ent-ia ent-ia-edit" onClick={unlinkSO}>Unlink</button>
+              </div>
+            )}
+          </div>
+
           <div className="ent-form-grid" style={{ gridTemplateColumns: "1fr 1fr 2fr" }}>
             <div className="ent-fg">
               <label className="ent-fl">Customer</label>
-              <select className="ent-fc" value={businessPartnerId} onChange={(e) => setBusinessPartnerId(e.target.value)} required>
+              <select className="ent-fc" value={businessPartnerId} onChange={(e) => setBusinessPartnerId(e.target.value)} required disabled={!!linkedSO}>
                 <option value="">Select…</option>
                 {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
@@ -273,9 +387,10 @@ function SalesInvoicesInner() {
           <div className="ent-form-grid" style={{ gridTemplateColumns: isForeign ? "1fr 1fr 2fr" : "1fr 3fr" }}>
             <div className="ent-fg">
               <label className="ent-fl">Currency</label>
-              <select className="ent-fc" value={currency} onChange={(e) => handleCurrencyChange(e.target.value)}>
+              <select className="ent-fc" value={currency} onChange={(e) => handleCurrencyChange(e.target.value)} disabled={!!linkedSO}>
                 {SUPPORTED_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.name}</option>)}
               </select>
+              {linkedSO && <span style={{ fontSize: 11, color: "var(--color-muted)" }}>Sales Orders are INR-only for now.</span>}
             </div>
             {isForeign && (
               <div className="ent-fg">
@@ -462,6 +577,7 @@ function SalesInvoicesInner() {
                   {new Date(detail.invoiceDate).toLocaleDateString()} · {detail.businessPartner.name}
                   {detail.narration ? ` · ${detail.narration}` : ""}
                   {docForeign && ` · ${detail.currency} @ ${Number(detail.exchangeRate).toFixed(4)}`}
+                  {detail.salesOrder && ` · from ${detail.salesOrder.soNumber}`}
                   {detail.exportType && ` · ${EXPORT_TYPE_LABELS[detail.exportType]}`}
                   {detail.lutBondNumber && ` (${detail.lutBondNumber}${detail.lutBondDate ? `, ${new Date(detail.lutBondDate).toLocaleDateString()}` : ""})`}
                 </div>
@@ -604,7 +720,9 @@ export default function SalesInvoicesPage() {
   return (
     <AppShell>
       <CostingMethodGate>
-        <SalesInvoicesInner />
+        <Suspense fallback={null}>
+          <SalesInvoicesInner />
+        </Suspense>
       </CostingMethodGate>
     </AppShell>
   );

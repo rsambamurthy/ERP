@@ -30,7 +30,7 @@ router.get("/", async (req, res) => {
     select: {
       id: true, name: true, cin: true, companyPan: true, companyType: true,
       incorporationDate: true, registeredOfficeAddress: true, poApprovalThreshold: true,
-      priceVarianceTolerancePct: true,
+      priceVarianceTolerancePct: true, soApprovalThreshold: true,
     },
   });
   if (!org) return res.status(404).json({ message: "Organization not found." });
@@ -50,7 +50,7 @@ router.patch("/", canManageCompany, async (req, res) => {
 
   const {
     cin, companyPan, companyType, incorporationDate, registeredOfficeAddress,
-    poApprovalThreshold, priceVarianceTolerancePct,
+    poApprovalThreshold, priceVarianceTolerancePct, soApprovalThreshold,
   } = req.body ?? {};
   if (poApprovalThreshold !== undefined && poApprovalThreshold !== null && !(Number(poApprovalThreshold) >= 0)) {
     return res.status(400).json({ message: "poApprovalThreshold must be a non-negative number, or null." });
@@ -60,6 +60,9 @@ router.patch("/", canManageCompany, async (req, res) => {
     !(Number(priceVarianceTolerancePct) >= 0 && Number(priceVarianceTolerancePct) <= 100)
   ) {
     return res.status(400).json({ message: "priceVarianceTolerancePct must be between 0 and 100, or null." });
+  }
+  if (soApprovalThreshold !== undefined && soApprovalThreshold !== null && !(Number(soApprovalThreshold) >= 0)) {
+    return res.status(400).json({ message: "soApprovalThreshold must be a non-negative number, or null." });
   }
   const updated = await prisma.organization.update({
     where: { id: organizationId },
@@ -78,11 +81,15 @@ router.patch("/", canManageCompany, async (req, res) => {
       // Organization.priceVarianceTolerancePct. Same omit/null-clears
       // convention; null means "0% tolerance, any variance needs approval".
       priceVarianceTolerancePct: priceVarianceTolerancePct != null ? Number(priceVarianceTolerancePct) : null,
+      // Sales Order auto-approval threshold — see the schema comment on
+      // Organization.soApprovalThreshold. Same omit/null-clears convention
+      // as poApprovalThreshold above.
+      soApprovalThreshold: soApprovalThreshold != null ? Number(soApprovalThreshold) : null,
     },
     select: {
       id: true, name: true, cin: true, companyPan: true, companyType: true,
       incorporationDate: true, registeredOfficeAddress: true, poApprovalThreshold: true,
-      priceVarianceTolerancePct: true,
+      priceVarianceTolerancePct: true, soApprovalThreshold: true,
     },
   });
   logAudit({

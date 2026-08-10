@@ -188,6 +188,9 @@ export interface CompanyMaster {
   // Purchase Bill line's rate and its Purchase Order line's rate requires
   // approval. See PurchaseBill.status and PurchaseBill.varianceNote.
   priceVarianceTolerancePct: string | null;
+  // Sales Order approval workflow — the exact sales-side mirror of
+  // poApprovalThreshold. See SalesOrder.status below.
+  soApprovalThreshold: string | null;
   directors: Director[];
   auditors: Auditor[];
 }
@@ -463,6 +466,12 @@ export interface DocumentLineInput {
   // ROADMAP.md's "Goods Receipt Note" section. The PurchaseOrderLine it
   // fulfills is derived server-side from this, never sent directly.
   goodsReceiptNoteLineId?: string;
+  // Sales Invoice lines only — the sales-side mirror of
+  // goodsReceiptNoteLineId: which DeliveryNoteLine this line invoices
+  // against, when the invoice is raised from an approved SO (3-way match:
+  // SO -> DN -> Invoice). Required on every line whenever the invoice
+  // itself carries a salesOrderId — see DeliveryNote below.
+  deliveryNoteLineId?: string;
 }
 
 // ── Foreign currency (exports/imports) ───────────────────────────────────
@@ -558,6 +567,10 @@ export interface SalesInvoice {
   shippingBillNumber: string | null;
   shippingBillDate: string | null;
   portCode: string | null;
+  // Set when this invoice was raised against an approved Sales Order —
+  // see SalesOrder below and routes/salesInvoices.ts's POST / handler.
+  salesOrderId: string | null;
+  salesOrder?: { id: string; soNumber: string } | null;
   lines: SalesInvoiceLine[];
 }
 
@@ -731,6 +744,114 @@ export interface GoodsReceiptNote {
   branch?: { id: string; name: string } | null;
   purchaseOrder: { id: string; poNumber: string };
   lines: GoodsReceiptNoteLine[];
+}
+
+// ── Sales Order ──────────────────────────────────────────────────────────
+// The sales-side mirror of PurchaseOrder — same status state machine and
+// pre-commitment/no-posting design. See backend/prisma/schema.prisma's
+// SalesOrder model comment for the full details.
+export type SalesOrderStatus = "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "CANCELLED" | "CLOSED";
+
+export const SALES_ORDER_STATUS_LABELS: Record<SalesOrderStatus, string> = {
+  DRAFT: "Draft",
+  PENDING_APPROVAL: "Pending Approval",
+  APPROVED: "Approved",
+  REJECTED: "Rejected",
+  CANCELLED: "Cancelled",
+  CLOSED: "Closed (fully invoiced)",
+};
+
+export interface SalesOrderLineInput {
+  itemId: string;
+  quantity: number;
+  rate: number;
+  taxRate?: number;
+}
+
+export interface SalesOrderLine extends SalesOrderLineInput {
+  id: string;
+  item: { id: string; sku: string; name: string };
+  lineSubtotal: string;
+  taxAmount: string;
+  lineTotal: string;
+  // Running total already dispatched against this line across every
+  // Delivery Note — never exceeds `quantity`. This is the real stock-out
+  // signal; billedQuantity below is the separate, always-lagging-or-equal
+  // financial side. See DeliveryNote below.
+  deliveredQuantity: string;
+  // Running total already invoiced against this line across every linked
+  // Sales Invoice — never exceeds `quantity`.
+  billedQuantity: string;
+}
+
+export interface SalesOrder {
+  id: string;
+  soNumber: string;
+  soDate: string;
+  expectedDeliveryDate: string | null;
+  narration: string;
+  status: SalesOrderStatus;
+  businessPartner: { id: string; name: string };
+  branch?: { id: string; name: string } | null;
+  subtotal: string;
+  taxTotal: string;
+  grandTotal: string;
+  submittedBy: string | null;
+  submittedAt: string | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  autoApproved: boolean;
+  rejectedBy: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
+  cancelledBy: string | null;
+  cancelledAt: string | null;
+  lines: SalesOrderLine[];
+  // Every Sales Invoice raised against this SO so far — the detail screen
+  // shows this as the billing progress trail.
+  salesInvoices?: { id: string; invoiceNumber: string; invoiceDate: string; grandTotal: string }[];
+  // Every Delivery Note raised against this SO so far — the detail screen
+  // shows this as the dispatch progress trail, alongside billing.
+  deliveryNotes?: { id: string; dnNumber: string; dnDate: string }[];
+}
+
+// ── Delivery Note ────────────────────────────────────────────────────────
+// Records physical dispatch of goods against an APPROVED Sales Order —
+// this, not the eventual Sales Invoice, is what actually moves stock. See
+// backend/prisma/schema.prisma's DeliveryNote model comment. Posts
+// immediately on creation — no draft/approval workflow of its own.
+export interface DeliveryNoteLineInput {
+  salesOrderLineId: string;
+  quantityDelivered: number;
+}
+
+export interface DeliveryNoteLine extends DeliveryNoteLineInput {
+  id: string;
+  item: { id: string; sku: string; name: string };
+  // Only populated on the detail fetch (GET /delivery-notes/:id) — the
+  // list endpoint doesn't include this relation, so it's absent there.
+  salesOrderLine?: { id: string; quantity: string };
+  // Carried in at the SO line's own selling rate — descriptive only.
+  rate: string;
+  // The actual blended cost consumeStock returned when this note posted —
+  // reused by an eventual SO-linked Sales Invoice's COGS instead of
+  // re-consuming stock.
+  unitCost: string;
+  // Running total already invoiced against this specific Delivery Note
+  // line — never exceeds quantityDelivered. This is the 3-way match Sales
+  // Invoice enforces (see DocumentLineInput.deliveryNoteLineId).
+  billedQuantity: string;
+}
+
+export interface DeliveryNote {
+  id: string;
+  dnNumber: string;
+  dnDate: string;
+  narration: string;
+  businessPartner: { id: string; name: string };
+  branch?: { id: string; name: string } | null;
+  salesOrder: { id: string; soNumber: string };
+  lines: DeliveryNoteLine[];
 }
 
 // ── Sales / Purchase Returns ─────────────────────────────────────────────
@@ -938,6 +1059,8 @@ export const PERMISSIONS = [
   "purchase.post",
   "purchase.approve",
   "purchase.receive",
+  "sales.approve",
+  "sales.deliver",
   "inventory.post",
   "journal.post",
   "company.manage",
@@ -950,10 +1073,12 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "items.manage": "Manage Items",
   "businessPartners.manage": "Manage Business Partners (Customers/Vendors)",
   "branches.manage": "Manage Branches",
-  "sales.post": "Post Sales Invoices & Sales Returns",
+  "sales.post": "Create Sales Orders, post Sales Invoices & Sales Returns",
   "purchase.post": "Create Purchase Orders, post Purchase Bills & Purchase Returns",
-  "purchase.approve": "Approve or reject Purchase Orders",
+  "purchase.approve": "Approve or reject Purchase Orders & Purchase Bills held for a price variance",
   "purchase.receive": "Raise Goods Receipt Notes (receive goods against a Purchase Order)",
+  "sales.approve": "Approve or reject Sales Orders pending approval",
+  "sales.deliver": "Raise Delivery Notes (dispatch goods against a Sales Order)",
   "inventory.post": "Post Stock Adjustments",
   "journal.post": "Post Journal Entries",
   "company.manage": "Manage Company Master Data (CIN, directors, auditors)",

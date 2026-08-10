@@ -799,6 +799,99 @@ exists in the `purchase_bills` table but was never actually posted:
 Requires `db/migration_024_bill_approval.sql`. No new GL accounts, no
 `prisma db seed` step, no new dependencies.
 
+## Sales Order Workflow + Delivery Note (built)
+
+The sales-side mirror of Purchase Order -> Goods Receipt Note -> Purchase
+Bill, built the same way in one pass: `SalesOrder` (a pre-commitment/
+approval document, never touching the journal or stock) -> `DeliveryNote`
+(the real stock-out event, calls `consumeStock`) -> `SalesInvoice`
+(optionally SO-linked, with a 3-way quantity match against the Delivery
+Note). Every design decision here is a deliberate, one-for-one mirror of
+the already-shipped purchase-side feature — see the "Purchase Order
+Workflow", "Goods Receipt Note", and "3-Way Match & Purchase Bill
+Approval" sections above for the reasoning; this section only calls out
+where the sales side needed its own choice.
+
+**Sales Order status state machine, identical to Purchase Order's:**
+`DRAFT` -> submit -> `APPROVED` (auto, when `Organization.soApprovalThreshold`
+is set and this SO's `grandTotal` is strictly below it) or
+`PENDING_APPROVAL` -> approve/reject (`sales.approve`, new permission,
+deliberately excluded from ACCOUNTANT's default set — same
+separation-of-duties reasoning as `purchase.approve`) -> `APPROVED`/
+`REJECTED`. `REJECTED` -> reopen -> `DRAFT` (history kept). Cancel blocks
+if anything's been delivered or billed. Auto-`CLOSED` once every line is
+fully invoiced. `soApprovalThreshold` follows the same "null = always
+require manual approval" convention as `poApprovalThreshold`.
+
+**Delivery Note moves stock, not the journal — same split as GRN, but
+calling the other half of `lib/costing.ts`.** A GRN calls `receiveStock`;
+a Delivery Note calls `consumeStock`. Only meaningful against an
+`APPROVED` Sales Order (customer/branch both derived from the SO, never
+the request); posts immediately on creation, no workflow of its own,
+since the real approval gate already happened at the SO stage. New
+permission `sales.deliver` mirrors `purchase.receive` exactly —
+operational, not a control point, so ACCOUNTANT gets it by default.
+`SalesOrderLine.deliveredQuantity` (new) is the real stock-out signal,
+capped at ordered qty; `SalesOrderLine.billedQuantity` (existing pattern)
+is the separate financial rollup that still drives SO auto-close;
+`DeliveryNoteLine.billedQuantity` (new, line-scoped) is the actual 3-way
+match enforcement point on the eventual invoice.
+
+**One genuine asymmetry with GRN, and it's why `DeliveryNoteLine` carries
+both a `rate` and a `unitCost`.** A GRN's `unitCost` is an *input* to
+`receiveStock` (the price at which stock is valued coming in — carried
+straight from the PO line's rate). A Delivery Note's stock movement runs
+the other direction: `consumeStock` *computes* the cost of what's leaving
+(FIFO/weighted-average, whatever the org's costing method says) and
+returns it — there's nothing to input. `DeliveryNoteLine.unitCost` stores
+that returned figure so the eventual SO-linked Sales Invoice line can
+reuse the exact same cost for its COGS journal debit instead of calling
+`consumeStock` a second time, which would double-consume the same units of
+stock. `DeliveryNoteLine.rate`, separately, is descriptive only — carried
+in from the SO line's own selling price, purely so the Delivery Note (and
+the invoice-line pre-fill) has a sensible number to show; it's never what
+the invoice is forced to bill at.
+
+**Sales Invoice's SO-linkage mirrors Purchase Bill's PO-linkage exactly,
+one line at a time.** A line on an SO-linked invoice carries a
+`deliveryNoteLineId` (not a `salesOrderLineId` — that's derived
+server-side from the DN line, same as `purchaseOrderLineId` is derived
+from `goodsReceiptNoteLineId` on a Purchase Bill line), and can't invoice
+more than that DN line's `quantityDelivered − billedQuantity` — the hard,
+unconditional 3-way quantity match. `consumeStock` is never called for
+these lines (the Delivery Note already moved that stock); the journal
+entry's Dr Cost of Goods Sold / Cr stock-account lines use the DN line's
+captured `unitCost` instead. Everything else about a Sales Invoice — GST
+split, discounts, foreign currency/LUT-Bond/export classification — is
+completely unaffected by SO-linkage, same as customs duty/Bill-of-Entry
+fields are unaffected by PO-linkage on the purchase side.
+
+**Scope decision, deliberate: no price-variance/approval workflow on the
+Sales Invoice side in this pass.** The purchase side got a second feature
+(3-Way Match & Purchase Bill Approval, above) layered on top of GRN in a
+later request; the sales-side equivalent — checking an SO-linked invoice
+line's rate against the SO's own rate and holding the invoice for approval
+on a mismatch — was not asked for here and hasn't been built. An SO-linked
+invoice line's `rate` is freely entered (or pre-filled from the SO/DN's
+rate, freely overridable), with no variance check against it at all. A
+natural follow-up if/when needed, mirroring the purchase-side design
+exactly.
+
+**Scope decision, deliberate, matching Purchase Order's own simplification:**
+`SalesOrder`/`SalesOrderLine` stay INR-only with an aggregate tax rate per
+line — no discount concept, no foreign-currency/export classification, no
+GST CGST/SGST/IGST split stored on the order itself. A Sales Invoice
+raised against an SO can still carry its own discount (an invoice-time
+pricing decision, independent of the order) and computes its own full GST
+split as always; only currency is disabled when SO-linked (Sales Orders
+don't carry a currency/exchange-rate concept yet, mirroring why a Purchase
+Order can't be linked to a foreign Purchase Bill).
+
+Requires `db/migration_025_sales_orders.sql`. No new GL accounts and no
+`prisma db seed` step — a Sales Order never posts to the journal, and a
+Delivery Note posts stock movements only, never a journal entry. No new
+dependencies.
+
 ## From the earlier "what's next" review
 
 Flagged as gaps before Sales/Purchase/Inventory was chosen as the next

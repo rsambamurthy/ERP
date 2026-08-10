@@ -10,6 +10,8 @@ export const PERMISSIONS = [
   "purchase.post",
   "purchase.approve",
   "purchase.receive",
+  "sales.approve",
+  "sales.deliver",
   "inventory.post",
   "journal.post",
   "company.manage",
@@ -22,10 +24,12 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "items.manage": "Manage Items",
   "businessPartners.manage": "Manage Business Partners (Customers/Vendors)",
   "branches.manage": "Manage Branches",
-  "sales.post": "Post Sales Invoices & Sales Returns",
+  "sales.post": "Create Sales Orders, post Sales Invoices & Sales Returns",
   "purchase.post": "Create Purchase Orders, post Purchase Bills & Purchase Returns",
   "purchase.approve": "Approve or reject Purchase Orders & Purchase Bills held for a price variance",
   "purchase.receive": "Raise Goods Receipt Notes (receive goods against a Purchase Order)",
+  "sales.approve": "Approve or reject Sales Orders pending approval",
+  "sales.deliver": "Raise Delivery Notes (dispatch goods against a Sales Order)",
   "inventory.post": "Post Stock Adjustments",
   "journal.post": "Post Journal Entries",
   "company.manage": "Manage Company Master Data (CIN, directors, auditors)",
@@ -50,7 +54,11 @@ const BUILT_IN_PERMISSIONS: Record<string, Permission[]> = {
   // "purchase.receive" (raising a GRN) is operational, not a financial
   // control point like "purchase.approve" — ACCOUNTANT gets it by default,
   // same as purchase.post/inventory.post which it already had.
-  ACCOUNTANT: ["businessPartners.manage", "sales.post", "purchase.post", "purchase.receive", "inventory.post", "journal.post"],
+  // Sales side mirrors the purchase side exactly: "sales.approve"
+  // deliberately excluded (same separation-of-duties reasoning as
+  // "purchase.approve"), "sales.deliver" (raising a Delivery Note)
+  // included (operational, same reasoning as "purchase.receive").
+  ACCOUNTANT: ["businessPartners.manage", "sales.post", "sales.deliver", "purchase.post", "purchase.receive", "inventory.post", "journal.post"],
   VIEWER: [],
 };
 

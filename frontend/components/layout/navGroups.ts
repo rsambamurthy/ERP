@@ -63,6 +63,8 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Sales",
     icon: "S",
     items: [
+      { id: "sales_orders", label: "Sales Orders", path: "/sales/orders", dot: "#7c3aed", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "sales.post" },
+      { id: "delivery_notes", label: "Delivery Notes", path: "/sales/delivery-notes", dot: "#0891b2", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "sales.deliver" },
       { id: "sales_invoices", label: "Sales Invoices", path: "/sales/invoices", dot: "#16a34a", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "sales.post" },
       { id: "sales_returns", label: "Sales Returns", path: "/sales/returns", dot: "#65a30d", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "sales.post" },
     ],

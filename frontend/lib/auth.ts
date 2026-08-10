@@ -114,6 +114,22 @@ export function canReceiveGoods(): boolean {
   return ["OWNER", "ADMIN", "ACCOUNTANT"].includes(role);
 }
 
+// Sales Order approve/reject — the exact sales-side mirror of
+// canApprovePurchaseOrders: Owner/Admin by default (separation of duties —
+// see BUILT_IN_PERMISSIONS.ACCOUNTANT's deliberate exclusion of
+// "sales.approve"). A CUSTOM role needs it explicitly granted.
+export function canApproveSalesOrders(): boolean {
+  const role = getRole() ?? "";
+  if (role === "CUSTOM") return getPermissions().includes("sales.approve");
+  return ["OWNER", "ADMIN"].includes(role);
+}
+
+export function canDeliverGoods(): boolean {
+  const role = getRole() ?? "";
+  if (role === "CUSTOM") return getPermissions().includes("sales.deliver");
+  return ["OWNER", "ADMIN", "ACCOUNTANT"].includes(role);
+}
+
 export function clearSession() {
   if (typeof window === "undefined") return;
   localStorage.removeItem(TOKEN_KEY);

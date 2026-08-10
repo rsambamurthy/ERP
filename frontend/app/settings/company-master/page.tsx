@@ -38,7 +38,7 @@ export default function CompanyMasterPage() {
 
   const [orgForm, setOrgForm] = useState({
     cin: "", companyPan: "", companyType: "", incorporationDate: "", registeredOfficeAddress: "",
-    poApprovalThreshold: "", priceVarianceTolerancePct: "",
+    poApprovalThreshold: "", priceVarianceTolerancePct: "", soApprovalThreshold: "",
   });
   const [savingOrg, setSavingOrg] = useState(false);
 
@@ -63,6 +63,7 @@ export default function CompanyMasterPage() {
         registeredOfficeAddress: res.data.registeredOfficeAddress ?? "",
         poApprovalThreshold: res.data.poApprovalThreshold ?? "",
         priceVarianceTolerancePct: res.data.priceVarianceTolerancePct ?? "",
+        soApprovalThreshold: res.data.soApprovalThreshold ?? "",
       });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load company master data.");
@@ -86,6 +87,7 @@ export default function CompanyMasterPage() {
         registeredOfficeAddress: orgForm.registeredOfficeAddress || null,
         poApprovalThreshold: orgForm.poApprovalThreshold ? Number(orgForm.poApprovalThreshold) : null,
         priceVarianceTolerancePct: orgForm.priceVarianceTolerancePct ? Number(orgForm.priceVarianceTolerancePct) : null,
+        soApprovalThreshold: orgForm.soApprovalThreshold ? Number(orgForm.soApprovalThreshold) : null,
       });
       await load();
     } catch (err) {
@@ -251,6 +253,20 @@ export default function CompanyMasterPage() {
                   A Purchase Bill raised against a Purchase Order whose rate differs from the order by more than this
                   percentage is held Pending Approval instead of posting immediately. Blank means 0% — any price
                   variance at all needs approval, the safe default.
+                </p>
+              </div>
+              <div className="ent-fg">
+                <label className="ent-fl">Sales Order Auto-Approval Threshold (₹)</label>
+                <input
+                  type="number" min={0} step="0.01" className="ent-fc" placeholder="Leave blank to always require approval"
+                  value={orgForm.soApprovalThreshold}
+                  onChange={(e) => setOrgForm((f) => ({ ...f, soApprovalThreshold: e.target.value }))}
+                />
+              </div>
+              <div className="ent-fg" style={{ gridColumn: "1 / -1" }}>
+                <p style={{ fontSize: 11.5, color: "var(--color-muted)", margin: 0 }}>
+                  A submitted Sales Order below this amount is approved automatically. Blank means every Sales Order
+                  needs manual approval, regardless of amount — the safe default.
                 </p>
               </div>
             </div>

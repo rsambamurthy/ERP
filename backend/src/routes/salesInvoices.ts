@@ -40,6 +40,17 @@ interface LineInput {
   taxRate?: number;
   discountType?: DiscountType | null;
   discountValue?: number;
+  // Only meaningful when the invoice itself is linked to a salesOrderId —
+  // which DeliveryNoteLine this line invoices against (3-way match:
+  // SO -> DN -> Invoice, see routes/deliveryNotes.ts). Required on every
+  // line whenever the invoice has a salesOrderId; the SalesOrderLine it
+  // fulfills is derived server-side from this DN line, never taken
+  // directly from the request. This line's own quantity can never exceed
+  // what's still unbilled on that DN line (delivered − already billed).
+  // Stock is never re-consumed for a line like this — the Delivery Note it
+  // references already moved that stock out, and its captured unitCost is
+  // reused for this line's COGS instead of calling consumeStock again.
+  deliveryNoteLineId?: string;
 }
 
 router.get("/", async (req, res) => {
@@ -59,7 +70,10 @@ router.get("/:id", async (req, res) => {
   if (!organizationId) return;
   const invoice = await prisma.salesInvoice.findFirst({
     where: { id: req.params.id, organizationId },
-    include: { businessPartner: true, lines: { include: { item: true } }, journalEntry: { include: { journalLines: true } } },
+    include: {
+      businessPartner: true, lines: { include: { item: true } }, journalEntry: { include: { journalLines: true } },
+      salesOrder: { select: { id: true, soNumber: true } },
+    },
   });
   if (!invoice) return res.status(404).json({ message: "Sales invoice not found." });
   res.json({ data: invoice });
@@ -113,7 +127,9 @@ router.patch("/:id", canPost, async (req, res) => {
 });
 
 // POST /sales-invoices — create and post in one step. Stock outward for
-// every line (rejected if any line's branch stock can't cover it), one
+// every line (rejected if any line's branch stock can't cover it) UNLESS
+// the invoice is linked to a Sales Order, in which case that stock already
+// left via a Delivery Note (see the salesOrderId handling below) — one
 // journal entry: Dr Trade Receivables (tagged the customer) / Cr Sales
 // Revenue (gross, pre-discount) + Dr Discount Allowed (line + invoice-level
 // discount combined) + Cr CGST/SGST/IGST Output (split by whether the
@@ -128,10 +144,34 @@ router.post("/", canPost, async (req, res) => {
   const {
     businessPartnerId, invoiceDate, branchId, narration, lines, discountType, discountValue,
     currency, exchangeRate, exportType, lutBondNumber, lutBondDate,
-    shippingBillNumber, shippingBillDate, portCode,
+    shippingBillNumber, shippingBillDate, portCode, salesOrderId,
   } = req.body ?? {};
-  if (!businessPartnerId || !invoiceDate || !Array.isArray(lines) || lines.length === 0) {
-    return res.status(400).json({ message: "businessPartnerId, invoiceDate, and at least one line are required." });
+  if (!invoiceDate || !Array.isArray(lines) || lines.length === 0) {
+    return res.status(400).json({ message: "invoiceDate and at least one line are required." });
+  }
+
+  // Linked to a Sales Order — must be APPROVED (only an approved SO is a
+  // real commitment), and the customer is *derived* from the SO rather
+  // than taken from the request, so an invoice can never be posted against
+  // a different customer than the one the SO was approved for. See
+  // routes/salesOrders.ts for the approval workflow itself.
+  let linkedSo: { id: string; businessPartnerId: string; status: string; lines: { id: string; quantity: any; rate: any; billedQuantity: any }[] } | null = null;
+  if (salesOrderId) {
+    linkedSo = await prisma.salesOrder.findFirst({
+      where: { id: salesOrderId, organizationId },
+      include: { lines: { select: { id: true, quantity: true, rate: true, billedQuantity: true } } },
+    });
+    if (!linkedSo) return res.status(400).json({ message: "salesOrderId is not a valid Sales Order for this organization." });
+    if (linkedSo.status !== "APPROVED") {
+      return res.status(400).json({ message: `Sales Order ${salesOrderId} is ${linkedSo.status}, not Approved — only an approved SO can be invoiced.` });
+    }
+    if (businessPartnerId && businessPartnerId !== linkedSo.businessPartnerId) {
+      return res.status(400).json({ message: "businessPartnerId doesn't match the customer on the linked Sales Order." });
+    }
+  }
+  const effectiveBusinessPartnerId = linkedSo?.businessPartnerId ?? businessPartnerId;
+  if (!effectiveBusinessPartnerId) {
+    return res.status(400).json({ message: "businessPartnerId (or salesOrderId) is required." });
   }
 
   // Foreign currency (export invoices) — see lib/currencies.ts. Defaults
@@ -178,7 +218,7 @@ router.post("/", canPost, async (req, res) => {
   const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { costingMethod: true } });
   if (!org?.costingMethod) return res.status(422).json({ message: "Set the organization's stock costing method first." });
 
-  const customer = await prisma.businessPartner.findFirst({ where: { id: businessPartnerId, organizationId, bpType: "CUSTOMER" } });
+  const customer = await prisma.businessPartner.findFirst({ where: { id: effectiveBusinessPartnerId, organizationId, bpType: "CUSTOMER" } });
   if (!customer) return res.status(400).json({ message: "businessPartnerId must be an existing customer." });
 
   let resolvedBranchId: string | null = branchId ?? null;
@@ -194,6 +234,52 @@ router.post("/", canPost, async (req, res) => {
   const items = await prisma.item.findMany({ where: { id: { in: itemIds }, organizationId, deletedAt: null } });
   if (items.length !== itemIds.length) return res.status(400).json({ message: "One or more items are invalid for this organization." });
   const itemById = new Map(items.map((i) => [i.id, i]));
+
+  // Sales-Order-linked invoices: the 3-way match. Every line must
+  // reference a deliveryNoteLineId (raised via a Delivery Note against
+  // this same SO — see routes/deliveryNotes.ts), and can't invoice more
+  // than what's still open on that DN line (delivered qty minus whatever's
+  // already been invoiced against it, including by other Sales Invoices
+  // raised earlier). Two lines on *this* invoice referencing the same DN
+  // line are summed together before comparing. Each line's
+  // salesOrderLineId is then derived from its DN line (never taken from
+  // the request) so the SalesOrderLine.billedQuantity rollup / SO
+  // auto-close logic below needs no other change. Runs before the
+  // transaction (nothing here needs a DB write) — same timing
+  // purchaseBills.ts uses for its GRN check.
+  const dnLineById = new Map<string, { id: string; salesOrderLineId: string; quantityDelivered: any; billedQuantity: any; unitCost: any }>();
+  if (linkedSo) {
+    const typedWithLink = typedLines as (LineInput & { salesOrderLineId?: string })[];
+    if (typedWithLink.some((l) => !l.deliveryNoteLineId)) {
+      return res.status(400).json({ message: "Every line on a Sales-Order-linked invoice must reference a deliveryNoteLineId — raise a Delivery Note against this Sales Order first." });
+    }
+    const dnLineIds = [...new Set(typedWithLink.map((l) => l.deliveryNoteLineId!))];
+    const dnLines = await prisma.deliveryNoteLine.findMany({
+      where: { id: { in: dnLineIds }, deliveryNote: { organizationId, salesOrderId: linkedSo.id } },
+      select: { id: true, salesOrderLineId: true, quantityDelivered: true, billedQuantity: true, unitCost: true },
+    });
+    if (dnLines.length !== dnLineIds.length) {
+      return res.status(400).json({ message: "One or more lines reference a deliveryNoteLineId that isn't a Delivery Note against this Sales Order." });
+    }
+    for (const dl of dnLines) dnLineById.set(dl.id, dl);
+
+    const billedOnThisInvoice = new Map<string, number>();
+    for (const l of typedWithLink) {
+      l.salesOrderLineId = dnLineById.get(l.deliveryNoteLineId!)!.salesOrderLineId;
+      billedOnThisInvoice.set(l.deliveryNoteLineId!, (billedOnThisInvoice.get(l.deliveryNoteLineId!) ?? 0) + l.quantity);
+    }
+    for (const [dnLineId, qtyOnThisInvoice] of billedOnThisInvoice) {
+      const dnLine = dnLineById.get(dnLineId)!;
+      const alreadyBilled = Number(dnLine.billedQuantity);
+      const delivered = Number(dnLine.quantityDelivered);
+      if (round2(alreadyBilled + qtyOnThisInvoice) > delivered) {
+        return res.status(400).json({
+          message: `Invoicing ${qtyOnThisInvoice} against Delivery Note line ${dnLineId} would exceed the delivered quantity ` +
+            `(${delivered} delivered, ${alreadyBilled} already invoiced, ${round2(delivered - alreadyBilled)} remaining).`,
+        });
+      }
+    }
+  }
 
   for (const l of typedLines) {
     if (isForeign) {
@@ -250,12 +336,23 @@ router.post("/", canPost, async (req, res) => {
       for (let i = 0; i < typedLines.length; i++) {
         const l = typedLines[i];
         const d = discountLines[i];
-        const { unitCost, totalCost } = await consumeStock(tx, {
-          organizationId, branchId: resolvedBranchId!, itemId: l.itemId,
-          quantity: l.quantity, costingMethod: org.costingMethod!,
-          movementType: "SALE", referenceType: "sales_invoice", referenceId: invoiceId,
-          movementDate: new Date(invoiceDate), narration: `Sales invoice ${invoiceNumber}`,
-        });
+        let unitCost: number, totalCost: number;
+        if (linkedSo) {
+          // Stock already left via the referenced Delivery Note — reuse
+          // its captured cost rather than calling consumeStock again,
+          // which would double-consume stock (see the schema.prisma
+          // comment on DeliveryNoteLine.unitCost).
+          const dnLine = dnLineById.get((l as { deliveryNoteLineId?: string }).deliveryNoteLineId!)!;
+          unitCost = Number(dnLine.unitCost);
+          totalCost = round2(unitCost * l.quantity);
+        } else {
+          ({ unitCost, totalCost } = await consumeStock(tx, {
+            organizationId, branchId: resolvedBranchId!, itemId: l.itemId,
+            quantity: l.quantity, costingMethod: org.costingMethod!,
+            movementType: "SALE", referenceType: "sales_invoice", referenceId: invoiceId,
+            movementDate: new Date(invoiceDate), narration: `Sales invoice ${invoiceNumber}`,
+          }));
+        }
         subtotal += d.lineSubtotal;
         discountTotal += round2(d.lineDiscountAmount + d.invoiceDiscountShare);
         taxTotal += d.taxAmount; cgstTotal += d.cgstAmount; sgstTotal += d.sgstAmount; igstTotal += d.igstAmount;
@@ -304,7 +401,7 @@ router.post("/", canPost, async (req, res) => {
       const created = await tx.salesInvoice.create({
         data: {
           id: invoiceId,
-          organizationId, branchId: resolvedBranchId, businessPartnerId,
+          organizationId, branchId: resolvedBranchId, businessPartnerId: effectiveBusinessPartnerId,
           invoiceNumber, invoiceDate: new Date(invoiceDate), narration: narration ?? "",
           journalEntryId: journalEntry.id, subtotal, taxTotal, grandTotal, totalCogs,
           discountType: discountType ?? null, discountValue: discountValue ?? 0, discountTotal,
@@ -318,6 +415,7 @@ router.post("/", canPost, async (req, res) => {
           shippingBillNumber: isForeign && shippingBillNumber ? String(shippingBillNumber) : null,
           shippingBillDate: isForeign && shippingBillDate ? new Date(shippingBillDate) : null,
           portCode: isForeign && portCode ? String(portCode) : null,
+          salesOrderId: linkedSo?.id ?? null,
           createdBy: req.user!.userId,
         },
       });
@@ -331,8 +429,42 @@ router.post("/", canPost, async (req, res) => {
           lineDiscountAmount: l.lineDiscountAmount, invoiceDiscountShare: l.invoiceDiscountShare, taxableValue: l.taxableValue,
           cgstAmount: l.cgstAmount, sgstAmount: l.sgstAmount, igstAmount: l.igstAmount,
           rateFc: isForeign ? l.rateFc : null, lineTotalFc: isForeign ? round2(l.lineTotal / fxRate) : null,
+          salesOrderLineId: (l as { salesOrderLineId?: string }).salesOrderLineId ?? null,
+          deliveryNoteLineId: (l as { deliveryNoteLineId?: string }).deliveryNoteLineId ?? null,
         })),
       });
+
+      // Roll the billed quantity forward on each referenced SO line and its
+      // DN line, then close the SO out once every one of its lines is
+      // fully billed — same transaction, so this can never drift out of
+      // sync with the invoice that just posted. Mirrors the PO/GRN
+      // rollup in routes/purchaseBills.ts exactly.
+      if (linkedSo) {
+        const billedBySoLine = new Map<string, number>();
+        const billedByDnLine = new Map<string, number>();
+        for (const l of computed as (typeof computed[number] & { salesOrderLineId?: string; deliveryNoteLineId?: string })[]) {
+          if (!l.salesOrderLineId || !l.deliveryNoteLineId) continue;
+          billedBySoLine.set(l.salesOrderLineId, (billedBySoLine.get(l.salesOrderLineId) ?? 0) + l.quantity);
+          billedByDnLine.set(l.deliveryNoteLineId, (billedByDnLine.get(l.deliveryNoteLineId) ?? 0) + l.quantity);
+        }
+        for (const [soLineId, qty] of billedBySoLine) {
+          await tx.salesOrderLine.update({
+            where: { id: soLineId },
+            data: { billedQuantity: { increment: qty } },
+          });
+        }
+        for (const [dnLineId, qty] of billedByDnLine) {
+          await tx.deliveryNoteLine.update({
+            where: { id: dnLineId },
+            data: { billedQuantity: { increment: qty } },
+          });
+        }
+        const allLines = await tx.salesOrderLine.findMany({ where: { salesOrderId: linkedSo.id } });
+        const fullyBilled = allLines.every((l) => Number(l.billedQuantity) >= Number(l.quantity));
+        if (fullyBilled) {
+          await tx.salesOrder.update({ where: { id: linkedSo.id }, data: { status: "CLOSED" } });
+        }
+      }
 
       return created;
     });

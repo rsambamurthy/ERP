@@ -524,6 +524,90 @@ assumed every row in `purchase_bills` had actually posted:
 Requires `db/migration_024_bill_approval.sql`. No new GL accounts, no
 `prisma db seed` step, no new dependencies.
 
+### Sales Orders (`/sales-orders`), Delivery Notes (`/delivery-notes`)
+
+The sales-side mirror of Purchase Order + Goods Receipt Note, built the
+same way in one pass. `SalesOrder` never touches the journal or stock — a
+pre-commitment/approval document only, same status state machine as
+`PurchaseOrder`: `DRAFT` → submit → `APPROVED` (auto, when
+`Organization.soApprovalThreshold` is set and this SO's `grandTotal` is
+strictly below it) or `PENDING_APPROVAL` → approve/reject → `APPROVED`/
+`REJECTED`. `REJECTED` → reopen → `DRAFT` (history kept). Cancel blocks if
+anything's been delivered or billed. Auto-`CLOSED` once every line is
+fully invoiced.
+
+| Route | Notes |
+| --- | --- |
+| `GET /sales-orders` | List, org-scoped. Optional `?status=`/`?businessPartnerId=` filters. |
+| `GET /sales-orders/:id` | Detail — includes `businessPartner`, `branch`, `lines` (with `item`), `salesInvoices` and `deliveryNotes` raised against it. |
+| `POST /sales-orders` | Always creates as `DRAFT`. `sales.post`. |
+| `PATCH /sales-orders/:id` | Full edit, `DRAFT` only — replaces every line. `sales.post`. |
+| `POST /sales-orders/:id/submit` | `DRAFT` only. Auto-approves under `soApprovalThreshold`, else → `PENDING_APPROVAL`. `sales.post`. |
+| `POST /sales-orders/:id/approve` | `PENDING_APPROVAL` only. `sales.approve`. |
+| `POST /sales-orders/:id/reject` | `PENDING_APPROVAL` only → `REJECTED`. Body `{ reason }`, required. `sales.approve`. |
+| `POST /sales-orders/:id/reopen` | `REJECTED` only → `DRAFT`. `sales.post`. |
+| `POST /sales-orders/:id/cancel` | `DRAFT`/`PENDING_APPROVAL`/`APPROVED` only, and only if nothing's been delivered or billed against any line. `sales.post`. |
+
+**New permission `sales.approve`**, deliberately excluded from
+`ACCOUNTANT`'s built-in set — same separation-of-duties reasoning as
+`purchase.approve`. `OWNER`/`ADMIN` get it automatically.
+
+**Delivery Note is the real stock-out event — the exact mirror of Goods
+Receipt Note, but calling `consumeStock` instead of `receiveStock`.** Only
+meaningful against an `APPROVED` Sales Order; customer and branch are both
+derived from the SO, never the request. Posts immediately on creation, no
+workflow of its own. An ad-hoc Sales Invoice with no `salesOrderId` is
+completely unaffected and keeps moving its own stock exactly as it always
+has (see the branch on `linkedSo` in `routes/salesInvoices.ts`).
+
+| Route | Notes |
+| --- | --- |
+| `GET /delivery-notes` | List, org-scoped. Optional `?salesOrderId=` filter. |
+| `GET /delivery-notes/:id` | Detail — includes `businessPartner`, `branch`, `salesOrder`, and `lines` (with `item` and the referenced `salesOrderLine`). |
+| `POST /delivery-notes` | Creates and posts in one step — no draft/approval state of its own. `sales.deliver`. |
+
+**New permission `sales.deliver`**, deliberately separate from
+`sales.post` — operational rather than a segregation-of-duties boundary
+(unlike `sales.approve`). `ACCOUNTANT` gets it by default, same as
+`purchase.receive`.
+
+**`DeliveryNoteLine` carries both a `rate` and a `unitCost` — not
+redundant, they mean different things.** `rate` is descriptive only,
+carried in from the SO line's own selling price (a Delivery Note doesn't
+set a new price, same as `GoodsReceiptNoteLine.unitCost` being carried
+from the PO line's rate). `unitCost` is the actual blended cost
+`consumeStock` *returns* (FIFO/weighted-average, whatever the org's
+costing method says) — captured so an eventual SO-linked Sales Invoice
+line can reuse the exact same figure for its COGS journal debit instead of
+calling `consumeStock` a second time, which would double-consume the same
+units. Before posting, cumulative delivered quantity is checked against
+each line's ordered `quantity`, same over-delivery guard as the GRN's
+over-receipt check.
+
+**`SalesInvoice.salesOrderId` (optional) and the SO-linked 3-way match on
+`SalesInvoiceLine`** work exactly like `PurchaseBill.purchaseOrderId` and
+the GRN-linked match on `PurchaseBillLine`: an SO-linked invoice line
+carries a `deliveryNoteLineId` (not a `salesOrderLineId` — that's derived
+server-side from the DN line), and can't invoice more than that DN line's
+`quantityDelivered − billedQuantity` — a hard, unconditional 400.
+`consumeStock` is skipped for these lines; the journal's COGS/stock-account
+lines use the DN line's captured `unitCost` instead. Discounts, GST split,
+and foreign-currency/export handling are all unaffected by SO-linkage —
+only currency is disabled when SO-linked (Sales Orders don't carry a
+currency concept yet, mirroring why a PO-linked Purchase Bill can't be
+foreign either).
+
+**No price-variance/approval workflow on the Sales Invoice side (yet)** —
+scope decision, deliberate. That's a second feature layered onto the
+purchase side in a later pass (see 3-Way Match & Purchase Bill Approval,
+above); the sales-side equivalent wasn't asked for here. An SO-linked
+invoice line's `rate` is freely entered/overridable with no check against
+the SO's own rate.
+
+Requires `db/migration_025_sales_orders.sql`. No new GL accounts and no
+`prisma db seed` step — a Sales Order never posts to the journal, a
+Delivery Note posts stock movements only. No new dependencies.
+
 ### Bulk upload (`/accounts`, `/items`, `/business-partners` — `/bulk-upload/*`)
 
 Same three-step flow on all three, ported from SmartAppt Gold's vendor/bank upload pattern (`lib/xlsxTemplate.ts` + `lib/upload.ts` are the shared pieces): `GET .../bulk-upload/template` downloads a styled `.xlsx` (header row, inline hints, dropdown validation on enum columns); `POST .../bulk-upload/preview` (multipart, field name `file`) parses it server-side and returns every row tagged `create` / `update` / `error` — nothing is written yet; `POST .../bulk-upload/apply` takes back only the rows the user confirmed (body `{ rows: [...] }`) and commits them. Matching an uploaded row to an existing record: Chart of Accounts by Account Code, Items by SKU, Business Partners by the optional `code` field (blank code always creates new — see `migration_007`). Requires `db/migration_007_user_name_and_bp_code.sql`.
