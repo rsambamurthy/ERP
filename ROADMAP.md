@@ -654,6 +654,81 @@ vendor may want the document at any stage, not just once Approved).
 Adds `pdfkit`/`@types/pdfkit` as new dependencies — the next Railway
 deploy needs a fresh `npm install` before `npm run build` will succeed.
 
+## Goods Receipt Note (built)
+
+A real 3-way match: PO -> GRN -> Bill. Before this, `POST /purchase-bills`
+was the only thing that ever moved stock in the PO-linked path — a bill
+was simultaneously "the vendor invoiced us" and "the goods arrived,"
+which don't actually happen at the same time in a real warehouse.
+`GoodsReceiptNote` now owns physical receipt: it's the thing that calls
+`receiveStock` (`lib/costing.ts`) — quantityOnHand/StockLot update the
+moment goods are checked in, independent of when the vendor's invoice
+shows up. A Purchase Bill linked to a PO no longer moves stock itself;
+it bills against what a GRN already received.
+
+**Scope decision, deliberate: this only applies to the PO-linked
+path.** An ad-hoc Purchase Bill with no `purchaseOrderId` — still the
+majority of purchases in this app, since a PO was always opt-in — is
+completely unaffected and keeps moving its own stock exactly as it did
+before this feature existed. Requiring a GRN for every purchase would
+have been a real regression for anyone not using the PO workflow. The
+branch is explicit in `routes/purchaseBills.ts`: `if (!linkedPo) { ...
+receiveStock ... }` vs. a PO-linked bill, which never calls it.
+
+**GRN posts immediately, no workflow of its own.** Create-and-post in
+one step, the same UX as a Purchase Bill — there's no draft/approval
+state machine on `GoodsReceiptNote` itself, because the real approval
+gate already happened at the PO stage (only an `APPROVED` PO can receive
+against). `purchase.receive` (new permission) is deliberately separate
+from `purchase.post` — it's the "goods physically arrived, someone at
+the dock checked them in" action, conceptually closer to
+`inventory.post` than to billing. ACCOUNTANT gets it by default (unlike
+`purchase.approve`, which stays a financial control point) since it's
+operational, not a segregation-of-duties boundary.
+
+**Two parallel running totals, tracked separately.**
+`PurchaseOrderLine.receivedQuantity` (new) is the real stock-in signal,
+incremented by `routes/goodsReceiptNotes.ts`, never exceeding the
+ordered `quantity`. `PurchaseOrderLine.billedQuantity` (existing) is the
+financial side, still incremented by `routes/purchaseBills.ts`, and
+still what triggers the PO's automatic `CLOSED` transition once every
+line is fully billed — unchanged trigger, since billed ≤ received ≤
+ordered transitively, so "fully billed" still implies "fully received."
+`GoodsReceiptNoteLine.billedQuantity` (new, line-scoped) is the actual
+3-way-match enforcement point: a Purchase Bill line referencing a
+`goodsReceiptNoteLineId` can't bill more than that specific GRN line's
+`quantityReceived − billedQuantity`, not just the PO line's aggregate
+figures — important once a PO line has been split across multiple
+partial GRNs, where the PO-line rollup alone can't tell you which
+receipt still has room.
+
+**Purchase Bill's PO-linkage changed shape.** A bill line used to
+reference a `purchaseOrderLineId` directly; it now references a
+`goodsReceiptNoteLineId`, and the `purchaseOrderLineId` it fulfills is
+derived server-side from that GRN line, never taken from the request.
+Every line on a PO-linked bill is now required to carry one — raise a
+GRN first. The Purchase Bill create form's "From Purchase Order" picker
+(`app/purchase/bills/page.tsx`) reflects this: linking a PO now fetches
+that PO's Goods Receipt Notes and pre-fills one bill line per open GRN
+line (received, not yet billed), rather than one line per open PO line.
+
+**Cost basis, deliberate:** a GRN line's `unitCost` is carried straight
+from the PO line's own `rate` — a GRN doesn't introduce a new price, it
+just confirms quantity physically arrived. Any real price variance
+discovered when the invoice actually comes in is a Purchase Bill/vendor
+concern, out of scope here (this app doesn't have a price-variance
+account or workflow at all yet).
+
+**PO cancellation** now also blocks if anything's been received (not
+just billed) — a PO with a GRN against it has real stock movement
+behind it and can't be cancelled out from under it, same reasoning as
+the existing billed-quantity guard.
+
+Requires `db/migration_023_goods_receipt_notes.sql`. No new GL accounts
+and no `prisma db seed` step — a GRN posts stock movements
+(`StockMovement`/`ItemStock`/`StockLot`), never a journal entry. No new
+dependencies either (unlike the PDF feature above).
+
 ## From the earlier "what's next" review
 
 Flagged as gaps before Sales/Purchase/Inventory was chosen as the next

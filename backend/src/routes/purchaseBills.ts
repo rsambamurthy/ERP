@@ -41,9 +41,16 @@ interface LineInput {
   // line's INR taxable value. See the schema comment on
   // PurchaseBillLine.customsDutyRate for the full design.
   customsDutyRate?: number;
-  // Optional — which PurchaseOrderLine (of the bill's purchaseOrderId) this
-  // line fulfills. Only meaningful when the bill itself is linked to a PO.
-  purchaseOrderLineId?: string;
+  // Only meaningful when the bill itself is linked to a purchaseOrderId —
+  // which GoodsReceiptNoteLine this line bills against (3-way match:
+  // PO -> GRN -> Bill, see routes/goodsReceiptNotes.ts). Required on every
+  // line whenever the bill has a purchaseOrderId; the PurchaseOrderLine it
+  // fulfills is derived server-side from this GRN line, never taken
+  // directly from the request. This line's own quantity can never exceed
+  // what's still unbilled on that GRN line (received − already billed).
+  // Stock is never re-received for a line like this — the GRN it
+  // references already moved that stock in.
+  goodsReceiptNoteLineId?: string;
 }
 
 router.get("/", async (req, res) => {
@@ -243,30 +250,46 @@ router.post("/", canPost, async (req, res) => {
   const grandTotal = subtotal + taxTotal + customsDutyTotal;
   const grandTotalFc = isForeign ? round2(grandTotal / fxRate) : null;
 
-  // Purchase-Order-linked lines: can't bill more than what's still open on
-  // that PO line (ordered qty minus whatever's already been billed against
-  // it, including by other Purchase Bills raised earlier against the same
-  // PO). Two lines on *this* bill referencing the same PO line are summed
-  // together before comparing.
+  // Purchase-Order-linked bills: the 3-way match. Every line must
+  // reference a goodsReceiptNoteLineId (raised via a Goods Receipt Note
+  // against this same PO — see routes/goodsReceiptNotes.ts), and can't
+  // bill more than what's still open on that GRN line (received qty minus
+  // whatever's already been billed against it, including by other
+  // Purchase Bills raised earlier). Two lines on *this* bill referencing
+  // the same GRN line are summed together before comparing. Each
+  // computed line's purchaseOrderLineId is then derived from its GRN line
+  // (never taken from the request) so the existing PurchaseOrderLine
+  // billedQuantity rollup / PO auto-close logic below needs no other
+  // change.
+  const grnLineById = new Map<string, { id: string; purchaseOrderLineId: string; quantityReceived: any; billedQuantity: any }>();
   if (linkedPo) {
-    const poLineById = new Map(linkedPo.lines.map((l) => [l.id, l]));
-    const billedOnThisBill = new Map<string, number>();
-    for (const l of computed as (typeof computed[number] & { purchaseOrderLineId?: string })[]) {
-      if (!l.purchaseOrderLineId) continue;
-      const poLine = poLineById.get(l.purchaseOrderLineId);
-      if (!poLine) {
-        return res.status(400).json({ message: "One or more lines reference a purchaseOrderLineId that isn't on this Purchase Order." });
-      }
-      billedOnThisBill.set(l.purchaseOrderLineId, (billedOnThisBill.get(l.purchaseOrderLineId) ?? 0) + l.quantity);
+    const typedComputed = computed as (typeof computed[number] & { goodsReceiptNoteLineId?: string; purchaseOrderLineId?: string })[];
+    if (typedComputed.some((l) => !l.goodsReceiptNoteLineId)) {
+      return res.status(400).json({ message: "Every line on a Purchase-Order-linked bill must reference a goodsReceiptNoteLineId — raise a Goods Receipt Note against this Purchase Order first." });
     }
-    for (const [poLineId, qtyOnThisBill] of billedOnThisBill) {
-      const poLine = poLineById.get(poLineId)!;
-      const alreadyBilled = Number(poLine.billedQuantity);
-      const ordered = Number(poLine.quantity);
-      if (round2(alreadyBilled + qtyOnThisBill) > ordered) {
+    const grnLineIds = [...new Set(typedComputed.map((l) => l.goodsReceiptNoteLineId!))];
+    const grnLines = await prisma.goodsReceiptNoteLine.findMany({
+      where: { id: { in: grnLineIds }, goodsReceiptNote: { organizationId, purchaseOrderId: linkedPo.id } },
+      select: { id: true, purchaseOrderLineId: true, quantityReceived: true, billedQuantity: true },
+    });
+    if (grnLines.length !== grnLineIds.length) {
+      return res.status(400).json({ message: "One or more lines reference a goodsReceiptNoteLineId that isn't a Goods Receipt Note against this Purchase Order." });
+    }
+    for (const gl of grnLines) grnLineById.set(gl.id, gl);
+
+    const billedOnThisBill = new Map<string, number>();
+    for (const l of typedComputed) {
+      l.purchaseOrderLineId = grnLineById.get(l.goodsReceiptNoteLineId!)!.purchaseOrderLineId;
+      billedOnThisBill.set(l.goodsReceiptNoteLineId!, (billedOnThisBill.get(l.goodsReceiptNoteLineId!) ?? 0) + l.quantity);
+    }
+    for (const [grnLineId, qtyOnThisBill] of billedOnThisBill) {
+      const grnLine = grnLineById.get(grnLineId)!;
+      const alreadyBilled = Number(grnLine.billedQuantity);
+      const received = Number(grnLine.quantityReceived);
+      if (round2(alreadyBilled + qtyOnThisBill) > received) {
         return res.status(400).json({
-          message: `Billing ${qtyOnThisBill} against Purchase Order line ${poLineId} would exceed the ordered quantity ` +
-            `(${ordered} ordered, ${alreadyBilled} already billed, ${round2(ordered - alreadyBilled)} remaining).`,
+          message: `Billing ${qtyOnThisBill} against Goods Receipt Note line ${grnLineId} would exceed the received quantity ` +
+            `(${received} received, ${alreadyBilled} already billed, ${round2(received - alreadyBilled)} remaining).`,
         });
       }
     }
@@ -354,31 +377,45 @@ router.post("/", canPost, async (req, res) => {
           customsDutyRate: isForeign && l.customsDutyRate ? l.customsDutyRate : null,
           customsDutyAmount: l.customsDutyAmount,
           purchaseOrderLineId: (l as { purchaseOrderLineId?: string }).purchaseOrderLineId ?? null,
+          goodsReceiptNoteLineId: (l as { goodsReceiptNoteLineId?: string }).goodsReceiptNoteLineId ?? null,
         })),
       });
 
-      for (const l of computed) {
-        await receiveStock(tx, {
-          organizationId, branchId: resolvedBranchId!, itemId: l.itemId,
-          quantity: l.quantity, unitCost: l.unitCost, costingMethod: org.costingMethod!,
-          movementType: "PURCHASE", referenceType: "purchase_bill", referenceId: created.id,
-          movementDate: new Date(billDate), narration: `Purchase bill ${billNumber}`,
-        });
+      // Stock inward only for ad-hoc (non-PO) lines — a PO-linked bill's
+      // stock was already received via its Goods Receipt Note(s), so
+      // calling receiveStock again here would double-count it.
+      if (!linkedPo) {
+        for (const l of computed) {
+          await receiveStock(tx, {
+            organizationId, branchId: resolvedBranchId!, itemId: l.itemId,
+            quantity: l.quantity, unitCost: l.unitCost, costingMethod: org.costingMethod!,
+            movementType: "PURCHASE", referenceType: "purchase_bill", referenceId: created.id,
+            movementDate: new Date(billDate), narration: `Purchase bill ${billNumber}`,
+          });
+        }
       }
 
-      // Roll the billed quantity forward on each referenced PO line, then
-      // close the PO out once every one of its lines is fully billed —
-      // same transaction, so this can never drift out of sync with the
-      // bill that just posted.
+      // Roll the billed quantity forward on each referenced PO line and its
+      // GRN line, then close the PO out once every one of its lines is
+      // fully billed — same transaction, so this can never drift out of
+      // sync with the bill that just posted.
       if (linkedPo) {
-        const billedByLine = new Map<string, number>();
-        for (const l of computed as (typeof computed[number] & { purchaseOrderLineId?: string })[]) {
-          if (!l.purchaseOrderLineId) continue;
-          billedByLine.set(l.purchaseOrderLineId, (billedByLine.get(l.purchaseOrderLineId) ?? 0) + l.quantity);
+        const billedByPoLine = new Map<string, number>();
+        const billedByGrnLine = new Map<string, number>();
+        for (const l of computed as (typeof computed[number] & { purchaseOrderLineId?: string; goodsReceiptNoteLineId?: string })[]) {
+          if (!l.purchaseOrderLineId || !l.goodsReceiptNoteLineId) continue;
+          billedByPoLine.set(l.purchaseOrderLineId, (billedByPoLine.get(l.purchaseOrderLineId) ?? 0) + l.quantity);
+          billedByGrnLine.set(l.goodsReceiptNoteLineId, (billedByGrnLine.get(l.goodsReceiptNoteLineId) ?? 0) + l.quantity);
         }
-        for (const [poLineId, qty] of billedByLine) {
+        for (const [poLineId, qty] of billedByPoLine) {
           await tx.purchaseOrderLine.update({
             where: { id: poLineId },
+            data: { billedQuantity: { increment: qty } },
+          });
+        }
+        for (const [grnLineId, qty] of billedByGrnLine) {
+          await tx.goodsReceiptNoteLine.update({
+            where: { id: grnLineId },
             data: { billedQuantity: { increment: qty } },
           });
         }

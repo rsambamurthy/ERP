@@ -35,6 +35,7 @@ const DETAIL_INCLUDE = {
   branch: { select: { id: true, name: true } },
   lines: { include: { item: { select: { id: true, sku: true, name: true } } } },
   purchaseBills: { select: { id: true, billNumber: true, billDate: true, grandTotal: true } },
+  goodsReceiptNotes: { select: { id: true, grnNumber: true, grnDate: true } },
 } as const;
 
 router.get("/", async (req, res) => {
@@ -373,15 +374,16 @@ router.post("/:id/reopen", canPost, async (req, res) => {
 });
 
 // POST /purchase-orders/:id/cancel — DRAFT, PENDING_APPROVAL, or APPROVED
-// (only if nothing's been billed against it yet — once a Purchase Bill
-// references a line, the order is a real commitment and can't be
+// (only if nothing's been received or billed against it yet — once a
+// Goods Receipt Note or Purchase Bill references a line, the order is a
+// real commitment with actual stock/money movement behind it and can't be
 // cancelled out from under it).
 router.post("/:id/cancel", canPost, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
   const existing = await prisma.purchaseOrder.findFirst({
     where: { id: req.params.id, organizationId },
-    include: { lines: { select: { billedQuantity: true } } },
+    include: { lines: { select: { billedQuantity: true, receivedQuantity: true } } },
   });
   if (!existing) return res.status(404).json({ message: "Purchase order not found." });
   if (!["DRAFT", "PENDING_APPROVAL", "APPROVED"].includes(existing.status)) {
@@ -390,6 +392,10 @@ router.post("/:id/cancel", canPost, async (req, res) => {
   const anyBilled = existing.lines.some((l) => Number(l.billedQuantity) > 0);
   if (anyBilled) {
     return res.status(400).json({ message: "Can't cancel — one or more lines already have Purchase Bills against them." });
+  }
+  const anyReceived = existing.lines.some((l) => Number(l.receivedQuantity) > 0);
+  if (anyReceived) {
+    return res.status(400).json({ message: "Can't cancel — one or more lines already have Goods Receipt Notes against them." });
   }
 
   const updated = await prisma.purchaseOrder.update({

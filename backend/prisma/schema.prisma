@@ -126,6 +126,7 @@ model Organization {
   directors        Director[]
   auditors         Auditor[]
   purchaseOrders   PurchaseOrder[]
+  goodsReceiptNotes GoodsReceiptNote[]
 
   @@map("organizations")
 }
@@ -212,6 +213,7 @@ model Branch {
   salesReturns     SalesReturn[]
   purchaseReturns  PurchaseReturn[]
   purchaseOrders   PurchaseOrder[]
+  goodsReceiptNotes GoodsReceiptNote[]
 
   @@unique([organizationId, code])
   @@map("branches")
@@ -486,6 +488,7 @@ model Item {
   salesReturnLines     SalesReturnLine[]
   purchaseReturnLines  PurchaseReturnLine[]
   purchaseOrderLines   PurchaseOrderLine[]
+  goodsReceiptNoteLines GoodsReceiptNoteLine[]
 
   @@unique([organizationId, sku])
   @@map("items")
@@ -693,8 +696,12 @@ model PurchaseBill {
   // Optional — set when this bill was raised against an approved Purchase
   // Order rather than created standalone. See routes/purchaseBills.ts:
   // when present, businessPartnerId is derived from the PO (not taken from
-  // the request), and each line may separately carry its own
-  // purchaseOrderLineId to track exactly which ordered line it fulfills.
+  // the request), and every line must carry its own
+  // goodsReceiptNoteLineId (3-way match — see PurchaseBillLine below);
+  // none of this bill's lines call receiveStock, since the linked GRN(s)
+  // already moved that stock in. A bill with no purchaseOrderId is
+  // unaffected by any of this — it still moves its own stock exactly as
+  // it did before the Goods Receipt Note feature.
   purchaseOrderId   String?  @map("purchase_order_id") @db.Uuid
   createdBy         String?  @map("created_by") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at")
@@ -738,10 +745,19 @@ model PurchaseBillLine {
   // bill was raised from a PO. See routes/purchaseBills.ts: on post, this
   // line's quantity is added to that PurchaseOrderLine.billedQuantity.
   purchaseOrderLineId String? @map("purchase_order_line_id") @db.Uuid
+  // Optional — which GoodsReceiptNoteLine this bill line fulfills. Required
+  // by the route (not the schema) whenever the parent bill has a
+  // purchaseOrderId — the 3-way match: this line can't bill more than
+  // (that GRN line's quantityReceived − its own billedQuantity so far),
+  // and receiveStock is *not* called for it, since the GRN already moved
+  // that stock in. Null on every ad-hoc (non-PO) bill line, which keeps
+  // moving its own stock exactly as before this feature existed.
+  goodsReceiptNoteLineId String? @map("goods_receipt_note_line_id") @db.Uuid
 
-  purchaseBill      PurchaseBill         @relation(fields: [purchaseBillId], references: [id])
-  item              Item                 @relation(fields: [itemId], references: [id])
-  purchaseOrderLine PurchaseOrderLine?   @relation(fields: [purchaseOrderLineId], references: [id])
+  purchaseBill      PurchaseBill          @relation(fields: [purchaseBillId], references: [id])
+  item              Item                  @relation(fields: [itemId], references: [id])
+  purchaseOrderLine PurchaseOrderLine?    @relation(fields: [purchaseOrderLineId], references: [id])
+  goodsReceiptNoteLine GoodsReceiptNoteLine? @relation(fields: [goodsReceiptNoteLineId], references: [id])
   returnLines       PurchaseReturnLine[]
 
   @@map("purchase_bill_lines")
@@ -750,17 +766,19 @@ model PurchaseBillLine {
 // ── Purchase Order ───────────────────────────────────────────────────────
 // A pre-commitment document with its own approval workflow, entirely
 // separate from posting — a PurchaseOrder never touches the journal or
-// stock. Only once it's APPROVED can it be turned into one or more
-// Purchase Bills (routes/purchaseBills.ts), which still does all the real
-// accounting/stock work exactly as it always has. See ROADMAP.md's
-// "Purchase Order Workflow" section for the full state machine.
+// stock itself. Only once it's APPROVED can goods be received against it
+// (GoodsReceiptNote, below — this is what actually moves stock) and one
+// or more Purchase Bills raised (routes/purchaseBills.ts), which still
+// does all the real accounting work exactly as it always has. See
+// ROADMAP.md's "Purchase Order Workflow" / "Goods Receipt Note" sections
+// for the full state machine.
 //
 // Status values: DRAFT (freely editable) -> submit ->
 // APPROVED (auto, when grandTotal is below Organization.poApprovalThreshold)
 //   or PENDING_APPROVAL (needs a purchase.approve holder) -> approve -> APPROVED
 //                                                          -> reject -> REJECTED
 // REJECTED -> reopen -> DRAFT (editable again, resubmittable)
-// DRAFT/PENDING_APPROVAL/APPROVED(nothing billed yet) -> cancel -> CANCELLED
+// DRAFT/PENDING_APPROVAL/APPROVED(nothing received or billed yet) -> cancel -> CANCELLED
 // APPROVED -> (every line fully billed) -> CLOSED, automatically
 model PurchaseOrder {
   id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -798,6 +816,7 @@ model PurchaseOrder {
   businessPartner BusinessPartner     @relation(fields: [businessPartnerId], references: [id])
   lines           PurchaseOrderLine[]
   purchaseBills   PurchaseBill[]
+  goodsReceiptNotes GoodsReceiptNote[]
 
   @@unique([organizationId, poNumber])
   @@map("purchase_orders")
@@ -813,16 +832,86 @@ model PurchaseOrderLine {
   lineSubtotal    Decimal @map("line_subtotal") @db.Decimal(14, 2)
   taxAmount       Decimal @map("tax_amount") @db.Decimal(14, 2)
   lineTotal       Decimal @map("line_total") @db.Decimal(14, 2)
+  // Running total of quantity already received against this line across
+  // every Goods Receipt Note — see routes/goodsReceiptNotes.ts. Never
+  // exceeds `quantity` (enforced server-side at GRN-post time). This is
+  // the actual stock-in signal; billedQuantity below tracks the separate,
+  // always-lagging-or-equal financial side.
+  receivedQuantity Decimal @default(0) @map("received_quantity") @db.Decimal(14, 4)
   // Running total of quantity already billed against this line across every
   // linked Purchase Bill — see routes/purchaseBills.ts. Never exceeds
-  // `quantity` (enforced server-side at bill-post time).
+  // `quantity` (enforced server-side at bill-post time). Bills against a
+  // PO are additionally checked, per line, against that line's own
+  // GoodsReceiptNoteLine.quantityReceived (the 3-way match) — this field
+  // is the PO-level rollup used to decide when the whole PO can CLOSE.
   billedQuantity  Decimal @default(0) @map("billed_quantity") @db.Decimal(14, 4)
 
   purchaseOrder PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id])
   item          Item               @relation(fields: [itemId], references: [id])
   purchaseBillLines PurchaseBillLine[]
+  goodsReceiptNoteLines GoodsReceiptNoteLine[]
 
   @@map("purchase_order_lines")
+}
+
+// ── Goods Receipt Note ───────────────────────────────────────────────────
+// Records the physical receipt of goods against an APPROVED Purchase
+// Order — this, not the eventual Purchase Bill, is what actually moves
+// stock (see lib/costing.ts receiveStock, called from
+// routes/goodsReceiptNotes.ts). A GRN posts immediately on creation, the
+// same create-and-post-in-one-step UX as a Purchase Bill — no draft/
+// approval workflow of its own (that already happened at the PO stage; a
+// GRN just confirms what physically arrived, and by whom it was
+// received/checked in).
+//
+// Only meaningful in the PO-linked procurement path — see the note on
+// PurchaseBill.purchaseOrderId. A Purchase Bill raised without a PO never
+// touches a GoodsReceiptNote and keeps moving its own stock exactly as it
+// always has.
+model GoodsReceiptNote {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String   @map("organization_id") @db.Uuid
+  branchId          String   @map("branch_id") @db.Uuid
+  businessPartnerId String   @map("business_partner_id") @db.Uuid
+  purchaseOrderId   String   @map("purchase_order_id") @db.Uuid
+  grnNumber         String   @map("grn_number") @db.VarChar(30)
+  grnDate           DateTime @map("grn_date") @db.Date
+  narration         String   @default("") @db.VarChar(255)
+  createdBy         String?  @map("created_by") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  organization    Organization           @relation(fields: [organizationId], references: [id])
+  branch          Branch                 @relation(fields: [branchId], references: [id])
+  businessPartner BusinessPartner        @relation(fields: [businessPartnerId], references: [id])
+  purchaseOrder   PurchaseOrder          @relation(fields: [purchaseOrderId], references: [id])
+  lines           GoodsReceiptNoteLine[]
+
+  @@unique([organizationId, grnNumber])
+  @@map("goods_receipt_notes")
+}
+
+model GoodsReceiptNoteLine {
+  id                  String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  goodsReceiptNoteId  String  @map("goods_receipt_note_id") @db.Uuid
+  purchaseOrderLineId String  @map("purchase_order_line_id") @db.Uuid
+  itemId              String  @map("item_id") @db.Uuid
+  quantityReceived    Decimal @map("quantity_received") @db.Decimal(14, 4)
+  // Carried in at the PO line's own rate — a GRN doesn't introduce a new
+  // price, it just confirms quantity physically arrived. Any real price
+  // variance found later is a Purchase Bill/vendor-invoice concern, out of
+  // scope here (see ROADMAP.md).
+  unitCost            Decimal @map("unit_cost") @db.Decimal(14, 2)
+  // Running total of quantity already billed against this specific GRN
+  // line — see routes/purchaseBills.ts. Never exceeds quantityReceived
+  // (enforced server-side at bill-post time) — this is the 3-way match.
+  billedQuantity      Decimal @default(0) @map("billed_quantity") @db.Decimal(14, 4)
+
+  goodsReceiptNote  GoodsReceiptNote   @relation(fields: [goodsReceiptNoteId], references: [id])
+  purchaseOrderLine PurchaseOrderLine  @relation(fields: [purchaseOrderLineId], references: [id])
+  item              Item               @relation(fields: [itemId], references: [id])
+  purchaseBillLines PurchaseBillLine[]
+
+  @@map("goods_receipt_note_lines")
 }
 
 // ── Sales Return (Credit Note) ──────────────────────────────────────────
@@ -1021,6 +1110,7 @@ model BusinessPartner {
   salesReturns    SalesReturn[]
   purchaseReturns PurchaseReturn[]
   purchaseOrders  PurchaseOrder[]
+  goodsReceiptNotes GoodsReceiptNote[]
 
   @@map("business_partners")
 }

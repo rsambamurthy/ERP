@@ -36,6 +36,8 @@ import type {
   PurchaseBill,
   PurchaseOrder,
   PurchaseOrderLineInput,
+  GoodsReceiptNote,
+  GoodsReceiptNoteLineInput,
   PurchaseReturn,
   PurchaseReturnableResponse,
   PurchaseReturnLineInput,
@@ -576,6 +578,29 @@ export function cancelPurchaseOrder(id: string) {
 // file download, not JSON.
 export function downloadPurchaseOrderPdf(id: string, poNumber: string) {
   return downloadFile(`/purchase-orders/${id}/pdf`, `${poNumber}.pdf`);
+}
+
+// ── Goods Receipt Notes ──────────────────────────────────────────────────
+// Records physical receipt against an APPROVED Purchase Order and moves
+// stock immediately — creates and posts in one step, no separate "post"
+// call (same UX as Purchase Bills). See PurchaseOrder above and
+// ROADMAP.md's "Goods Receipt Note" section.
+
+export function getGoodsReceiptNotes(params?: { purchaseOrderId?: string }) {
+  const qs = new URLSearchParams();
+  if (params?.purchaseOrderId) qs.set("purchaseOrderId", params.purchaseOrderId);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request<{ data: GoodsReceiptNote[] }>(`/goods-receipt-notes${suffix}`);
+}
+
+export function getGoodsReceiptNote(id: string) {
+  return request<{ data: GoodsReceiptNote }>(`/goods-receipt-notes/${id}`);
+}
+
+export function createGoodsReceiptNote(body: {
+  purchaseOrderId: string; grnDate: string; narration?: string; lines: GoodsReceiptNoteLineInput[];
+}) {
+  return request<{ data: GoodsReceiptNote }>("/goods-receipt-notes", { method: "POST", body: JSON.stringify(body) });
 }
 
 export function getSalesInvoices() {

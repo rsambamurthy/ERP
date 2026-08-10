@@ -9,7 +9,7 @@ import {
   submitPurchaseOrder, updatePurchaseOrder,
 } from "@/lib/api";
 import { round2 } from "@/lib/discountGst";
-import { canApprovePurchaseOrders } from "@/lib/auth";
+import { canApprovePurchaseOrders, canReceiveGoods } from "@/lib/auth";
 import type { Branch, BusinessPartner, Item, PurchaseOrder, PurchaseOrderLineInput, PurchaseOrderStatus } from "@/lib/types";
 import { PURCHASE_ORDER_STATUS_LABELS } from "@/lib/types";
 
@@ -65,6 +65,7 @@ function PurchaseOrdersInner() {
 
   const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
   const canApprove = canApprovePurchaseOrders();
+  const canReceive = canReceiveGoods();
 
   const totals = useMemo(() => {
     let subtotal = 0, tax = 0;
@@ -344,12 +345,13 @@ function PurchaseOrdersInner() {
                   <thead>
                     <tr>
                       <th>Item</th><th>Qty Ordered</th><th>Rate</th><th>Tax %</th><th>Line Total</th>
-                      <th>Billed</th><th>Remaining</th>
+                      <th>Received</th><th>Billed</th><th>Remaining</th>
                     </tr>
                   </thead>
                   <tbody>
                     {detail.lines.map((l) => {
                       const ordered = Number(l.quantity);
+                      const received = Number(l.receivedQuantity);
                       const billed = Number(l.billedQuantity);
                       return (
                         <tr key={l.id}>
@@ -358,6 +360,7 @@ function PurchaseOrdersInner() {
                           <td>{Number(l.rate).toFixed(2)}</td>
                           <td>{Number(l.taxRate).toFixed(2)}</td>
                           <td>{Number(l.lineTotal).toFixed(2)}</td>
+                          <td style={{ color: received > 0 ? "#0e7490" : "var(--color-muted)" }}>{received}</td>
                           <td style={{ color: billed > 0 ? "#166534" : "var(--color-muted)" }}>{billed}</td>
                           <td>{round2(ordered - billed)}</td>
                         </tr>
@@ -376,6 +379,25 @@ function PurchaseOrdersInner() {
                 <span>Tax: <strong>{Number(detail.taxTotal).toFixed(2)}</strong></span>
                 <span>Grand Total: <strong>{Number(detail.grandTotal).toFixed(2)}</strong></span>
               </div>
+
+              {detail.goodsReceiptNotes && detail.goodsReceiptNotes.length > 0 && (
+                <div style={{ padding: "0 14px 14px" }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--color-muted)", marginBottom: 6 }}>
+                    Goods Receipt Notes against this order
+                  </div>
+                  <table className="ent-table">
+                    <thead><tr><th>GRN #</th><th>Date</th></tr></thead>
+                    <tbody>
+                      {detail.goodsReceiptNotes.map((g) => (
+                        <tr key={g.id}>
+                          <td>{g.grnNumber}</td>
+                          <td>{new Date(g.grnDate).toLocaleDateString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
               {detail.purchaseBills && detail.purchaseBills.length > 0 && (
                 <div style={{ padding: "0 14px 14px" }}>
@@ -445,6 +467,11 @@ function PurchaseOrdersInner() {
 
                 {detail.status === "APPROVED" && (
                   <>
+                    {canReceive && detail.lines.some((l) => round2(Number(l.quantity) - Number(l.receivedQuantity)) > 0) && (
+                      <Link className="ent-btn-save" style={{ textDecoration: "none" }} href={`/purchase/grn?purchaseOrderId=${detail.id}`}>
+                        Receive Goods
+                      </Link>
+                    )}
                     <Link className="ent-btn-save" style={{ textDecoration: "none" }} href={`/purchase/bills?purchaseOrderId=${detail.id}`}>
                       Create Purchase Bill
                     </Link>

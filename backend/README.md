@@ -352,7 +352,7 @@ be linked into a Purchase Bill (see below). Full state machine on the
 | `POST /purchase-orders/:id/approve` | `PENDING_APPROVAL` only → `APPROVED`. New `purchase.approve` permission (see below). |
 | `POST /purchase-orders/:id/reject` | `PENDING_APPROVAL` only → `REJECTED`. Body `{ reason }`, required (400 without it). `purchase.approve`. |
 | `POST /purchase-orders/:id/reopen` | `REJECTED` only → `DRAFT`, editable and resubmittable. Rejection reason/who/when stays on the record as history, not cleared. `purchase.post`. |
-| `POST /purchase-orders/:id/cancel` | `DRAFT`/`PENDING_APPROVAL`/`APPROVED` (only if nothing's been billed against any line yet) → `CANCELLED`. `purchase.post`. |
+| `POST /purchase-orders/:id/cancel` | `DRAFT`/`PENDING_APPROVAL`/`APPROVED` (only if nothing's been received or billed against any line yet) → `CANCELLED`. `purchase.post`. |
 | `GET /purchase-orders/:id/pdf` | Streams a formal PDF of the order (`application/pdf`, `Content-Disposition: attachment`). Read/export action — no permission gate beyond org membership, available at any status. See PDF export below. |
 
 **Approval permission.** New `purchase.approve` in `lib/permissions.ts`,
@@ -369,20 +369,29 @@ Null (the default) means every PO needs manual approval regardless of
 amount; once set, `POST /:id/submit` auto-approves anything strictly below
 it.
 
-**Billing a Purchase Order.** `POST /purchase-bills` takes an optional
-`purchaseOrderId`. When present: the PO must belong to the org and be
-`APPROVED` (else 400); `businessPartnerId` is *derived* from the PO rather
-than taken from the request body (a mismatched `businessPartnerId` in the
-body 400s); each line may separately carry a `purchaseOrderLineId`. Before
-posting, cumulative billed quantity (existing `PurchaseOrderLine.billedQuantity`
-+ this bill's quantity for that line, lines on *this* bill summed together
-first) is checked against the line's ordered `quantity` — exceeding it
-400s with the exact ordered/billed/remaining figures. On successful post,
-in the same transaction: each referenced `PurchaseOrderLine.billedQuantity`
-increments, then every line on the PO is re-checked and the PO flips to
-`CLOSED` the moment all of them are fully billed. A bill not linked to a PO
-behaves exactly as before this feature — `purchaseOrderId`/
-`purchaseOrderLineId` are both nullable and unused.
+**Billing a Purchase Order — now a 3-way match (PO → GRN → Bill).**
+`POST /purchase-bills` takes an optional `purchaseOrderId`. When present:
+the PO must belong to the org and be `APPROVED` (else 400);
+`businessPartnerId` is *derived* from the PO rather than taken from the
+request body (a mismatched `businessPartnerId` in the body 400s); and
+**every line is now required to carry a `goodsReceiptNoteLineId`**
+(not a `purchaseOrderLineId` directly — see Goods Receipt Notes below).
+The `purchaseOrderLineId` each line fulfills is derived server-side from
+its referenced GRN line. Before posting, cumulative billed quantity on
+that specific GRN line (its own `billedQuantity` + this bill's quantity
+for it, lines on *this* bill referencing the same GRN line summed
+together first) is checked against that GRN line's `quantityReceived` —
+exceeding it 400s with the exact received/billed/remaining figures. On
+successful post, in the same transaction: `PurchaseOrderLine.billedQuantity`
+and `GoodsReceiptNoteLine.billedQuantity` both increment, then every PO
+line is re-checked and the PO flips to `CLOSED` the moment all of them
+are fully billed (unchanged trigger — billed ≤ received ≤ ordered
+transitively, so this still means fully received too). **A PO-linked
+bill's lines never call `receiveStock`** — the GRN(s) they reference
+already moved that stock in; calling it again would double-count. A bill
+not linked to a PO behaves exactly as before this feature — it still
+calls `receiveStock` itself, same as always, and
+`purchaseOrderId`/`goodsReceiptNoteLineId` are both nullable and unused.
 
 **Bug fixed in passing:** per-line validation in `POST /purchase-bills`
 (bad quantity, invalid item, and now the new PO-quantity check) used to
@@ -405,6 +414,57 @@ yet; deliberately out of scope for this pass. Adds `pdfkit` and
 `@types/pdfkit` as new dependencies (`package.json`) — the next deploy
 needs `npm install` before `npm run build` succeeds, unlike prior features
 in this app's history which only touched already-installed packages.
+
+### Goods Receipt Notes (`/goods-receipt-notes`)
+
+Records physical receipt of goods against an `APPROVED` Purchase Order —
+this, not the Purchase Bill, is what actually calls `receiveStock`
+(`lib/costing.ts`) and moves `ItemStock`/`StockLot`/`StockMovement`. Only
+meaningful in the PO-linked path; an ad-hoc Purchase Bill with no
+`purchaseOrderId` is completely unaffected and keeps moving its own stock
+exactly as it always has (see the branch on `linkedPo` in
+`routes/purchaseBills.ts`).
+
+| Route | Notes |
+| --- | --- |
+| `GET /goods-receipt-notes` | List, org-scoped. Optional `?purchaseOrderId=` filter. |
+| `GET /goods-receipt-notes/:id` | Detail — includes `businessPartner`, `branch`, `purchaseOrder`, and `lines` (with `item` and the referenced `purchaseOrderLine`). |
+| `POST /goods-receipt-notes` | Creates and posts in one step — no draft/approval state of its own (the approval gate already happened at the PO stage). `purchase.receive`. |
+
+**Vendor and branch are both derived from the PO**, never taken from the
+request — `businessPartnerId` = the PO's vendor, `branchId` = the PO's
+delivery branch (falling back to the org's Head Office if the PO didn't
+specify one; 400 if neither exists). Each line references a
+`purchaseOrderLineId`; `itemId` and `unitCost` both come from that PO
+line too, not the request — a GRN doesn't introduce a new item or price,
+it confirms quantity physically arrived at the PO's agreed rate. Before
+posting, cumulative received quantity (existing
+`PurchaseOrderLine.receivedQuantity` + this GRN's quantity for that line,
+lines on *this* GRN referencing the same PO line summed together first)
+is checked against the line's ordered `quantity` — exceeding it 400s
+with the exact ordered/received/remaining figures. On successful post,
+in the same transaction: `receiveStock` runs once per line (movement
+type `PURCHASE`, `referenceType: "goods_receipt_note"`), then each
+referenced `PurchaseOrderLine.receivedQuantity` increments.
+
+**New permission `purchase.receive`**, deliberately separate from
+`purchase.post` — it's the "goods physically arrived, someone checked
+them in" action, operational rather than a segregation-of-duties
+boundary (unlike `purchase.approve`). `ACCOUNTANT` gets it by default in
+`lib/permissions.ts`'s built-in set, same as `purchase.post`/
+`inventory.post` which it already had.
+
+**Two parallel running totals on `PurchaseOrderLine`:**
+`receivedQuantity` (new, incremented here) is the real stock-in signal;
+`billedQuantity` (existing, incremented by `routes/purchaseBills.ts`) is
+the separate financial side and still what triggers the PO's automatic
+`CLOSED` transition. `GoodsReceiptNoteLine.billedQuantity` (new,
+line-scoped) is the actual 3-way-match enforcement point on the Purchase
+Bill side — see the updated Purchase Bill note above.
+
+Requires `db/migration_023_goods_receipt_notes.sql`. No new GL accounts
+and no `prisma db seed` step — a GRN posts stock movements, never a
+journal entry. No new dependencies either.
 
 ### Bulk upload (`/accounts`, `/items`, `/business-partners` — `/bulk-upload/*`)
 

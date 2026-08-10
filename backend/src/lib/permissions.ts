@@ -9,6 +9,7 @@ export const PERMISSIONS = [
   "sales.post",
   "purchase.post",
   "purchase.approve",
+  "purchase.receive",
   "inventory.post",
   "journal.post",
   "company.manage",
@@ -24,6 +25,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "sales.post": "Post Sales Invoices & Sales Returns",
   "purchase.post": "Create Purchase Orders, post Purchase Bills & Purchase Returns",
   "purchase.approve": "Approve or reject Purchase Orders",
+  "purchase.receive": "Raise Goods Receipt Notes (receive goods against a Purchase Order)",
   "inventory.post": "Post Stock Adjustments",
   "journal.post": "Post Journal Entries",
   "company.manage": "Manage Company Master Data (CIN, directors, auditors)",
@@ -45,7 +47,10 @@ const BUILT_IN_PERMISSIONS: Record<string, Permission[]> = {
   // approve them by default. Owner/Admin get it (via the spread above); an
   // org that wants an ACCOUNTANT-level approver can grant "purchase.approve"
   // to a custom role instead.
-  ACCOUNTANT: ["businessPartners.manage", "sales.post", "purchase.post", "inventory.post", "journal.post"],
+  // "purchase.receive" (raising a GRN) is operational, not a financial
+  // control point like "purchase.approve" — ACCOUNTANT gets it by default,
+  // same as purchase.post/inventory.post which it already had.
+  ACCOUNTANT: ["businessPartners.manage", "sales.post", "purchase.post", "purchase.receive", "inventory.post", "journal.post"],
   VIEWER: [],
 };
 

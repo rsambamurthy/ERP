@@ -6,8 +6,8 @@ import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import {
-  ApiError, createPurchaseBill, getBranches, getBusinessPartners, getItems, getPurchaseBill, getPurchaseBills,
-  getPurchaseOrder, getPurchaseOrders, updatePurchaseBillReference,
+  ApiError, createPurchaseBill, getBranches, getBusinessPartners, getGoodsReceiptNotes, getItems, getPurchaseBill,
+  getPurchaseBills, getPurchaseOrder, getPurchaseOrders, updatePurchaseBillReference,
 } from "@/lib/api";
 import { isInterState, round2, splitGst } from "@/lib/discountGst";
 import type { Branch, BusinessPartner, DocumentLineInput, Item, PurchaseBill, PurchaseOrder } from "@/lib/types";
@@ -101,10 +101,11 @@ function PurchaseBillsInner() {
       setItems(itemsRes.data);
       setVendors(vendorsRes.data);
       setBranches(branchRes.data);
-      // Only orders with at least one line not yet fully billed are worth
-      // offering — a fully-billed APPROVED order should already have
-      // auto-closed, but this filter is a harmless belt-and-braces check.
-      setAvailablePOs(poRes.data.filter((po) => po.lines.some((l) => Number(l.billedQuantity) < Number(l.quantity))));
+      // Only orders with at least one line that's been received but not yet
+      // fully billed are worth offering — this is a proxy for "has an open
+      // GRN line to bill against" without fetching every order's Goods
+      // Receipt Notes just to populate the dropdown.
+      setAvailablePOs(poRes.data.filter((po) => po.lines.some((l) => Number(l.billedQuantity) < Number(l.receivedQuantity))));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load purchase bills.");
     } finally {
@@ -121,7 +122,7 @@ function PurchaseBillsInner() {
     (async () => {
       try {
         const res = await getPurchaseOrder(initialPoId);
-        linkPO(res.data);
+        await linkPO(res.data);
         setShowForm(true);
       } catch (err) {
         setPoLoadError(err instanceof ApiError ? err.message : "Could not load the linked Purchase Order.");
@@ -131,18 +132,37 @@ function PurchaseBillsInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPoId]);
 
-  function linkPO(po: PurchaseOrder) {
+  // Lines are pre-filled from this PO's Goods Receipt Notes, not the order
+  // directly — the 3-way match means what's billable is what's actually
+  // been received (and not yet billed), which can lag behind what was
+  // ordered. Each pre-filled line carries a goodsReceiptNoteLineId, not a
+  // purchaseOrderLineId — see DocumentLineInput and routes/purchaseBills.ts.
+  async function linkPO(po: PurchaseOrder) {
     setLinkedPO(po);
     setBusinessPartnerId(po.businessPartner.id);
     setCurrency("INR");
-    const openLines = po.lines.filter((l) => Number(l.billedQuantity) < Number(l.quantity));
-    setLines(openLines.map((l) => ({
-      itemId: l.itemId,
-      quantity: round2(Number(l.quantity) - Number(l.billedQuantity)),
-      rate: Number(l.rate),
-      taxRate: Number(l.taxRate),
-      purchaseOrderLineId: l.id,
-    })));
+    setPoLoadError(null);
+    try {
+      const grnRes = await getGoodsReceiptNotes({ purchaseOrderId: po.id });
+      const poLineById = new Map(po.lines.map((l) => [l.id, l]));
+      const openLines = grnRes.data
+        .flatMap((g) => g.lines)
+        .map((gl) => ({
+          gl,
+          remaining: round2(Number(gl.quantityReceived) - Number(gl.billedQuantity)),
+          poLine: poLineById.get(gl.purchaseOrderLineId),
+        }))
+        .filter((x) => x.remaining > 0 && x.poLine);
+      setLines(openLines.map(({ gl, remaining, poLine }) => ({
+        itemId: gl.item.id,
+        quantity: remaining,
+        rate: Number(gl.unitCost),
+        taxRate: Number(poLine!.taxRate),
+        goodsReceiptNoteLineId: gl.id,
+      })));
+    } catch (err) {
+      setPoLoadError(err instanceof ApiError ? err.message : "Could not load Goods Receipt Notes for this order.");
+    }
   }
 
   function unlinkPO() {
@@ -296,7 +316,7 @@ function PurchaseBillsInner() {
                 background: "#f5f3ff", border: "1px solid #ddd6fe", borderRadius: 6,
                 padding: "8px 14px", fontSize: 13,
               }}>
-                <span>Linked to <strong>{linkedPO.poNumber}</strong> — {linkedPO.businessPartner.name}. Lines pre-filled from what's still open on this order.</span>
+                <span>Linked to <strong>{linkedPO.poNumber}</strong> — {linkedPO.businessPartner.name}. Lines pre-filled from what's been received (via Goods Receipt Note) but not yet billed.</span>
                 <button type="button" className="ent-ia ent-ia-edit" onClick={unlinkPO}>Unlink</button>
               </div>
             )}

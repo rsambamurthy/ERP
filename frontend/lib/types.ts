@@ -452,9 +452,13 @@ export interface DocumentLineInput {
   // line's INR taxable value. See customsDutyAmount on DocumentLine and the
   // PurchaseBill.customsDutyTotal note below.
   customsDutyRate?: number;
-  // Purchase Bill lines only — which PurchaseOrderLine this line fulfills,
-  // when the bill is raised from an approved PO. See PurchaseOrder above.
-  purchaseOrderLineId?: string;
+  // Purchase Bill lines only — which GoodsReceiptNoteLine this line bills
+  // against, when the bill is raised from an approved PO (3-way match:
+  // PO -> GRN -> Bill). Required on every line whenever the bill itself
+  // carries a purchaseOrderId — see GoodsReceiptNote below and
+  // ROADMAP.md's "Goods Receipt Note" section. The PurchaseOrderLine it
+  // fulfills is derived server-side from this, never sent directly.
+  goodsReceiptNoteLineId?: string;
 }
 
 // ── Foreign currency (exports/imports) ───────────────────────────────────
@@ -624,6 +628,11 @@ export interface PurchaseOrderLine extends PurchaseOrderLineInput {
   lineSubtotal: string;
   taxAmount: string;
   lineTotal: string;
+  // Running total already received against this line across every Goods
+  // Receipt Note — never exceeds `quantity`. This is the real stock-in
+  // signal; billedQuantity below is the separate, always-lagging-or-equal
+  // financial side. See GoodsReceiptNote below.
+  receivedQuantity: string;
   // Running total already billed against this line across every linked
   // Purchase Bill — never exceeds `quantity`.
   billedQuantity: string;
@@ -655,6 +664,44 @@ export interface PurchaseOrder {
   // Every Purchase Bill raised against this PO so far — the detail screen
   // shows this as the billing progress trail.
   purchaseBills?: { id: string; billNumber: string; billDate: string; grandTotal: string }[];
+  // Every Goods Receipt Note raised against this PO so far — the detail
+  // screen shows this as the receiving progress trail, alongside billing.
+  goodsReceiptNotes?: { id: string; grnNumber: string; grnDate: string }[];
+}
+
+// ── Goods Receipt Note ───────────────────────────────────────────────────
+// Records physical receipt of goods against an APPROVED Purchase Order —
+// this, not the eventual Purchase Bill, is what actually moves stock. See
+// backend/prisma/schema.prisma's GoodsReceiptNote model comment and
+// ROADMAP.md's "Goods Receipt Note" section for the full design. Posts
+// immediately on creation — no draft/approval workflow of its own.
+export interface GoodsReceiptNoteLineInput {
+  purchaseOrderLineId: string;
+  quantityReceived: number;
+}
+
+export interface GoodsReceiptNoteLine extends GoodsReceiptNoteLineInput {
+  id: string;
+  item: { id: string; sku: string; name: string };
+  // Only populated on the detail fetch (GET /goods-receipt-notes/:id) —
+  // the list endpoint doesn't include this relation, so it's absent there.
+  purchaseOrderLine?: { id: string; quantity: string };
+  unitCost: string;
+  // Running total already billed against this specific GRN line — never
+  // exceeds quantityReceived. This is the 3-way match Purchase Bill
+  // enforces (see DocumentLineInput.goodsReceiptNoteLineId).
+  billedQuantity: string;
+}
+
+export interface GoodsReceiptNote {
+  id: string;
+  grnNumber: string;
+  grnDate: string;
+  narration: string;
+  businessPartner: { id: string; name: string };
+  branch?: { id: string; name: string } | null;
+  purchaseOrder: { id: string; poNumber: string };
+  lines: GoodsReceiptNoteLine[];
 }
 
 // ── Sales / Purchase Returns ─────────────────────────────────────────────
@@ -861,6 +908,7 @@ export const PERMISSIONS = [
   "sales.post",
   "purchase.post",
   "purchase.approve",
+  "purchase.receive",
   "inventory.post",
   "journal.post",
   "company.manage",
@@ -876,6 +924,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "sales.post": "Post Sales Invoices & Sales Returns",
   "purchase.post": "Create Purchase Orders, post Purchase Bills & Purchase Returns",
   "purchase.approve": "Approve or reject Purchase Orders",
+  "purchase.receive": "Raise Goods Receipt Notes (receive goods against a Purchase Order)",
   "inventory.post": "Post Stock Adjustments",
   "journal.post": "Post Journal Entries",
   "company.manage": "Manage Company Master Data (CIN, directors, auditors)",

@@ -108,6 +108,12 @@ export function canApprovePurchaseOrders(): boolean {
   return ["OWNER", "ADMIN"].includes(role);
 }
 
+export function canReceiveGoods(): boolean {
+  const role = getRole() ?? "";
+  if (role === "CUSTOM") return getPermissions().includes("purchase.receive");
+  return ["OWNER", "ADMIN", "ACCOUNTANT"].includes(role);
+}
+
 export function clearSession() {
   if (typeof window === "undefined") return;
   localStorage.removeItem(TOKEN_KEY);
