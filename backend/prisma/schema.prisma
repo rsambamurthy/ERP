@@ -98,6 +98,13 @@ model Organization {
   // grandTotal is strictly below this amount auto-approves instead of
   // going to PENDING_APPROVAL. See routes/purchaseOrders.ts POST /:id/submit.
   poApprovalThreshold     Decimal?  @map("po_approval_threshold") @db.Decimal(14, 2)
+  // 3-way match price tolerance — a PO-linked Purchase Bill line whose rate
+  // differs from the PO line's rate by more than this percentage holds the
+  // bill at PENDING_APPROVAL instead of posting immediately. Null (the
+  // default) means 0% tolerance — any variance at all requires approval,
+  // the safe default, same "null = most cautious" convention as
+  // poApprovalThreshold above. See routes/purchaseBills.ts.
+  priceVarianceTolerancePct Decimal? @map("price_variance_tolerance_pct") @db.Decimal(5, 2)
   createdAt               DateTime  @default(now()) @map("created_at")
   updatedAt               DateTime  @default(now()) @updatedAt @map("updated_at")
   deletedAt               DateTime? @map("deleted_at")
@@ -666,7 +673,29 @@ model PurchaseBill {
   billNumber        String   @map("bill_number") @db.VarChar(30)
   billDate          DateTime @map("bill_date") @db.Date
   narration         String   @default("") @db.VarChar(255)
-  journalEntryId    String   @unique @map("journal_entry_id") @db.Uuid
+  // Nullable — a bill held at PENDING_APPROVAL (3-way-match price variance;
+  // see status below) hasn't posted yet, so has no journal entry until
+  // POST /purchase-bills/:id/approve actually creates one.
+  journalEntryId    String?  @unique @map("journal_entry_id") @db.Uuid
+  // POSTED (default — immediate posting, exactly how every bill worked
+  // before this field existed) | PENDING_APPROVAL (PO-linked bill whose
+  // rate varies from the PO by more than Organization.priceVarianceTolerancePct
+  // — held with no journal entry, no stock movement, no billedQuantity
+  // impact until approved) | REJECTED (terminal — never posts; the record
+  // stays for audit, correct the numbers on a fresh bill instead. This app
+  // has no bill-edit capability, matching the existing convention that a
+  // posted-style document here is never revised in place). See
+  // routes/purchaseBills.ts and ROADMAP.md's "3-Way Match" section.
+  status            String    @default("POSTED") @db.VarChar(20)
+  approvedBy        String?   @map("approved_by") @db.Uuid
+  approvedAt        DateTime? @map("approved_at")
+  rejectedBy        String?   @map("rejected_by") @db.Uuid
+  rejectedAt        DateTime? @map("rejected_at")
+  rejectionReason   String?   @map("rejection_reason") @db.VarChar(500)
+  // Server-generated (never user-entered) — which line(s) exceeded the
+  // price tolerance and by how much, shown on the Pending Approval detail
+  // screen so the approver doesn't have to cross-reference the PO by hand.
+  varianceNote      String?   @map("variance_note") @db.VarChar(500)
   subtotal          Decimal  @db.Decimal(14, 2)
   taxTotal          Decimal  @map("tax_total") @db.Decimal(14, 2)
   grandTotal        Decimal  @map("grand_total") @db.Decimal(14, 2)
@@ -709,7 +738,7 @@ model PurchaseBill {
   organization    Organization       @relation(fields: [organizationId], references: [id])
   branch          Branch?            @relation(fields: [branchId], references: [id])
   businessPartner BusinessPartner    @relation(fields: [businessPartnerId], references: [id])
-  journalEntry    JournalEntry       @relation(fields: [journalEntryId], references: [id])
+  journalEntry    JournalEntry?      @relation(fields: [journalEntryId], references: [id])
   purchaseOrder   PurchaseOrder?     @relation(fields: [purchaseOrderId], references: [id])
   lines           PurchaseBillLine[]
   returns         PurchaseReturn[]

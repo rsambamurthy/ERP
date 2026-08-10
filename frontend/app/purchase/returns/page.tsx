@@ -105,7 +105,7 @@ function PurchaseReturnsInner() {
               <label className="ent-fl">Purchase Bill</label>
               <select className="ent-fc" value={selectedBillId} onChange={(e) => handleBillChange(e.target.value)} required>
                 <option value="">Select…</option>
-                {bills.map((b) => <option key={b.id} value={b.id}>{b.billNumber} — {b.businessPartner.name}</option>)}
+                {bills.filter((b) => b.status === "POSTED").map((b) => <option key={b.id} value={b.id}>{b.billNumber} — {b.businessPartner.name}</option>)}
               </select>
             </div>
             <div className="ent-fg">

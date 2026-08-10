@@ -294,8 +294,11 @@ export async function computeGstr3b(
     where: { organizationId, invoiceDate: { gte: from, lte: to }, ...(branchId ? { branchId } : {}) },
     _sum: { subtotal: true, discountTotal: true, cgstTotal: true, sgstTotal: true, igstTotal: true },
   });
+  // status: "POSTED" only — a bill held Pending Approval (3-way match price
+  // variance) hasn't actually posted yet, so its ITC isn't real yet either;
+  // a Rejected one never posted at all. See PurchaseBill.status.
   const billAgg = await prisma.purchaseBill.aggregate({
-    where: { organizationId, billDate: { gte: from, lte: to }, ...(branchId ? { branchId } : {}) },
+    where: { organizationId, billDate: { gte: from, lte: to }, status: "POSTED", ...(branchId ? { branchId } : {}) },
     _sum: { subtotal: true, cgstTotal: true, sgstTotal: true, igstTotal: true },
   });
 

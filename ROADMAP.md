@@ -729,6 +729,76 @@ and no `prisma db seed` step — a GRN posts stock movements
 (`StockMovement`/`ItemStock`/`StockLot`), never a journal entry. No new
 dependencies either (unlike the PDF feature above).
 
+## 3-Way Match & Purchase Bill Approval (built)
+
+Completes the PO -> GRN -> Bill chain with the piece that actually makes
+it a *match*, not just a chain of references: a Purchase Bill line's rate
+is checked against its Purchase Order line's rate, and a real approval
+gate sits in front of posting when they disagree.
+
+**Quantity was already a hard match (from the GRN feature above) — this
+adds price, and makes it soft.** A bill can never bill more than a GRN
+line actually received; that's an unconditional 400, no override. Price
+is different: a vendor's invoice legitimately might not match the PO to
+the last paisa (a small negotiated adjustment, a rounding difference), so
+rather than hard-blocking it, a rate that varies from the PO by more than
+`Organization.priceVarianceTolerancePct` holds the *whole* bill at
+`PENDING_APPROVAL` instead of posting it — nothing partially posts.
+Someone with `purchase.approve` (the same permission that already
+approves Purchase Orders — reused rather than adding a second one, since
+both are "sign off on a financial commitment" gates) then approves it
+through or rejects it. Tolerance null means 0%: any variance at all needs
+approval, the same "null = most cautious" default used everywhere else in
+this app (`poApprovalThreshold`, GRN's own PO-required scoping). An org
+that wants routine rounding differences to pass silently sets a tolerance
+on the Company Master screen.
+
+**Posting is fully deferred, not just gated.** A `PENDING_APPROVAL` bill
+has no journal entry (`journalEntryId` is now nullable), no stock
+movement (it was always PO-linked, so it never called `receiveStock`
+anyway), and no `billedQuantity` impact on either the `PurchaseOrderLine`
+or the `GoodsReceiptNoteLine` it references — none of that happens until
+`POST /purchase-bills/:id/approve`. This means a pending bill is
+completely invisible to every financial report (Trial Balance, Ledger,
+P&L, Balance Sheet, GSTR-1/3B) exactly the way an unposted document
+should be, since those all derive from `journal_entries`/`journal_lines`,
+which a pending bill hasn't touched. Approving reconstructs the exact
+same journal entry `POST /purchase-bills` would have created immediately
+had it matched — from the bill/line data already stored, not recomputed
+from a request body that's long gone — via a shared `buildBillJournalLineRows`
+helper used by both the immediate-post and deferred-approve paths, so
+there's exactly one place that knows this journal's shape.
+
+**Rejecting is terminal.** This app has no bill-edit capability at all
+(unlike Purchase Order, which is explicitly a draft-editable document) —
+a rejected bill just sits as a record with a reason; the fix is to raise
+a corrected bill, not to reopen this one. Nothing needs undoing either,
+since a pending bill never posted anything in the first place.
+
+**Approval re-validates the GRN quantity limit, not the price.** Between
+a bill being created and later approved, another bill against the same
+GRN line could have been approved first, eating into the headroom this
+one assumed. `POST /:id/approve` re-checks `billedQuantity` vs.
+`quantityReceived` on every referenced GRN line and 400s if it would now
+be exceeded — the approver has to reject and let a corrected bill be
+raised instead. The price variance itself is never re-checked at approval
+time, since approving *is* the override for that.
+
+**Two bugs found and fixed while wiring this in**, both about a bill that
+exists in the `purchase_bills` table but was never actually posted:
+- `POST /purchase-returns` and `GET /purchase-returns/bill/:billId/lines`
+  didn't check bill status at all — a Pending Approval or Rejected bill
+  (no stock movement, no Trade Payables impact) could have had a return
+  raised against it, reversing money and stock that never existed. Both
+  now require `status === "POSTED"`.
+- `computeGstr3b`'s Purchase Bill aggregate had no status filter either —
+  a Pending Approval bill's `cgstTotal`/`sgstTotal`/`igstTotal` would have
+  inflated the ITC claimed in GSTR-3B before the bill ever actually
+  posted. Now scoped to `status: "POSTED"` only.
+
+Requires `db/migration_024_bill_approval.sql`. No new GL accounts, no
+`prisma db seed` step, no new dependencies.
+
 ## From the earlier "what's next" review
 
 Flagged as gaps before Sales/Purchase/Inventory was chosen as the next

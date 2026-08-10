@@ -20,6 +20,7 @@ const CUSTOMS_DUTY_PAYABLE_CODE = "2105";
 const router = Router();
 router.use(authenticate, requireActiveSubscription);
 const canPost = requirePermission("purchase.post");
+const canApprove = requirePermission("purchase.approve");
 
 function orgIdOr400(req: import("express").Request, res: import("express").Response): string | null {
   const organizationId = resolveOrgId(req);
@@ -51,6 +52,41 @@ interface LineInput {
   // Stock is never re-received for a line like this — the GRN it
   // references already moved that stock in.
   goodsReceiptNoteLineId?: string;
+}
+
+// Shared by POST / (immediate posting) and POST /:id/approve (deferred
+// posting of a bill that was held for a price variance) — the same
+// journal shape either way: Dr each item's stock account, Dr GST Input
+// (split), Cr Customs Duty Payable (import only), Cr Trade Payables.
+function buildBillJournalLineRows(args: {
+  journalEntryId: string;
+  computed: { itemId: string; quantity: number; lineSubtotal: number; customsDutyAmount: number }[];
+  itemById: Map<string, { stockAccountId: string; businessPartnerId: string; sku: string }>;
+  cgstTotal: number; sgstTotal: number; igstTotal: number;
+  cgstInput: { id: string } | null; sgstInput: { id: string } | null; igstInput: { id: string } | null;
+  customsDutyPayableCredit: number; customsDutyPayable: { id: string } | null;
+  tradePayables: { id: string }; tradePayablesCredit: number;
+  vendor: { id: string; name: string };
+}) {
+  const {
+    journalEntryId, computed, itemById, cgstTotal, sgstTotal, igstTotal,
+    cgstInput, sgstInput, igstInput, customsDutyPayableCredit, customsDutyPayable,
+    tradePayables, tradePayablesCredit, vendor,
+  } = args;
+  return [
+    ...computed.map((l) => ({
+      journalEntryId,
+      accountId: itemById.get(l.itemId)!.stockAccountId,
+      businessPartnerId: itemById.get(l.itemId)!.businessPartnerId,
+      debit: l.lineSubtotal + l.customsDutyAmount, credit: 0,
+      narration: `${itemById.get(l.itemId)!.sku} x ${l.quantity}`,
+    })),
+    ...(cgstTotal > 0 ? [{ journalEntryId, accountId: cgstInput!.id, businessPartnerId: null, debit: cgstTotal, credit: 0, narration: "CGST Input" }] : []),
+    ...(sgstTotal > 0 ? [{ journalEntryId, accountId: sgstInput!.id, businessPartnerId: null, debit: sgstTotal, credit: 0, narration: "SGST Input" }] : []),
+    ...(igstTotal > 0 ? [{ journalEntryId, accountId: igstInput!.id, businessPartnerId: null, debit: igstTotal, credit: 0, narration: "IGST Input" }] : []),
+    ...(customsDutyPayableCredit > 0 ? [{ journalEntryId, accountId: customsDutyPayable!.id, businessPartnerId: null, debit: 0, credit: customsDutyPayableCredit, narration: "Customs duty + import IGST payable" }] : []),
+    { journalEntryId, accountId: tradePayables.id, businessPartnerId: vendor.id, debit: 0, credit: tradePayablesCredit, narration: `Payable to ${vendor.name}` },
+  ];
 }
 
 router.get("/", async (req, res) => {
@@ -140,11 +176,11 @@ router.post("/", canPost, async (req, res) => {
   // taken from the request, so a bill can never be posted against a
   // different vendor than the one the PO was approved for. See
   // routes/purchaseOrders.ts for the approval workflow itself.
-  let linkedPo: { id: string; businessPartnerId: string; status: string; lines: { id: string; quantity: any; billedQuantity: any }[] } | null = null;
+  let linkedPo: { id: string; businessPartnerId: string; status: string; lines: { id: string; quantity: any; rate: any; billedQuantity: any }[] } | null = null;
   if (purchaseOrderId) {
     linkedPo = await prisma.purchaseOrder.findFirst({
       where: { id: purchaseOrderId, organizationId },
-      include: { lines: { select: { id: true, quantity: true, billedQuantity: true } } },
+      include: { lines: { select: { id: true, quantity: true, rate: true, billedQuantity: true } } },
     });
     if (!linkedPo) return res.status(400).json({ message: "purchaseOrderId is not a valid Purchase Order for this organization." });
     if (linkedPo.status !== "APPROVED") {
@@ -171,7 +207,7 @@ router.post("/", canPost, async (req, res) => {
     return res.status(400).json({ message: "exchangeRate must be greater than 0 for a non-INR bill." });
   }
 
-  const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { costingMethod: true } });
+  const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { costingMethod: true, priceVarianceTolerancePct: true } });
   if (!org?.costingMethod) return res.status(422).json({ message: "Set the organization's stock costing method first." });
 
   const vendor = await prisma.businessPartner.findFirst({ where: { id: effectiveBusinessPartnerId, organizationId, bpType: "VENDOR" } });
@@ -295,6 +331,35 @@ router.post("/", canPost, async (req, res) => {
     }
   }
 
+  // 3-way match, price side (quantity side is the hard GRN-qty check
+  // above, which always applies regardless of approval). A PO-linked
+  // line whose rate differs from the PO line's own rate by more than the
+  // org's tolerance holds the *whole* bill at PENDING_APPROVAL instead of
+  // posting it immediately — nothing partially posts. Tolerance null
+  // means 0%: any variance at all requires approval. Not applicable to
+  // ad-hoc (non-PO) bills, which have no PO rate to compare against.
+  const tolerancePct = org.priceVarianceTolerancePct != null ? Number(org.priceVarianceTolerancePct) : 0;
+  let varianceNote: string | null = null;
+  if (linkedPo) {
+    const poLineById = new Map(linkedPo.lines.map((l) => [l.id, l]));
+    const typedComputed = computed as (typeof computed[number] & { purchaseOrderLineId?: string })[];
+    const varianceDescriptions: string[] = [];
+    for (const l of typedComputed) {
+      const poLine = poLineById.get(l.purchaseOrderLineId!);
+      if (!poLine) continue; // already validated above; unreachable in practice
+      const poRate = Number(poLine.rate);
+      const billRate = Number(l.rate);
+      const diffPct = poRate === 0 ? (billRate === 0 ? 0 : 100) : round2((Math.abs(billRate - poRate) / poRate) * 100);
+      if (diffPct > tolerancePct) {
+        varianceDescriptions.push(`${itemById.get(l.itemId)!.sku}: PO ₹${poRate.toFixed(2)} vs bill ₹${billRate.toFixed(2)} (${diffPct.toFixed(2)}%)`);
+      }
+    }
+    if (varianceDescriptions.length > 0) {
+      varianceNote = `Exceeds ${tolerancePct}% price tolerance — ${varianceDescriptions.join("; ")}`.slice(0, 500);
+    }
+  }
+  const requiresApproval = varianceNote !== null;
+
   const [cgstInput, sgstInput, igstInput, tradePayables, customsDutyPayable] = await Promise.all([
     prisma.account.findFirst({ where: { organizationId, accountCode: CGST_INPUT_CODE } }),
     prisma.account.findFirst({ where: { organizationId, accountCode: SGST_INPUT_CODE } }),
@@ -319,7 +384,13 @@ router.post("/", canPost, async (req, res) => {
 
   try {
     const bill = await prisma.$transaction(async (tx) => {
-      const journalEntry = await tx.journalEntry.create({
+      // Held for a price variance — no journal entry, no stock movement,
+      // no billedQuantity impact anywhere until someone with
+      // purchase.approve reviews it (POST /:id/approve/reject). The bill
+      // and its lines are still fully created below so the record exists
+      // and is visible on the Pending Approval list — only the posting
+      // side effects are deferred.
+      const journalEntry = requiresApproval ? null : await tx.journalEntry.create({
         data: {
           organizationId, branchId: resolvedBranchId, entryDate: new Date(billDate),
           narration: narration || `Purchase bill ${billNumber} — ${vendor.name}`,
@@ -327,34 +398,24 @@ router.post("/", canPost, async (req, res) => {
         },
       });
 
-      await tx.journalLine.createMany({
-        data: [
-          ...computed.map((l) => ({
-            journalEntryId: journalEntry.id,
-            accountId: itemById.get(l.itemId)!.stockAccountId,
-            businessPartnerId: itemById.get(l.itemId)!.businessPartnerId,
-            // Landed cost — goods value + this line's customs duty (0 on a
-            // domestic bill, so this collapses to the old lineSubtotal-only
-            // debit there).
-            debit: l.lineSubtotal + l.customsDutyAmount, credit: 0,
-            narration: `${itemById.get(l.itemId)!.sku} x ${l.quantity}`,
-          })),
-          ...(cgstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: cgstInput!.id, businessPartnerId: null, debit: cgstTotal, credit: 0, narration: "CGST Input" }] : []),
-          ...(sgstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: sgstInput!.id, businessPartnerId: null, debit: sgstTotal, credit: 0, narration: "SGST Input" }] : []),
-          ...(igstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: igstInput!.id, businessPartnerId: null, debit: igstTotal, credit: 0, narration: "IGST Input" }] : []),
-          // Import bills only: duty + import IGST are never owed to the
-          // vendor, so they credit Customs Duty Payable instead of Trade
-          // Payables. Domestic bills never hit this (credit is 0).
-          ...(customsDutyPayableCredit > 0 ? [{ journalEntryId: journalEntry.id, accountId: customsDutyPayable!.id, businessPartnerId: null, debit: 0, credit: customsDutyPayableCredit, narration: "Customs duty + import IGST payable" }] : []),
-          { journalEntryId: journalEntry.id, accountId: tradePayables.id, businessPartnerId: vendor.id, debit: 0, credit: tradePayablesCredit, narration: `Payable to ${vendor.name}` },
-        ],
-      });
+      if (journalEntry) {
+        await tx.journalLine.createMany({
+          data: buildBillJournalLineRows({
+            journalEntryId: journalEntry.id, computed, itemById, cgstTotal, sgstTotal, igstTotal,
+            cgstInput, sgstInput, igstInput, customsDutyPayableCredit, customsDutyPayable,
+            tradePayables, tradePayablesCredit, vendor,
+          }),
+        });
+      }
 
       const created = await tx.purchaseBill.create({
         data: {
           organizationId, branchId: resolvedBranchId, businessPartnerId: effectiveBusinessPartnerId,
           billNumber, billDate: new Date(billDate), narration: narration ?? "",
-          journalEntryId: journalEntry.id, subtotal, taxTotal, grandTotal,
+          journalEntryId: journalEntry?.id ?? null,
+          status: requiresApproval ? "PENDING_APPROVAL" : "POSTED",
+          varianceNote,
+          subtotal, taxTotal, grandTotal,
           cgstTotal, sgstTotal, igstTotal, customsDutyTotal,
           currency: currencyCode, exchangeRate: fxRate, grandTotalFc,
           // Almost never known yet at posting time — see the schema
@@ -383,7 +444,9 @@ router.post("/", canPost, async (req, res) => {
 
       // Stock inward only for ad-hoc (non-PO) lines — a PO-linked bill's
       // stock was already received via its Goods Receipt Note(s), so
-      // calling receiveStock again here would double-count it.
+      // calling receiveStock again here would double-count it. (A
+      // requiresApproval bill is always PO-linked — see above — so this
+      // never runs for one either way.)
       if (!linkedPo) {
         for (const l of computed) {
           await receiveStock(tx, {
@@ -398,8 +461,10 @@ router.post("/", canPost, async (req, res) => {
       // Roll the billed quantity forward on each referenced PO line and its
       // GRN line, then close the PO out once every one of its lines is
       // fully billed — same transaction, so this can never drift out of
-      // sync with the bill that just posted.
-      if (linkedPo) {
+      // sync with the bill that just posted. Deferred entirely for a
+      // requiresApproval bill — nothing's actually billed yet until
+      // POST /:id/approve does this same increment.
+      if (linkedPo && !requiresApproval) {
         const billedByPoLine = new Map<string, number>();
         const billedByGrnLine = new Map<string, number>();
         for (const l of computed as (typeof computed[number] & { purchaseOrderLineId?: string; goodsReceiptNoteLineId?: string })[]) {
@@ -432,13 +497,177 @@ router.post("/", canPost, async (req, res) => {
     logAudit({
       organizationId, actorUserId: req.user!.userId,
       action: "CREATE", entityType: "purchase_bill", entityId: bill.id,
-      summary: `Posted purchase bill ${billNumber} — ${vendor.name} (${grandTotal.toFixed(2)})`,
+      summary: requiresApproval
+        ? `Created purchase bill ${billNumber} — ${vendor.name} (${grandTotal.toFixed(2)}) — held Pending Approval: ${varianceNote}`
+        : `Posted purchase bill ${billNumber} — ${vendor.name} (${grandTotal.toFixed(2)})`,
     });
     res.status(201).json({ data: bill });
   } catch (err: any) {
     if (err?.status === 400) return res.status(400).json({ message: err.message });
     throw err;
   }
+});
+
+const APPROVE_DETAIL_INCLUDE = {
+  businessPartner: true,
+  lines: { include: { item: true } },
+  purchaseOrder: { select: { id: true, poNumber: true } },
+} as const;
+
+// POST /purchase-bills/:id/approve — the deferred half of posting for a
+// bill that was held at PENDING_APPROVAL (price variance beyond the org's
+// tolerance). Reconstructs the exact same journal entry POST / would have
+// created immediately if the bill had matched, from the bill/line data
+// already stored — nothing is recomputed from the original request body.
+router.post("/:id/approve", canApprove, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const bill = await prisma.purchaseBill.findFirst({
+    where: { id: req.params.id, organizationId },
+    include: APPROVE_DETAIL_INCLUDE,
+  });
+  if (!bill) return res.status(404).json({ message: "Purchase bill not found." });
+  if (bill.status !== "PENDING_APPROVAL") {
+    return res.status(400).json({ message: `Only a Pending Approval bill can be approved (this one is ${bill.status}).` });
+  }
+
+  // Re-validate the GRN quantity limits — another bill against the same
+  // GRN line(s) may have been approved since this one was created, so the
+  // headroom it assumed back then might no longer hold. This is the only
+  // hard constraint approval can't override; a price variance can be
+  // approved through, an over-received quantity can't.
+  const grnLineIds = [...new Set(bill.lines.map((l) => l.goodsReceiptNoteLineId).filter((x): x is string => !!x))];
+  const grnLines = await prisma.goodsReceiptNoteLine.findMany({
+    where: { id: { in: grnLineIds } },
+    select: { id: true, quantityReceived: true, billedQuantity: true },
+  });
+  const grnLineById = new Map(grnLines.map((l) => [l.id, l]));
+  const billedByGrnLine = new Map<string, number>();
+  for (const l of bill.lines) {
+    if (!l.goodsReceiptNoteLineId) continue;
+    billedByGrnLine.set(l.goodsReceiptNoteLineId, (billedByGrnLine.get(l.goodsReceiptNoteLineId) ?? 0) + Number(l.quantity));
+  }
+  for (const [grnLineId, qty] of billedByGrnLine) {
+    const grnLine = grnLineById.get(grnLineId);
+    if (!grnLine) continue; // shouldn't happen — the line existed when this bill was created
+    const alreadyBilled = Number(grnLine.billedQuantity);
+    const received = Number(grnLine.quantityReceived);
+    if (round2(alreadyBilled + qty) > received) {
+      return res.status(400).json({
+        message: `Can't approve — billing ${qty} against Goods Receipt Note line ${grnLineId} would now exceed the received quantity ` +
+          `(${received} received, ${alreadyBilled} already billed by other approved bills since this one was created, ${round2(received - alreadyBilled)} remaining). ` +
+          `Reject this bill and raise a corrected one.`,
+      });
+    }
+  }
+
+  const isForeign = bill.currency !== "INR";
+  const itemById = new Map(bill.lines.map((l) => [l.itemId, l.item]));
+  const cgstTotal = Number(bill.cgstTotal), sgstTotal = Number(bill.sgstTotal), igstTotal = Number(bill.igstTotal);
+  const customsDutyTotal = Number(bill.customsDutyTotal), taxTotal = Number(bill.taxTotal);
+
+  const [cgstInput, sgstInput, igstInput, tradePayables, customsDutyPayable] = await Promise.all([
+    prisma.account.findFirst({ where: { organizationId, accountCode: CGST_INPUT_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: SGST_INPUT_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: IGST_INPUT_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: TRADE_PAYABLES_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: CUSTOMS_DUTY_PAYABLE_CODE } }),
+  ]);
+  if (!tradePayables) return res.status(500).json({ message: "Trade Payables account not found — re-run provisioning." });
+  if (cgstTotal > 0 && !cgstInput) return res.status(500).json({ message: "CGST Input Credit account not found — re-run provisioning." });
+  if (sgstTotal > 0 && !sgstInput) return res.status(500).json({ message: "SGST Input Credit account not found — re-run provisioning." });
+  if (igstTotal > 0 && !igstInput) return res.status(500).json({ message: "IGST Input Credit account not found — re-run provisioning." });
+  const customsDutyPayableCredit = isForeign ? round2(customsDutyTotal + taxTotal) : 0;
+  if (customsDutyPayableCredit > 0 && !customsDutyPayable) {
+    return res.status(500).json({ message: "Customs Duty Payable account not found — re-run provisioning (npx prisma db seed, then Sync from Templates)." });
+  }
+  const tradePayablesCredit = isForeign ? Number(bill.subtotal) : Number(bill.grandTotal);
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const journalEntry = await tx.journalEntry.create({
+      data: {
+        organizationId, branchId: bill.branchId, entryDate: bill.billDate,
+        narration: bill.narration || `Purchase bill ${bill.billNumber} — ${bill.businessPartner.name}`,
+        voucherType: "PB", referenceType: "purchase_bill", createdBy: req.user!.userId,
+      },
+    });
+    await tx.journalLine.createMany({
+      data: buildBillJournalLineRows({
+        journalEntryId: journalEntry.id,
+        computed: bill.lines.map((l) => ({
+          itemId: l.itemId, quantity: Number(l.quantity),
+          lineSubtotal: Number(l.lineSubtotal), customsDutyAmount: Number(l.customsDutyAmount),
+        })),
+        itemById, cgstTotal, sgstTotal, igstTotal,
+        cgstInput, sgstInput, igstInput, customsDutyPayableCredit, customsDutyPayable,
+        tradePayables, tradePayablesCredit, vendor: bill.businessPartner,
+      }),
+    });
+
+    // Same billedQuantity rollup / PO auto-close POST / does immediately
+    // for a matched bill — deferred until now for one that needed approval.
+    const billedByPoLine = new Map<string, number>();
+    for (const l of bill.lines) {
+      if (!l.purchaseOrderLineId || !l.goodsReceiptNoteLineId) continue;
+      billedByPoLine.set(l.purchaseOrderLineId, (billedByPoLine.get(l.purchaseOrderLineId) ?? 0) + Number(l.quantity));
+    }
+    for (const [poLineId, qty] of billedByPoLine) {
+      await tx.purchaseOrderLine.update({ where: { id: poLineId }, data: { billedQuantity: { increment: qty } } });
+    }
+    for (const [grnLineId, qty] of billedByGrnLine) {
+      await tx.goodsReceiptNoteLine.update({ where: { id: grnLineId }, data: { billedQuantity: { increment: qty } } });
+    }
+    if (bill.purchaseOrderId) {
+      const allLines = await tx.purchaseOrderLine.findMany({ where: { purchaseOrderId: bill.purchaseOrderId } });
+      const fullyBilled = allLines.every((l) => Number(l.billedQuantity) >= Number(l.quantity));
+      if (fullyBilled) {
+        await tx.purchaseOrder.update({ where: { id: bill.purchaseOrderId }, data: { status: "CLOSED" } });
+      }
+    }
+
+    return tx.purchaseBill.update({
+      where: { id: bill.id },
+      data: { status: "POSTED", journalEntryId: journalEntry.id, approvedBy: req.user!.userId, approvedAt: new Date() },
+      include: APPROVE_DETAIL_INCLUDE,
+    });
+  });
+
+  logAudit({
+    organizationId, actorUserId: req.user!.userId,
+    action: "UPDATE", entityType: "purchase_bill", entityId: bill.id,
+    summary: `Approved and posted purchase bill ${bill.billNumber} — ${bill.businessPartner.name} (${Number(bill.grandTotal).toFixed(2)})`,
+  });
+  res.json({ data: updated });
+});
+
+// POST /purchase-bills/:id/reject — PENDING_APPROVAL only, terminal (no
+// reopen — this app has no bill-edit capability at all; correct the
+// numbers on a fresh bill instead). Nothing to undo, since a pending
+// bill never posted anything in the first place.
+router.post("/:id/reject", canApprove, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const bill = await prisma.purchaseBill.findFirst({ where: { id: req.params.id, organizationId } });
+  if (!bill) return res.status(404).json({ message: "Purchase bill not found." });
+  if (bill.status !== "PENDING_APPROVAL") {
+    return res.status(400).json({ message: `Only a Pending Approval bill can be rejected (this one is ${bill.status}).` });
+  }
+  const { reason } = req.body ?? {};
+  if (!reason || !String(reason).trim()) {
+    return res.status(400).json({ message: "A rejection reason is required." });
+  }
+
+  const updated = await prisma.purchaseBill.update({
+    where: { id: bill.id },
+    data: { status: "REJECTED", rejectedBy: req.user!.userId, rejectedAt: new Date(), rejectionReason: String(reason).trim() },
+    include: APPROVE_DETAIL_INCLUDE,
+  });
+  logAudit({
+    organizationId, actorUserId: req.user!.userId,
+    action: "UPDATE", entityType: "purchase_bill", entityId: bill.id,
+    summary: `Rejected purchase bill ${bill.billNumber}: ${String(reason).trim()}`,
+  });
+  res.json({ data: updated });
 });
 
 export default router;

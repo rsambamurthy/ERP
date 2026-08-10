@@ -466,6 +466,64 @@ Requires `db/migration_023_goods_receipt_notes.sql`. No new GL accounts
 and no `prisma db seed` step — a GRN posts stock movements, never a
 journal entry. No new dependencies either.
 
+### 3-Way Match & Purchase Bill Approval (`/purchase-bills/:id/approve`, `/:id/reject`)
+
+Adds the price half of the 3-way match (quantity was already a hard
+GRN-vs-billed check, above) and a real approval gate on top of it. A
+PO-linked bill line whose rate differs from its PO line's rate by more
+than `Organization.priceVarianceTolerancePct` holds the *whole* bill —
+not just that line — at `PurchaseBill.status = "PENDING_APPROVAL"`
+instead of posting immediately.
+
+| Route | Notes |
+| --- | --- |
+| `POST /purchase-bills/:id/approve` | `PENDING_APPROVAL` only. Re-validates GRN quantity limits (another bill may have consumed the headroom since this one was created — this is the one thing approval can't override), then does the deferred posting: journal entry, `PurchaseOrderLine`/`GoodsReceiptNoteLine` `billedQuantity` increments, PO auto-close check. `purchase.approve`. |
+| `POST /purchase-bills/:id/reject` | `PENDING_APPROVAL` only → `REJECTED`. Body `{ reason }`, required. Terminal — no reopen (this app has no bill-edit capability at all; raise a corrected bill instead). Nothing to undo, since a pending bill never posted anything. `purchase.approve`. |
+
+**`purchase.approve` is reused, not duplicated** — the same permission
+that already gates Purchase Order approval now also gates this, since
+both are "sign off on a financial commitment" checkpoints. Label
+broadened in `lib/permissions.ts` accordingly; no change to which roles
+have it by default.
+
+**Tolerance.** `Organization.priceVarianceTolerancePct` (nullable
+`Decimal(5,2)`, 0–100), set via `PATCH /company-master` alongside
+`poApprovalThreshold`. Null means 0% — any variance at all requires
+approval, same "null = most cautious" convention as the PO threshold.
+
+**Posting is fully deferred, not just gated.** `PurchaseBill.journalEntryId`
+is now nullable — a `PENDING_APPROVAL` bill has no journal entry, no
+stock movement (it's always PO-linked, so `receiveStock` was never going
+to run for it anyway), and no `billedQuantity` impact on either the
+`PurchaseOrderLine` or `GoodsReceiptNoteLine` it references. All of that
+happens for the first time at `POST /:id/approve`, which reconstructs the
+exact journal entry `POST /purchase-bills` would have posted immediately
+had it matched — from the bill/line data already stored in
+`PurchaseBillLine`, never recomputed from the original request. Both
+paths share one `buildBillJournalLineRows()` helper so there's a single
+place that knows this journal's shape (Dr each item's stock account, Dr
+GST Input split, Cr Customs Duty Payable on imports, Cr Trade Payables).
+
+**`PurchaseBill.varianceNote`** — server-generated (never user-entered),
+lists which line(s) exceeded tolerance and by how much
+(`"Exceeds 2% price tolerance — SKU001: PO ₹100.00 vs bill ₹115.00 (15.00%)"`),
+shown on the Pending Approval detail screen so the approver doesn't have
+to cross-reference the PO by hand.
+
+**Two bugs found and fixed while wiring this in**, both about code that
+assumed every row in `purchase_bills` had actually posted:
+- `POST /purchase-returns` and `GET /purchase-returns/bill/:billId/lines`
+  had no status check — a return could have been raised against a bill
+  that never moved stock or touched Trade Payables. Both now require
+  `status === "POSTED"` (400 otherwise).
+- `computeGstr3b` (`lib/gstReports.ts`) aggregated Purchase Bill GST
+  totals with no status filter, which would have overstated ITC in
+  GSTR-3B for any bill still sitting at `PENDING_APPROVAL`. Now scoped to
+  `status: "POSTED"`.
+
+Requires `db/migration_024_bill_approval.sql`. No new GL accounts, no
+`prisma db seed` step, no new dependencies.
+
 ### Bulk upload (`/accounts`, `/items`, `/business-partners` — `/bulk-upload/*`)
 
 Same three-step flow on all three, ported from SmartAppt Gold's vendor/bank upload pattern (`lib/xlsxTemplate.ts` + `lib/upload.ts` are the shared pieces): `GET .../bulk-upload/template` downloads a styled `.xlsx` (header row, inline hints, dropdown validation on enum columns); `POST .../bulk-upload/preview` (multipart, field name `file`) parses it server-side and returns every row tagged `create` / `update` / `error` — nothing is written yet; `POST .../bulk-upload/apply` takes back only the rows the user confirmed (body `{ rows: [...] }`) and commits them. Matching an uploaded row to an existing record: Chart of Accounts by Account Code, Items by SKU, Business Partners by the optional `code` field (blank code always creates new — see `migration_007`). Requires `db/migration_007_user_name_and_bp_code.sql`.

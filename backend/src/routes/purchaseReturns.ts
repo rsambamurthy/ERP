@@ -72,6 +72,12 @@ router.get("/bill/:billId/lines", async (req, res) => {
     include: { lines: { include: { item: { select: { id: true, sku: true, name: true, uom: true } } } }, businessPartner: { select: { id: true, name: true } } },
   });
   if (!bill) return res.status(404).json({ message: "Purchase bill not found." });
+  // A bill that hasn't posted yet (Pending Approval — see PurchaseBill.status)
+  // never moved stock or touched Trade Payables, so there's nothing to
+  // reverse. A Rejected bill never posted at all.
+  if (bill.status !== "POSTED") {
+    return res.status(400).json({ message: `Bill ${bill.billNumber} is ${bill.status}, not Posted — nothing to return against yet.` });
+  }
 
   const lineIds = bill.lines.map((l) => l.id);
   const returned = await prisma.purchaseReturnLine.groupBy({
@@ -116,6 +122,11 @@ router.post("/", canPost, async (req, res) => {
     include: { lines: true, businessPartner: true },
   });
   if (!bill) return res.status(400).json({ message: "purchaseBillId must be an existing purchase bill for this org." });
+  // Same guard as GET /bill/:billId/lines above — a bill that hasn't
+  // posted yet has no stock/Trade-Payables impact to reverse.
+  if (bill.status !== "POSTED") {
+    return res.status(400).json({ message: `Bill ${bill.billNumber} is ${bill.status}, not Posted — nothing to return against yet.` });
+  }
 
   const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { costingMethod: true } });
   if (!org?.costingMethod) return res.status(422).json({ message: "Set the organization's stock costing method first." });

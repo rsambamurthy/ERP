@@ -6,14 +6,33 @@ import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import {
-  ApiError, createPurchaseBill, getBranches, getBusinessPartners, getGoodsReceiptNotes, getItems, getPurchaseBill,
-  getPurchaseBills, getPurchaseOrder, getPurchaseOrders, updatePurchaseBillReference,
+  ApiError, approvePurchaseBill, createPurchaseBill, getBranches, getBusinessPartners, getGoodsReceiptNotes, getItems,
+  getPurchaseBill, getPurchaseBills, getPurchaseOrder, getPurchaseOrders, rejectPurchaseBill, updatePurchaseBillReference,
 } from "@/lib/api";
+import { canApprovePurchaseOrders } from "@/lib/auth";
 import { isInterState, round2, splitGst } from "@/lib/discountGst";
-import type { Branch, BusinessPartner, DocumentLineInput, Item, PurchaseBill, PurchaseOrder } from "@/lib/types";
-import { SUPPORTED_CURRENCIES, currencySymbol } from "@/lib/types";
+import type { Branch, BusinessPartner, DocumentLineInput, Item, PurchaseBill, PurchaseBillStatus, PurchaseOrder } from "@/lib/types";
+import { PURCHASE_BILL_STATUS_LABELS, SUPPORTED_CURRENCIES, currencySymbol } from "@/lib/types";
 
 const emptyLine = (): DocumentLineInput => ({ itemId: "", quantity: 0, rate: 0, rateFc: 0, taxRate: 0, customsDutyRate: 0 });
+
+const BILL_STATUS_COLORS: Record<PurchaseBillStatus, { bg: string; fg: string }> = {
+  POSTED: { bg: "#dcfce7", fg: "#166534" },
+  PENDING_APPROVAL: { bg: "#fef3c7", fg: "#92400e" },
+  REJECTED: { bg: "#fee2e2", fg: "#991b1b" },
+};
+
+function BillStatusBadge({ status }: { status: PurchaseBillStatus }) {
+  const c = BILL_STATUS_COLORS[status];
+  return (
+    <span style={{
+      display: "inline-block", padding: "2px 10px", borderRadius: 999, fontSize: 11.5, fontWeight: 600,
+      background: c.bg, color: c.fg,
+    }}>
+      {PURCHASE_BILL_STATUS_LABELS[status]}
+    </span>
+  );
+}
 
 function PurchaseBillsInner() {
   const searchParams = useSearchParams();
@@ -64,6 +83,13 @@ function PurchaseBillsInner() {
   const [boePort, setBoePort] = useState("");
   const [savingBoe, setSavingBoe] = useState(false);
   const [boeError, setBoeError] = useState<string | null>(null);
+
+  // 3-way match approval — Pending Approval bills only (see PurchaseBill.status).
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const canApprove = canApprovePurchaseOrders();
 
   const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
   const selectedVendor = useMemo(() => vendors.find((v) => v.id === businessPartnerId), [vendors, businessPartnerId]);
@@ -177,6 +203,9 @@ function PurchaseBillsInner() {
     setDetailLoading(true);
     setEditingBoe(false);
     setBoeError(null);
+    setActionError(null);
+    setRejecting(false);
+    setRejectReason("");
     try {
       const res = await getPurchaseBill(id);
       setDetail(res.data);
@@ -184,6 +213,29 @@ function PurchaseBillsInner() {
       setDetailError(err instanceof ApiError ? err.message : "Could not load bill.");
     } finally {
       setDetailLoading(false);
+    }
+  }
+
+  async function refreshDetail(id: string) {
+    const res = await getPurchaseBill(id);
+    setDetail(res.data);
+    await loadAll();
+  }
+
+  // Returns whether it succeeded, so the reject form knows whether to
+  // close itself — same pattern as app/purchase/orders/page.tsx.
+  async function runAction(id: string, fn: () => Promise<unknown>): Promise<boolean> {
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      await fn();
+      await refreshDetail(id);
+      return true;
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Action failed.");
+      return false;
+    } finally {
+      setActionBusy(false);
     }
   }
 
@@ -456,7 +508,10 @@ function PurchaseBillsInner() {
       {(detailLoading || detail || detailError) && (
         <div className="ent-section">
           <div className="ent-section-hdr">
-            <span className="ent-section-title">{detail ? `Bill ${detail.billNumber}` : "Loading…"}</span>
+            <span className="ent-section-title">
+              {detail ? `Bill ${detail.billNumber} ` : "Loading…"}
+              {detail && <BillStatusBadge status={detail.status} />}
+            </span>
             <button type="button" className="ent-ia ent-ia-edit" onClick={() => { setDetail(null); setDetailError(null); }}>Close</button>
           </div>
           {detailLoading && <p style={{ padding: "0 14px 14px", fontSize: 13, color: "var(--color-muted)" }}>Loading…</p>}
@@ -475,6 +530,53 @@ function PurchaseBillsInner() {
                   {docForeign && ` · ${detail.currency} @ ${Number(detail.exchangeRate).toFixed(4)}`}
                   {detail.purchaseOrder && ` · from ${detail.purchaseOrder.poNumber}`}
                 </div>
+
+                {detail.status === "PENDING_APPROVAL" && (
+                  <div style={{ padding: "0 14px 10px" }}>
+                    <div style={{
+                      background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6,
+                      padding: "8px 14px", fontSize: 13, color: "#92400e", marginBottom: 8,
+                    }}>
+                      Held for approval — no journal entry or stock impact yet. {detail.varianceNote}
+                    </div>
+                    {actionError && <p style={{ color: "#dc2626", fontSize: 13, marginBottom: 8 }}>{actionError}</p>}
+                    {canApprove ? (
+                      !rejecting ? (
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button type="button" className="ent-btn-save" disabled={actionBusy} onClick={() => runAction(detail.id, () => approvePurchaseBill(detail.id))}>
+                            {actionBusy ? "Approving…" : "Approve & Post"}
+                          </button>
+                          <button type="button" className="ent-ia ent-ia-del" disabled={actionBusy} onClick={() => setRejecting(true)}>Reject</button>
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", width: "100%" }}>
+                          <input
+                            className="ent-fc" style={{ flex: 1 }} placeholder="Reason for rejection"
+                            value={rejectReason} onChange={(e) => setRejectReason(e.target.value)}
+                          />
+                          <button
+                            type="button" className="ent-btn-save" disabled={actionBusy || !rejectReason.trim()}
+                            onClick={async () => {
+                              const ok = await runAction(detail.id, () => rejectPurchaseBill(detail.id, rejectReason.trim()));
+                              if (ok) { setRejecting(false); setRejectReason(""); }
+                            }}
+                          >
+                            {actionBusy ? "Rejecting…" : "Confirm Reject"}
+                          </button>
+                          <button type="button" className="ent-ia ent-ia-edit" onClick={() => { setRejecting(false); setRejectReason(""); }}>Cancel</button>
+                        </div>
+                      )
+                    ) : (
+                      <p style={{ fontSize: 13, color: "var(--color-muted)" }}>Awaiting approval from someone with approval authority.</p>
+                    )}
+                  </div>
+                )}
+
+                {detail.status === "REJECTED" && (
+                  <p style={{ padding: "0 14px 10px", fontSize: 13, color: "#991b1b" }}>
+                    Rejected{detail.rejectedAt ? ` on ${new Date(detail.rejectedAt).toLocaleDateString()}` : ""}: {detail.rejectionReason}
+                  </p>
+                )}
 
                 {docForeign && (
                   <div style={{ padding: "0 14px 10px" }}>
@@ -581,15 +683,16 @@ function PurchaseBillsInner() {
 
       <div className="ent-page-table">
         <table>
-          <thead><tr><th>Bill #</th><th>Date</th><th>Vendor</th><th style={{ textAlign: "right" }}>Amount</th><th /></tr></thead>
+          <thead><tr><th>Bill #</th><th>Date</th><th>Vendor</th><th>Status</th><th style={{ textAlign: "right" }}>Amount</th><th /></tr></thead>
           <tbody>
-            {loading && <tr><td colSpan={5} className="ent-empty">Loading…</td></tr>}
-            {!loading && bills.length === 0 && <tr><td colSpan={5} className="ent-empty">No bills yet.</td></tr>}
+            {loading && <tr><td colSpan={6} className="ent-empty">Loading…</td></tr>}
+            {!loading && bills.length === 0 && <tr><td colSpan={6} className="ent-empty">No bills yet.</td></tr>}
             {bills.map((b) => (
               <tr key={b.id} style={{ cursor: "pointer" }} onClick={() => openDetail(b.id)}>
                 <td style={{ fontWeight: 500 }}>{b.billNumber}</td>
                 <td style={{ color: "var(--color-muted)" }}>{new Date(b.billDate).toLocaleDateString()}</td>
                 <td>{b.businessPartner.name}</td>
+                <td><BillStatusBadge status={b.status} /></td>
                 <td style={{ textAlign: "right" }}>
                   {Number(b.grandTotal).toFixed(2)}
                   {b.currency !== "INR" && b.grandTotalFc != null && (
@@ -597,7 +700,9 @@ function PurchaseBillsInner() {
                   )}
                 </td>
                 <td style={{ textAlign: "right" }}>
-                  <Link className="ent-ia ent-ia-edit" href={`/purchase/returns?billId=${b.id}`} onClick={(e) => e.stopPropagation()}>Return</Link>
+                  {b.status === "POSTED" && (
+                    <Link className="ent-ia ent-ia-edit" href={`/purchase/returns?billId=${b.id}`} onClick={(e) => e.stopPropagation()}>Return</Link>
+                  )}
                 </td>
               </tr>
             ))}

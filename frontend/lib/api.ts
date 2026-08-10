@@ -211,7 +211,7 @@ export function getCompanyMaster() {
 export function updateCompanyMaster(body: {
   cin?: string | null; companyPan?: string | null; companyType?: string | null;
   incorporationDate?: string | null; registeredOfficeAddress?: string | null;
-  poApprovalThreshold?: number | null;
+  poApprovalThreshold?: number | null; priceVarianceTolerancePct?: number | null;
 }) {
   return request<{ data: CompanyMaster }>("/company-master", { method: "PATCH", body: JSON.stringify(body) });
 }
@@ -522,6 +522,18 @@ export function updatePurchaseBillReference(id: string, body: {
   billOfEntryNumber?: string | null; billOfEntryDate?: string | null; portCode?: string | null;
 }) {
   return request<{ data: PurchaseBill }>(`/purchase-bills/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+// 3-way match approval — PENDING_APPROVAL only. Approving performs the
+// deferred posting (journal entry, billedQuantity increments); rejecting
+// is terminal (this app has no bill-edit capability — raise a corrected
+// bill instead). See PurchaseBill.status.
+export function approvePurchaseBill(id: string) {
+  return request<{ data: PurchaseBill }>(`/purchase-bills/${id}/approve`, { method: "POST" });
+}
+
+export function rejectPurchaseBill(id: string, reason: string) {
+  return request<{ data: PurchaseBill }>(`/purchase-bills/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
 }
 
 // ── Purchase Orders ──────────────────────────────────────────────────────

@@ -24,7 +24,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "branches.manage": "Manage Branches",
   "sales.post": "Post Sales Invoices & Sales Returns",
   "purchase.post": "Create Purchase Orders, post Purchase Bills & Purchase Returns",
-  "purchase.approve": "Approve or reject Purchase Orders",
+  "purchase.approve": "Approve or reject Purchase Orders & Purchase Bills held for a price variance",
   "purchase.receive": "Raise Goods Receipt Notes (receive goods against a Purchase Order)",
   "inventory.post": "Post Stock Adjustments",
   "journal.post": "Post Journal Entries",

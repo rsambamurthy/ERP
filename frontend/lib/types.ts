@@ -184,6 +184,10 @@ export interface CompanyMaster {
   // requires manual approval regardless of amount. See
   // PurchaseOrder.status and the "Purchase Order Workflow" ROADMAP section.
   poApprovalThreshold: string | null;
+  // 3-way match price tolerance — null means 0%, any variance between a
+  // Purchase Bill line's rate and its Purchase Order line's rate requires
+  // approval. See PurchaseBill.status and PurchaseBill.varianceNote.
+  priceVarianceTolerancePct: string | null;
   directors: Director[];
   auditors: Auditor[];
 }
@@ -565,11 +569,36 @@ export const EXPORT_TYPE_LABELS: Record<ExportType, string> = {
   WPAY: "With Payment of IGST (claimed back as refund)",
 };
 
+// POSTED (default — journal entry + stock/billedQuantity impact already
+// happened, exactly like every bill before this status existed) |
+// PENDING_APPROVAL (PO-linked bill whose rate varies from the PO by more
+// than Organization.priceVarianceTolerancePct — held with no journal
+// entry, no stock movement, no billedQuantity impact until approved) |
+// REJECTED (terminal — never posts; this app has no bill-edit capability,
+// so correct the numbers on a fresh bill instead). See
+// routes/purchaseBills.ts and ROADMAP.md's "3-Way Match" section.
+export type PurchaseBillStatus = "POSTED" | "PENDING_APPROVAL" | "REJECTED";
+
+export const PURCHASE_BILL_STATUS_LABELS: Record<PurchaseBillStatus, string> = {
+  POSTED: "Posted",
+  PENDING_APPROVAL: "Pending Approval",
+  REJECTED: "Rejected",
+};
+
 export interface PurchaseBill {
   id: string;
   billNumber: string;
   billDate: string;
   narration: string;
+  status: PurchaseBillStatus;
+  // Server-generated — which line(s) exceeded the price tolerance and by
+  // how much. Only ever set on a PENDING_APPROVAL (or since-approved) bill.
+  varianceNote: string | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  rejectedBy: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
   businessPartner: { id: string; name: string };
   subtotal: string;
   taxTotal: string;

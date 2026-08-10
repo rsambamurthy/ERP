@@ -30,6 +30,7 @@ router.get("/", async (req, res) => {
     select: {
       id: true, name: true, cin: true, companyPan: true, companyType: true,
       incorporationDate: true, registeredOfficeAddress: true, poApprovalThreshold: true,
+      priceVarianceTolerancePct: true,
     },
   });
   if (!org) return res.status(404).json({ message: "Organization not found." });
@@ -47,9 +48,18 @@ router.patch("/", canManageCompany, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
 
-  const { cin, companyPan, companyType, incorporationDate, registeredOfficeAddress, poApprovalThreshold } = req.body ?? {};
+  const {
+    cin, companyPan, companyType, incorporationDate, registeredOfficeAddress,
+    poApprovalThreshold, priceVarianceTolerancePct,
+  } = req.body ?? {};
   if (poApprovalThreshold !== undefined && poApprovalThreshold !== null && !(Number(poApprovalThreshold) >= 0)) {
     return res.status(400).json({ message: "poApprovalThreshold must be a non-negative number, or null." });
+  }
+  if (
+    priceVarianceTolerancePct !== undefined && priceVarianceTolerancePct !== null &&
+    !(Number(priceVarianceTolerancePct) >= 0 && Number(priceVarianceTolerancePct) <= 100)
+  ) {
+    return res.status(400).json({ message: "priceVarianceTolerancePct must be between 0 and 100, or null." });
   }
   const updated = await prisma.organization.update({
     where: { id: organizationId },
@@ -64,10 +74,15 @@ router.patch("/", canManageCompany, async (req, res) => {
       // field on this endpoint: omit it (or send null) to clear it back to
       // "always require manual approval".
       poApprovalThreshold: poApprovalThreshold != null ? Number(poApprovalThreshold) : null,
+      // 3-way match price tolerance — see the schema comment on
+      // Organization.priceVarianceTolerancePct. Same omit/null-clears
+      // convention; null means "0% tolerance, any variance needs approval".
+      priceVarianceTolerancePct: priceVarianceTolerancePct != null ? Number(priceVarianceTolerancePct) : null,
     },
     select: {
       id: true, name: true, cin: true, companyPan: true, companyType: true,
       incorporationDate: true, registeredOfficeAddress: true, poApprovalThreshold: true,
+      priceVarianceTolerancePct: true,
     },
   });
   logAudit({

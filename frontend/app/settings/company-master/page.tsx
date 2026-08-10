@@ -38,7 +38,7 @@ export default function CompanyMasterPage() {
 
   const [orgForm, setOrgForm] = useState({
     cin: "", companyPan: "", companyType: "", incorporationDate: "", registeredOfficeAddress: "",
-    poApprovalThreshold: "",
+    poApprovalThreshold: "", priceVarianceTolerancePct: "",
   });
   const [savingOrg, setSavingOrg] = useState(false);
 
@@ -62,6 +62,7 @@ export default function CompanyMasterPage() {
         incorporationDate: res.data.incorporationDate ? res.data.incorporationDate.slice(0, 10) : "",
         registeredOfficeAddress: res.data.registeredOfficeAddress ?? "",
         poApprovalThreshold: res.data.poApprovalThreshold ?? "",
+        priceVarianceTolerancePct: res.data.priceVarianceTolerancePct ?? "",
       });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load company master data.");
@@ -84,6 +85,7 @@ export default function CompanyMasterPage() {
         incorporationDate: orgForm.incorporationDate || null,
         registeredOfficeAddress: orgForm.registeredOfficeAddress || null,
         poApprovalThreshold: orgForm.poApprovalThreshold ? Number(orgForm.poApprovalThreshold) : null,
+        priceVarianceTolerancePct: orgForm.priceVarianceTolerancePct ? Number(orgForm.priceVarianceTolerancePct) : null,
       });
       await load();
     } catch (err) {
@@ -234,6 +236,21 @@ export default function CompanyMasterPage() {
                 <p style={{ fontSize: 11.5, color: "var(--color-muted)", margin: 0 }}>
                   A submitted Purchase Order below this amount is approved automatically. Blank means every Purchase
                   Order needs manual approval, regardless of amount — the safe default.
+                </p>
+              </div>
+              <div className="ent-fg">
+                <label className="ent-fl">3-Way Match Price Tolerance (%)</label>
+                <input
+                  type="number" min={0} max={100} step="0.01" className="ent-fc" placeholder="Leave blank for 0% — any variance needs approval"
+                  value={orgForm.priceVarianceTolerancePct}
+                  onChange={(e) => setOrgForm((f) => ({ ...f, priceVarianceTolerancePct: e.target.value }))}
+                />
+              </div>
+              <div className="ent-fg" style={{ gridColumn: "1 / -1" }}>
+                <p style={{ fontSize: 11.5, color: "var(--color-muted)", margin: 0 }}>
+                  A Purchase Bill raised against a Purchase Order whose rate differs from the order by more than this
+                  percentage is held Pending Approval instead of posting immediately. Blank means 0% — any price
+                  variance at all needs approval, the safe default.
                 </p>
               </div>
             </div>
