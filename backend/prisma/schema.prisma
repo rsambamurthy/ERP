@@ -675,6 +675,13 @@ model PurchaseBill {
   billOfEntryNumber String?  @map("bill_of_entry_number") @db.VarChar(30)
   billOfEntryDate   DateTime? @map("bill_of_entry_date") @db.Date
   portCode          String?  @map("port_code") @db.VarChar(10)
+  // Basic Customs Duty (non-creditable — folds into landed cost, never
+  // touches a GST account) — only nonzero on a foreign-currency bill. See
+  // routes/purchaseBills.ts for the full posting split: Trade Payables
+  // (vendor) only ever gets `subtotal` on an import; customsDutyTotal +
+  // taxTotal both credit the new Customs Duty Payable account instead,
+  // since neither is actually owed to the vendor.
+  customsDutyTotal  Decimal  @default(0) @map("customs_duty_total") @db.Decimal(14, 2)
   createdBy         String?  @map("created_by") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at")
 
@@ -704,6 +711,14 @@ model PurchaseBillLine {
   igstAmount     Decimal @default(0) @map("igst_amount") @db.Decimal(14, 2)
   rateFc         Decimal? @map("rate_fc") @db.Decimal(14, 4)
   lineTotalFc    Decimal? @map("line_total_fc") @db.Decimal(14, 2)
+  // Basic Customs Duty — entered as a % of this line's INR taxable value
+  // (customsDutyRate), computed into customsDutyAmount, folded straight
+  // into landed unit cost (see receiveStock's unitCost in
+  // routes/purchaseBills.ts) and into the IGST base (IGST on an import is
+  // charged on goods value + duty, not goods value alone). Both null/0 on
+  // a domestic bill.
+  customsDutyRate   Decimal? @map("customs_duty_rate") @db.Decimal(5, 2)
+  customsDutyAmount Decimal  @default(0) @map("customs_duty_amount") @db.Decimal(14, 2)
 
   purchaseBill PurchaseBill         @relation(fields: [purchaseBillId], references: [id])
   item         Item                 @relation(fields: [itemId], references: [id])

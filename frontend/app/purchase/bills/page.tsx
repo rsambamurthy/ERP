@@ -9,7 +9,7 @@ import { isInterState, round2, splitGst } from "@/lib/discountGst";
 import type { Branch, BusinessPartner, DocumentLineInput, Item, PurchaseBill } from "@/lib/types";
 import { SUPPORTED_CURRENCIES, currencySymbol } from "@/lib/types";
 
-const emptyLine = (): DocumentLineInput => ({ itemId: "", quantity: 0, rate: 0, rateFc: 0, taxRate: 0 });
+const emptyLine = (): DocumentLineInput => ({ itemId: "", quantity: 0, rate: 0, rateFc: 0, taxRate: 0, customsDutyRate: 0 });
 
 function PurchaseBillsInner() {
   const [bills, setBills] = useState<PurchaseBill[]>([]);
@@ -61,15 +61,20 @@ function PurchaseBillsInner() {
   const interState = isForeign ? true : isInterState(headOffice?.stateCode, selectedVendor?.stateCode);
 
   const totals = useMemo(() => {
-    let subtotal = 0, tax = 0, cgst = 0, sgst = 0, igst = 0;
+    let subtotal = 0, tax = 0, cgst = 0, sgst = 0, igst = 0, customsDuty = 0;
     for (const l of lines) {
       const s = round2(Number(l.quantity || 0) * Number(l.rate || 0));
-      const t = round2(s * Number(l.taxRate || 0) / 100);
+      // Duty is non-creditable and folds into landed cost; import IGST is
+      // charged on (goods value + duty), not goods value alone — same
+      // formula as POST /purchase-bills. customsDutyRate is 0 on a
+      // domestic bill, so this collapses to the previous behavior there.
+      const d = isForeign ? round2(s * Number(l.customsDutyRate || 0) / 100) : 0;
+      const t = round2((s + d) * Number(l.taxRate || 0) / 100);
       const split = splitGst(t, interState);
-      subtotal += s; tax += t; cgst += split.cgst; sgst += split.sgst; igst += split.igst;
+      subtotal += s; tax += t; cgst += split.cgst; sgst += split.sgst; igst += split.igst; customsDuty += d;
     }
-    return { subtotal, tax, cgst, sgst, igst, grand: subtotal + tax };
-  }, [lines, interState]);
+    return { subtotal, tax, cgst, sgst, igst, customsDuty, grand: subtotal + tax + customsDuty };
+  }, [lines, interState, isForeign]);
 
   async function loadAll() {
     setLoading(true);
@@ -159,6 +164,7 @@ function PurchaseBillsInner() {
       rate: !isForeign && item?.purchaseRate ? Number(item.purchaseRate) : 0,
       rateFc: 0,
       taxRate: item?.taxRate ? Number(item.taxRate) : 0,
+      customsDutyRate: 0,
     });
   }
 
@@ -169,7 +175,9 @@ function PurchaseBillsInner() {
     try {
       await createPurchaseBill({
         businessPartnerId, billDate, narration,
-        lines: lines.filter((l) => l.itemId && l.quantity > 0),
+        lines: lines
+          .filter((l) => l.itemId && l.quantity > 0)
+          .map((l) => (isForeign ? l : { ...l, customsDutyRate: undefined })),
         currency, exchangeRate: isForeign ? Number(exchangeRate) : undefined,
         billOfEntryNumber: isForeign ? newBoeNumber || undefined : undefined,
         billOfEntryDate: isForeign ? newBoeDate || undefined : undefined,
@@ -262,7 +270,7 @@ function PurchaseBillsInner() {
 
           <div style={{ padding: "0 14px" }}>
             <table className="ent-table">
-              <thead><tr><th style={{ width: "36%" }}>Item</th><th>Qty</th><th>Rate{isForeign ? ` (${currency})` : ""}</th>{isForeign && <th>Rate (₹)</th>}<th>Tax %</th><th /></tr></thead>
+              <thead><tr><th style={{ width: "32%" }}>Item</th><th>Qty</th><th>Rate{isForeign ? ` (${currency})` : ""}</th>{isForeign && <th>Rate (₹)</th>}<th>Tax %</th>{isForeign && <th>Duty %</th>}<th /></tr></thead>
               <tbody>
                 {lines.map((line, i) => (
                   <tr key={i}>
@@ -282,6 +290,9 @@ function PurchaseBillsInner() {
                       <td><input type="number" min={0} step="0.01" className="ent-fc" value={line.rate || ""} onChange={(e) => updateLine(i, { rate: Number(e.target.value) })} /></td>
                     )}
                     <td><input type="number" min={0} step="0.01" className="ent-fc" value={line.taxRate || ""} onChange={(e) => updateLine(i, { taxRate: Number(e.target.value) })} /></td>
+                    {isForeign && (
+                      <td><input type="number" min={0} step="0.01" className="ent-fc" value={line.customsDutyRate || ""} onChange={(e) => updateLine(i, { customsDutyRate: Number(e.target.value) })} /></td>
+                    )}
                     <td><button type="button" className="ent-ia ent-ia-del" disabled={lines.length <= 1} onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))}>✕</button></td>
                   </tr>
                 ))}
@@ -295,6 +306,9 @@ function PurchaseBillsInner() {
               padding: "8px 14px", fontSize: 13, marginBottom: 12,
             }}>
               <span>Subtotal: <strong>{totals.subtotal.toFixed(2)}</strong></span>
+              {isForeign && totals.customsDuty > 0 && (
+                <span>Customs Duty: <strong>{totals.customsDuty.toFixed(2)}</strong></span>
+              )}
               {interState ? (
                 <span>IGST: <strong>{totals.igst.toFixed(2)}</strong></span>
               ) : (
@@ -308,6 +322,13 @@ function PurchaseBillsInner() {
                 <span>≈ <strong>{currencySymbol(currency)}{round2(totals.grand / Number(exchangeRate)).toFixed(2)}</strong></span>
               )}
             </div>
+            {isForeign && totals.customsDuty + totals.tax > 0 && (
+              <p style={{ fontSize: 11.5, color: "var(--color-muted)", marginTop: -6, marginBottom: 12 }}>
+                Trade Payables to the vendor will be {totals.subtotal.toFixed(2)} (goods value only) — Customs Duty +
+                IGST ({(totals.customsDuty + totals.tax).toFixed(2)}) posts to Customs Duty Payable instead, since
+                neither is owed to the vendor.
+              </p>
+            )}
           </div>
 
           {error && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 10px" }}>{error}</p>}
@@ -382,6 +403,7 @@ function PurchaseBillsInner() {
                     <thead>
                       <tr>
                         <th>Item</th><th>Qty</th><th>Rate</th>{docForeign && <th>Rate ({detail.currency})</th>}<th>Subtotal</th>
+                        {docForeign && <th>Duty</th>}
                         {docInterState ? <th>IGST</th> : <><th>CGST</th><th>SGST</th></>}
                         <th style={{ textAlign: "right" }}>Line Total</th>
                       </tr>
@@ -394,6 +416,7 @@ function PurchaseBillsInner() {
                           <td>{Number(l.rate).toFixed(2)}</td>
                           {docForeign && <td>{Number(l.rateFc ?? 0).toFixed(2)}</td>}
                           <td>{Number(l.lineSubtotal).toFixed(2)}</td>
+                          {docForeign && <td>{Number(l.customsDutyAmount ?? 0).toFixed(2)}</td>}
                           {docInterState ? (
                             <td>{Number(l.igstAmount).toFixed(2)}</td>
                           ) : (
@@ -414,6 +437,9 @@ function PurchaseBillsInner() {
                   padding: "8px 14px", fontSize: 13, margin: "10px 14px 14px",
                 }}>
                   <span>Subtotal: <strong>{Number(detail.subtotal).toFixed(2)}</strong></span>
+                  {docForeign && Number(detail.customsDutyTotal) > 0 && (
+                    <span>Customs Duty: <strong>{Number(detail.customsDutyTotal).toFixed(2)}</strong></span>
+                  )}
                   {docInterState ? (
                     <span>IGST: <strong>{Number(detail.igstTotal).toFixed(2)}</strong></span>
                   ) : (
@@ -427,6 +453,12 @@ function PurchaseBillsInner() {
                     <span>≈ <strong>{currencySymbol(detail.currency)}{Number(detail.grandTotalFc).toFixed(2)}</strong></span>
                   )}
                 </div>
+                {docForeign && (Number(detail.customsDutyTotal) + Number(detail.igstTotal) + Number(detail.cgstTotal) + Number(detail.sgstTotal)) > 0 && (
+                  <p style={{ fontSize: 11.5, color: "var(--color-muted)", margin: "-6px 14px 14px" }}>
+                    Trade Payables to {detail.businessPartner.name} is {Number(detail.subtotal).toFixed(2)} (goods value
+                    only) — Customs Duty + import tax posted to Customs Duty Payable instead.
+                  </p>
+                )}
               </>
             );
           })()}

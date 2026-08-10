@@ -124,6 +124,11 @@ async function main() {
     { domainTypeId: null, accountCode: "2102", accountName: "CGST Output Payable", accountType: "LIABILITY", scheduleIiiHead: "OTHER_CURRENT_LIABILITIES" },
     { domainTypeId: null, accountCode: "2103", accountName: "SGST Output Payable", accountType: "LIABILITY", scheduleIiiHead: "OTHER_CURRENT_LIABILITIES" },
     { domainTypeId: null, accountCode: "2104", accountName: "IGST Output Payable", accountType: "LIABILITY", scheduleIiiHead: "OTHER_CURRENT_LIABILITIES" },
+    // Import Purchase Bills only — Basic Customs Duty + import IGST both
+    // credit here instead of Trade Payables, since neither is actually
+    // owed to the foreign vendor (both are owed to customs/government,
+    // typically via a clearing agent) — see routes/purchaseBills.ts.
+    { domainTypeId: null, accountCode: "2105", accountName: "Customs Duty Payable", accountType: "LIABILITY", scheduleIiiHead: "OTHER_CURRENT_LIABILITIES" },
     { domainTypeId: null, accountCode: "4001", accountName: "Cost of Goods Sold", accountType: "EXPENSE" },
     // Gross-method Sales Invoice discount posting: Sales Revenue posts at
     // full pre-discount value, this contra account absorbs everything taken

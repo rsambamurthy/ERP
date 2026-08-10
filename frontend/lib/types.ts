@@ -444,6 +444,10 @@ export interface DocumentLineInput {
   // currency handling note on SalesInvoice/PurchaseBill.
   rateFc?: number;
   taxRate?: number;
+  // Purchase Bill (import) lines only — Basic Customs Duty, as a % of this
+  // line's INR taxable value. See customsDutyAmount on DocumentLine and the
+  // PurchaseBill.customsDutyTotal note below.
+  customsDutyRate?: number;
 }
 
 // ── Foreign currency (exports/imports) ───────────────────────────────────
@@ -493,6 +497,10 @@ export interface DocumentLine extends DocumentLineInput {
   igstAmount: string;
   // Display-only — null for INR documents. See SalesInvoice.grandTotalFc.
   lineTotalFc?: string | null;
+  // Purchase Bill (import) lines only — computed Basic Customs Duty ₹
+  // amount, folded into landed cost. Undefined on Sales Invoice lines,
+  // "0.00" on a domestic Purchase Bill line.
+  customsDutyAmount?: string;
 }
 
 export interface SalesInvoiceLine extends DocumentLine, SalesLineInput {
@@ -561,6 +569,14 @@ export interface PurchaseBill {
   currency: string;
   exchangeRate: string;
   grandTotalFc: string | null;
+  // Basic Customs Duty — non-creditable, folds into landed inventory cost.
+  // "0.00" on a domestic bill. Import IGST is computed on (goods value +
+  // duty) and, together with customsDutyTotal, credits a separate Customs
+  // Duty Payable account rather than Trade Payables (see
+  // routes/purchaseBills.ts) — grandTotal = subtotal + taxTotal +
+  // customsDutyTotal, but Trade Payables only ever reflects `subtotal` on
+  // an import.
+  customsDutyTotal: string;
   // Same rationale as SalesInvoice.shippingBillNumber — almost always
   // filled in later via PATCH once customs clearance actually happens.
   billOfEntryNumber: string | null;

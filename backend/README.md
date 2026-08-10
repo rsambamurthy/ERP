@@ -287,6 +287,54 @@ correctly).
 
 Requires `db/migration_020_shipping_bill.sql`.
 
+### Customs Duty / Import IGST as ITC (Purchase Bill)
+
+Import side of the Foreign Currency feature. A foreign-currency Purchase
+Bill line takes an optional `customsDutyRate` (% of that line's INR goods
+value, i.e. `lineSubtotal`) — 0/null on a domestic bill, and 0 by default
+on a foreign bill too (duty isn't always applicable).
+
+`customsDutyAmount = round2(lineSubtotal * customsDutyRate / 100)`, always
+0 on a domestic bill. Two things change once it's nonzero:
+
+- **Landed cost.** `receiveStock`'s `unitCost` becomes
+  `round2((lineSubtotal + customsDutyAmount) / quantity)` instead of just
+  `rate` — duty is non-creditable, so it has to live in inventory cost, not
+  a GST account. Falls back to the exact old `unitCost` (`= rate`) whenever
+  `customsDutyAmount` is 0, so a domestic bill's costing is byte-for-byte
+  unchanged.
+- **IGST base.** `taxAmount` is now computed on
+  `lineSubtotal + customsDutyAmount`, not `lineSubtotal` alone — import
+  IGST is legally charged on (goods value + duty). Collapses to the old
+  formula when duty is 0.
+
+Neither duty nor import IGST is owed to the foreign vendor — both are owed
+to customs, typically via a clearing agent — so a foreign bill's journal
+entry splits the credit side: **Trade Payables** (tagged the vendor) gets
+only `subtotal` (goods value across all lines), and a new **Customs Duty
+Payable** account (`2105`) gets `customsDutyTotal + taxTotal`. The debit
+side balances: each item's stock account debits `lineSubtotal +
+customsDutyAmount` per line (was `lineSubtotal` alone), so Dr = Cr exactly
+as before. `PurchaseBill.customsDutyTotal` and per-line
+`customsDutyAmount`/`customsDutyRate` are persisted for the audit trail
+and for the Purchase Bill detail view. `grandTotal` is redefined as
+`subtotal + taxTotal + customsDutyTotal` (was `subtotal + taxTotal`).
+
+A domestic bill (`customsDutyTotal` always 0) never enters the split
+branch — Trade Payables still gets the full `grandTotal` in a single
+credit line, exactly as before this feature.
+
+GSTR-3B's ITC figure reads `PurchaseBill.igstTotal` directly and needed no
+code change — it's simply more accurate now, since `igstTotal` is computed
+on the corrected (goods + duty) base.
+
+Requires `db/migration_021_customs_duty.sql`, then `npx prisma db seed` to
+register account `2105` as a template, then **Chart of Accounts → Sync
+from Templates** for every already-provisioned org (`POST
+/accounts/sync-templates`) — same convention as the CGST/SGST/IGST split
+accounts in `migration_014`. `POST /purchase-bills` 500s with a clear
+message if a foreign bill needs the account and it isn't there yet.
+
 ### Bulk upload (`/accounts`, `/items`, `/business-partners` — `/bulk-upload/*`)
 
 Same three-step flow on all three, ported from SmartAppt Gold's vendor/bank upload pattern (`lib/xlsxTemplate.ts` + `lib/upload.ts` are the shared pieces): `GET .../bulk-upload/template` downloads a styled `.xlsx` (header row, inline hints, dropdown validation on enum columns); `POST .../bulk-upload/preview` (multipart, field name `file`) parses it server-side and returns every row tagged `create` / `update` / `error` — nothing is written yet; `POST .../bulk-upload/apply` takes back only the rows the user confirmed (body `{ rows: [...] }`) and commits them. Matching an uploaded row to an existing record: Chart of Accounts by Account Code, Items by SKU, Business Partners by the optional `code` field (blank code always creates new — see `migration_007`). Requires `db/migration_007_user_name_and_bp_code.sql`.

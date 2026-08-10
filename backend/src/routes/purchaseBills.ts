@@ -12,6 +12,10 @@ const TRADE_PAYABLES_CODE = "2001";
 const CGST_INPUT_CODE = "1102";
 const SGST_INPUT_CODE = "1103";
 const IGST_INPUT_CODE = "1104";
+// Import bills only — customs duty + import IGST both credit here instead
+// of Trade Payables, since neither is actually owed to the foreign vendor.
+// See the posting split in POST / below.
+const CUSTOMS_DUTY_PAYABLE_CODE = "2105";
 
 const router = Router();
 router.use(authenticate, requireActiveSubscription);
@@ -33,6 +37,10 @@ interface LineInput {
   // Foreign-currency bills only — same semantics as salesInvoices.ts.
   rateFc?: number;
   taxRate?: number;
+  // Foreign-currency bills only — Basic Customs Duty, as a % of this
+  // line's INR taxable value. See the schema comment on
+  // PurchaseBillLine.customsDutyRate for the full design.
+  customsDutyRate?: number;
 }
 
 router.get("/", async (req, res) => {
@@ -151,7 +159,7 @@ router.post("/", canPost, async (req, res) => {
   // IGST paid on an import is what's actually creditable, never CGST+SGST,
   // regardless of whether the foreign vendor has an Indian state code.
   const interState = isForeign ? true : isInterState(branch?.stateCode, vendor.stateCode);
-  let subtotal = 0, taxTotal = 0, cgstTotal = 0, sgstTotal = 0, igstTotal = 0;
+  let subtotal = 0, taxTotal = 0, cgstTotal = 0, sgstTotal = 0, igstTotal = 0, customsDutyTotal = 0;
   const computed = typedLines.map((l) => {
     if (isForeign) {
       if (!l.itemId || !(l.quantity > 0) || !(l.rateFc! >= 0)) {
@@ -165,27 +173,51 @@ router.post("/", canPost, async (req, res) => {
       throw Object.assign(new Error("Every line needs itemId, quantity > 0, and rate >= 0."), { status: 400 });
     }
     const lineSubtotal = round2(l.quantity * l.rate);
-    const taxAmount = round2(lineSubtotal * (l.taxRate ?? 0) / 100);
+    // Basic Customs Duty — non-creditable, folds into landed cost. Always 0
+    // on a domestic bill. Computed on goods value only (never on itself).
+    const customsDutyAmount = isForeign ? round2(lineSubtotal * (l.customsDutyRate ?? 0) / 100) : 0;
+    // Import IGST is charged on (goods value + duty), not goods value
+    // alone — customsDutyAmount is 0 on a domestic bill, so this taxBase
+    // collapses to lineSubtotal there, leaving domestic tax computation
+    // byte-for-byte unchanged.
+    const taxBase = lineSubtotal + customsDutyAmount;
+    const taxAmount = round2(taxBase * (l.taxRate ?? 0) / 100);
     const { cgst, sgst, igst } = splitGst(taxAmount, interState);
     subtotal += lineSubtotal; taxTotal += taxAmount; cgstTotal += cgst; sgstTotal += sgst; igstTotal += igst;
+    customsDutyTotal += customsDutyAmount;
     return {
-      ...l, lineSubtotal, taxAmount, lineTotal: lineSubtotal + taxAmount, cgstAmount: cgst, sgstAmount: sgst, igstAmount: igst,
+      ...l, lineSubtotal, customsDutyAmount, taxAmount,
+      lineTotal: lineSubtotal + customsDutyAmount + taxAmount,
+      cgstAmount: cgst, sgstAmount: sgst, igstAmount: igst,
       rateFc: isForeign ? l.rateFc : undefined,
+      // Landed unit cost (goods value + duty, per unit) feeds receiveStock
+      // below. Only diverges from l.rate when duty is actually entered —
+      // a domestic bill, or a foreign bill with 0% duty, keeps the exact
+      // same unitCost as before this feature.
+      unitCost: customsDutyAmount > 0 ? round2(taxBase / l.quantity) : l.rate,
     };
   });
-  const grandTotal = subtotal + taxTotal;
+  const grandTotal = subtotal + taxTotal + customsDutyTotal;
   const grandTotalFc = isForeign ? round2(grandTotal / fxRate) : null;
 
-  const [cgstInput, sgstInput, igstInput, tradePayables] = await Promise.all([
+  const [cgstInput, sgstInput, igstInput, tradePayables, customsDutyPayable] = await Promise.all([
     prisma.account.findFirst({ where: { organizationId, accountCode: CGST_INPUT_CODE } }),
     prisma.account.findFirst({ where: { organizationId, accountCode: SGST_INPUT_CODE } }),
     prisma.account.findFirst({ where: { organizationId, accountCode: IGST_INPUT_CODE } }),
     prisma.account.findFirst({ where: { organizationId, accountCode: TRADE_PAYABLES_CODE } }),
+    prisma.account.findFirst({ where: { organizationId, accountCode: CUSTOMS_DUTY_PAYABLE_CODE } }),
   ]);
   if (!tradePayables) return res.status(500).json({ message: "Trade Payables account not found — re-run provisioning." });
   if (cgstTotal > 0 && !cgstInput) return res.status(500).json({ message: "CGST Input Credit account not found — re-run provisioning." });
   if (sgstTotal > 0 && !sgstInput) return res.status(500).json({ message: "SGST Input Credit account not found — re-run provisioning." });
   if (igstTotal > 0 && !igstInput) return res.status(500).json({ message: "IGST Input Credit account not found — re-run provisioning." });
+  // Only a foreign bill ever needs this account — customsDutyTotal + tax
+  // (never owed to the vendor) is the only thing that credits it.
+  const customsDutyPayableCredit = isForeign ? round2(customsDutyTotal + taxTotal) : 0;
+  if (customsDutyPayableCredit > 0 && !customsDutyPayable) {
+    return res.status(500).json({ message: "Customs Duty Payable account not found — re-run provisioning (npx prisma db seed, then Sync from Templates)." });
+  }
+  const tradePayablesCredit = isForeign ? subtotal : grandTotal;
 
   const count = await prisma.purchaseBill.count({ where: { organizationId } });
   const billNumber = `PB-${String(count + 1).padStart(4, "0")}`;
@@ -206,13 +238,20 @@ router.post("/", canPost, async (req, res) => {
             journalEntryId: journalEntry.id,
             accountId: itemById.get(l.itemId)!.stockAccountId,
             businessPartnerId: itemById.get(l.itemId)!.businessPartnerId,
-            debit: l.lineSubtotal, credit: 0,
+            // Landed cost — goods value + this line's customs duty (0 on a
+            // domestic bill, so this collapses to the old lineSubtotal-only
+            // debit there).
+            debit: l.lineSubtotal + l.customsDutyAmount, credit: 0,
             narration: `${itemById.get(l.itemId)!.sku} x ${l.quantity}`,
           })),
           ...(cgstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: cgstInput!.id, businessPartnerId: null, debit: cgstTotal, credit: 0, narration: "CGST Input" }] : []),
           ...(sgstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: sgstInput!.id, businessPartnerId: null, debit: sgstTotal, credit: 0, narration: "SGST Input" }] : []),
           ...(igstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: igstInput!.id, businessPartnerId: null, debit: igstTotal, credit: 0, narration: "IGST Input" }] : []),
-          { journalEntryId: journalEntry.id, accountId: tradePayables.id, businessPartnerId: vendor.id, debit: 0, credit: grandTotal, narration: `Payable to ${vendor.name}` },
+          // Import bills only: duty + import IGST are never owed to the
+          // vendor, so they credit Customs Duty Payable instead of Trade
+          // Payables. Domestic bills never hit this (credit is 0).
+          ...(customsDutyPayableCredit > 0 ? [{ journalEntryId: journalEntry.id, accountId: customsDutyPayable!.id, businessPartnerId: null, debit: 0, credit: customsDutyPayableCredit, narration: "Customs duty + import IGST payable" }] : []),
+          { journalEntryId: journalEntry.id, accountId: tradePayables.id, businessPartnerId: vendor.id, debit: 0, credit: tradePayablesCredit, narration: `Payable to ${vendor.name}` },
         ],
       });
 
@@ -221,7 +260,7 @@ router.post("/", canPost, async (req, res) => {
           organizationId, branchId: resolvedBranchId, businessPartnerId,
           billNumber, billDate: new Date(billDate), narration: narration ?? "",
           journalEntryId: journalEntry.id, subtotal, taxTotal, grandTotal,
-          cgstTotal, sgstTotal, igstTotal,
+          cgstTotal, sgstTotal, igstTotal, customsDutyTotal,
           currency: currencyCode, exchangeRate: fxRate, grandTotalFc,
           // Almost never known yet at posting time — see the schema
           // comment on billOfEntryNumber. PATCH /:id is the normal way
@@ -239,13 +278,15 @@ router.post("/", canPost, async (req, res) => {
           taxRate: l.taxRate ?? 0, lineSubtotal: l.lineSubtotal, taxAmount: l.taxAmount, lineTotal: l.lineTotal,
           cgstAmount: l.cgstAmount, sgstAmount: l.sgstAmount, igstAmount: l.igstAmount,
           rateFc: l.rateFc ?? null, lineTotalFc: isForeign ? round2(l.lineTotal / fxRate) : null,
+          customsDutyRate: isForeign && l.customsDutyRate ? l.customsDutyRate : null,
+          customsDutyAmount: l.customsDutyAmount,
         })),
       });
 
       for (const l of computed) {
         await receiveStock(tx, {
           organizationId, branchId: resolvedBranchId!, itemId: l.itemId,
-          quantity: l.quantity, unitCost: l.rate, costingMethod: org.costingMethod!,
+          quantity: l.quantity, unitCost: l.unitCost, costingMethod: org.costingMethod!,
           movementType: "PURCHASE", referenceType: "purchase_bill", referenceId: created.id,
           movementDate: new Date(billDate), narration: `Purchase bill ${billNumber}`,
         });

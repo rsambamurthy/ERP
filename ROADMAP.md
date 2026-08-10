@@ -439,10 +439,9 @@ already zero-rates the line either way — only the WPAY path was actually
 affected (would have posted a taxed export to CGST/SGST like a domestic
 sale instead of IGST Output).
 
-Still not built: shipping bill/port fields, GSTR-1 Table 6A (exports)
-reporting, and the whole import side (bill of entry, customs duty on
-Purchase Bills) — see Foreign Currency Support above for what's covered so
-far on that side.
+At the time this was built: shipping bill/port fields, GSTR-1 Table 6A
+(exports) reporting, and the whole import side (bill of entry, customs
+duty on Purchase Bills) were still open — all since built, see below.
 
 Requires `db/migration_019_lut_bond.sql`.
 
@@ -472,10 +471,10 @@ tax into CGST+SGST instead of IGST when the vendor had no Indian state
 code on file. Now forces `interState = true` for any foreign-currency
 bill, matching the Sales Invoice fix.
 
-Still not built: GSTR-1 Table 6A (exports) reporting itself — these fields
-exist now, but nothing reads them into a report yet — and the rest of the
-import side (customs duty as a landed-cost addition, IGST-on-import
-treated as ITC rather than a normal purchase tax line).
+At the time this was built: GSTR-1 Table 6A (exports) reporting itself —
+these fields existed but nothing read them into a report yet — and the
+rest of the import side (customs duty, IGST-on-import as ITC). Both since
+built, see below.
 
 Requires `db/migration_020_shipping_bill.sql`.
 
@@ -500,9 +499,58 @@ Also flagged, not fixed: GSTR-3B still doesn't split zero-rated exports
 into their own 3.1(b) row — `computeGstr3b`'s outward-supplies figure
 still lumps every Sales Invoice together regardless of currency.
 
-Still not built from the original "Export/Import invoices" scope: the
-entire import side (customs duty as a landed-cost addition, IGST-on-import
-treated as ITC rather than a normal purchase tax line).
+No new migration for this piece — it only reads fields already added by
+`db/migration_020_shipping_bill.sql`.
+
+## Customs Duty / Import IGST as ITC (built)
+
+The import side of the original "Export/Import invoices" scope. A foreign-
+currency Purchase Bill line now takes an optional `customsDutyRate` (%
+of that line's INR goods value). Basic Customs Duty is non-creditable —
+it's never a GST account, it folds straight into landed inventory cost
+(`unitCost` fed to `receiveStock` becomes goods value + duty per unit, so
+FIFO/weighted-average costing carries the real landed cost forward). A
+domestic bill, or a foreign bill with 0% duty entered, keeps the exact
+same `unitCost` as before this feature — no behavioral change.
+
+Import IGST was previously computed on goods value alone, which
+understates it — under GST law it's charged on (goods value + duty).
+`taxAmount` per line is now computed on that corrected base
+(`lineSubtotal + customsDutyAmount`); for a domestic bill this collapses
+back to `lineSubtotal` alone since duty is always 0 there.
+
+Neither customs duty nor import IGST is actually owed to the foreign
+vendor — both go to customs/government, typically via a clearing agent —
+so a foreign bill's journal entry now splits the credit side instead of
+crediting Trade Payables for the full `grandTotal`: **Trade Payables**
+gets only `subtotal` (goods value), and a new **Customs Duty Payable**
+account (`2105`) gets `customsDutyTotal + taxTotal`. The debit side
+balances the same way — each item's stock account is debited
+`lineSubtotal + customsDutyAmount` (the landed cost) instead of just
+`lineSubtotal`. A domestic bill is entirely unaffected: `customsDutyTotal`
+is always 0, so the split branch never fires and Trade Payables still
+gets the full `grandTotal` in one line, exactly as before.
+
+`PurchaseBill.grandTotal` is now `subtotal + taxTotal + customsDutyTotal`
+(was `subtotal + taxTotal`) — again a no-op for domestic bills.
+`grandTotalFc` (display-only) back-converts this new, larger figure.
+
+GSTR-3B's ITC figure is unaffected in a way that actually matters here:
+it reads `PurchaseBill.igstTotal` directly, which is now computed on the
+correct (goods + duty) base — so the feature makes that number *more*
+accurate, not less, without any change needed on the GSTR-3B side itself.
+
+Requires `db/migration_021_customs_duty.sql`, then `npx prisma db seed` +
+"Sync from Templates" (Chart of Accounts) for every already-provisioned
+org, so the new 2105 Customs Duty Payable account exists before anyone
+posts a foreign Purchase Bill with a nonzero duty or tax.
+
+Still not built from the original "Export/Import invoices" scope: nothing
+— both the export side (foreign currency, LUT/Bond, shipping bill,
+Table 6A) and the import side (customs duty, IGST-as-ITC) are now covered.
+Broader gaps that remain (not specific to exports/imports): GSTR-3B's
+un-split 3.1(b) zero-rated row, no invoice-to-payment matching (so no
+realized forex gain/loss), no "country" field on export invoices.
 
 ## From the earlier "what's next" review
 
