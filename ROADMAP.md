@@ -26,7 +26,11 @@ Deferred out of that scope:
   partial-fulfillment tracking. When built, an Order generates a draft
   Invoice/Bill; today's direct-invoice flow keeps working unchanged. Roughly
   2-3x the build of v1 (more screens, more states, more edge cases), so it
-  waits until direct invoicing is proven out.
+  waits until direct invoicing is proven out. **Update: the Purchase Order
+  half of this is now built — see "Purchase Order Workflow" below.** Direct
+  Purchase Bill posting (no PO) still works completely unchanged; a PO is
+  optional. Sales Order is still deferred — Sales Invoice remains
+  direct-only.
 
 - **Inter-branch Stock Transfer.** Moves quantity between branches without
   touching accounting the way a sale or purchase does (same org's
@@ -551,6 +555,87 @@ Table 6A) and the import side (customs duty, IGST-as-ITC) are now covered.
 Broader gaps that remain (not specific to exports/imports): GSTR-3B's
 un-split 3.1(b) zero-rated row, no invoice-to-payment matching (so no
 realized forex gain/loss), no "country" field on export invoices.
+
+## Purchase Order Workflow (built)
+
+The Purchase Order half of the "Sales Order / Purchase Order stage" gap
+flagged at the top of this doc. A `PurchaseOrder` is a pre-commitment
+document with its own approval state machine, entirely separate from
+posting — it never touches the journal or stock. Only once it's
+**Approved** can it be turned into one or more Purchase Bills, which still
+does every bit of the real accounting/stock work exactly as it always has.
+Direct Purchase Bill creation (no PO) is completely unaffected — a PO is
+opt-in, not a new required step.
+
+State machine: `DRAFT` (freely editable — the first true draft/edit-before-
+commit document this app has; every other document type here is either
+post-once-immutable or has only a narrow reference-field PATCH) → *submit* →
+either `APPROVED` automatically or `PENDING_APPROVAL`, depending on the
+org's approval threshold → *approve*/*reject* → `APPROVED`/`REJECTED`.
+`REJECTED` → *reopen* → back to `DRAFT`, editable and resubmittable — the
+rejection reason stays on the record as history rather than being cleared.
+`DRAFT`/`PENDING_APPROVAL`/`APPROVED` (only if nothing's been billed yet)
+→ *cancel* → `CANCELLED`. `APPROVED` → (every line fully billed) →
+`CLOSED`, automatically, the moment a Purchase Bill posting satisfies the
+last open line.
+
+**Approval authority is amount-based**, chosen over a flat "anyone with a
+permission can approve" or a full multi-level approval chain, to actually
+resemble real purchasing controls without building infrastructure this app
+has no other use for. `Organization.poApprovalThreshold` (set on the
+Company Master screen) is null by default — meaning *every* submitted PO
+requires manual approval regardless of amount, the safe default until an
+org configures otherwise. Once set, a PO whose `grandTotal` is strictly
+below the threshold auto-approves on submission (recorded with
+`autoApproved: true` for the audit trail); at or above it, a human with the
+new `purchase.approve` permission has to decide. `purchase.approve` is
+deliberately **not** in ACCOUNTANT's default permission set — separation
+of duties: the same role that creates and posts Purchase Orders/Bills
+shouldn't also approve them by default. Owner/Admin get it out of the box;
+an org that wants a non-Owner approver grants `purchase.approve` to a
+custom role instead (Settings → Access Control).
+
+**Billing with quantity tracking.** `POST /purchase-bills` takes an
+optional `purchaseOrderId` — when present, the vendor is *derived* from
+the (approved) PO rather than taken from the request, so a bill can never
+post against a different vendor than the one the PO was approved for. Each
+bill line can separately carry a `purchaseOrderLineId` to say which
+ordered line it fulfills; the server rejects (400) any attempt to bill more
+than what's still open on that line (`ordered − already billed` across
+every prior bill against the same PO line), so a PO can be split across
+several partial deliveries/bills without ever over-billing. Every line's
+`billedQuantity` rolls forward in the same transaction as the bill post,
+and the PO auto-closes the moment every line is fully billed. The Purchase
+Bill create form's "From Purchase Order" picker (INR bills only — see
+below) pre-fills the vendor and every still-open line, quantity capped to
+what's remaining, so raising a bill against an order is a couple of clicks
+rather than re-keying it.
+
+**Scope decisions, deliberate:**
+- **PO is INR-only.** No currency/exchange-rate concept on `PurchaseOrder`
+  yet, unlike Purchase Bill's foreign-currency support — an import PO would
+  need that carried through to the eventual bill, which is real scope this
+  pass didn't take on. The "From Purchase Order" picker on Purchase Bill is
+  hidden once the bill's currency is switched to foreign, and linking a PO
+  forces the bill back to INR.
+- **No GST account split (CGST/SGST/IGST) on PurchaseOrder** — since a PO
+  never posts to the journal, only an aggregate `taxTotal`/`grandTotal` is
+  computed; the real CGST/SGST/IGST split happens the normal way once it
+  becomes a Purchase Bill.
+- **Line replacement, not diffing, on edit.** `PATCH /purchase-orders/:id`
+  (Draft only) replaces every line wholesale rather than diffing — same
+  "nothing in this app diffs individual lines on edit" convention as
+  everywhere else that's ever had partial edit capability.
+
+Also fixed in passing, found while wiring the PO-linked billing path: a
+pre-existing bug in `POST /purchase-bills` where per-line validation
+failures (bad quantity, invalid item, etc.) threw outside the route's only
+try/catch, so they fell through to the generic 500 handler in `index.ts`
+instead of the intended 400 with the actual validation message. Now
+properly caught and returns the real error.
+
+Requires `db/migration_022_purchase_orders.sql`. No new GL accounts, no
+`prisma db seed` step needed — a Purchase Order never posts.
 
 ## From the earlier "what's next" review
 

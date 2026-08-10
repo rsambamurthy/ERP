@@ -8,6 +8,7 @@ export const PERMISSIONS = [
   "branches.manage",
   "sales.post",
   "purchase.post",
+  "purchase.approve",
   "inventory.post",
   "journal.post",
   "company.manage",
@@ -21,7 +22,8 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "businessPartners.manage": "Manage Business Partners (Customers/Vendors)",
   "branches.manage": "Manage Branches",
   "sales.post": "Post Sales Invoices & Sales Returns",
-  "purchase.post": "Post Purchase Bills & Purchase Returns",
+  "purchase.post": "Create Purchase Orders, post Purchase Bills & Purchase Returns",
+  "purchase.approve": "Approve or reject Purchase Orders",
   "inventory.post": "Post Stock Adjustments",
   "journal.post": "Post Journal Entries",
   "company.manage": "Manage Company Master Data (CIN, directors, auditors)",
@@ -38,6 +40,11 @@ export function isPermission(value: string): value is Permission {
 const BUILT_IN_PERMISSIONS: Record<string, Permission[]> = {
   OWNER: [...PERMISSIONS],
   ADMIN: [...PERMISSIONS],
+  // Deliberately no "purchase.approve" here — separation of duties: the
+  // same role that creates/posts Purchase Orders and Bills shouldn't also
+  // approve them by default. Owner/Admin get it (via the spread above); an
+  // org that wants an ACCOUNTANT-level approver can grant "purchase.approve"
+  // to a custom role instead.
   ACCOUNTANT: ["businessPartners.manage", "sales.post", "purchase.post", "inventory.post", "journal.post"],
   VIEWER: [],
 };

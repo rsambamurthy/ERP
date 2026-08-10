@@ -72,6 +72,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Purchase",
     icon: "P",
     items: [
+      { id: "purchase_orders", label: "Purchase Orders", path: "/purchase/orders", dot: "#9333ea", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "purchase.post" },
       { id: "purchase_bills", label: "Purchase Bills", path: "/purchase/bills", dot: "#ea580c", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "purchase.post" },
       { id: "purchase_returns", label: "Purchase Returns", path: "/purchase/returns", dot: "#c2410c", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "purchase.post" },
     ],

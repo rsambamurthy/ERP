@@ -29,7 +29,7 @@ router.get("/", async (req, res) => {
     where: { id: organizationId },
     select: {
       id: true, name: true, cin: true, companyPan: true, companyType: true,
-      incorporationDate: true, registeredOfficeAddress: true,
+      incorporationDate: true, registeredOfficeAddress: true, poApprovalThreshold: true,
     },
   });
   if (!org) return res.status(404).json({ message: "Organization not found." });
@@ -47,7 +47,10 @@ router.patch("/", canManageCompany, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
 
-  const { cin, companyPan, companyType, incorporationDate, registeredOfficeAddress } = req.body ?? {};
+  const { cin, companyPan, companyType, incorporationDate, registeredOfficeAddress, poApprovalThreshold } = req.body ?? {};
+  if (poApprovalThreshold !== undefined && poApprovalThreshold !== null && !(Number(poApprovalThreshold) >= 0)) {
+    return res.status(400).json({ message: "poApprovalThreshold must be a non-negative number, or null." });
+  }
   const updated = await prisma.organization.update({
     where: { id: organizationId },
     data: {
@@ -56,10 +59,15 @@ router.patch("/", canManageCompany, async (req, res) => {
       companyType: companyType ?? null,
       incorporationDate: incorporationDate ? new Date(incorporationDate) : null,
       registeredOfficeAddress: registeredOfficeAddress ?? null,
+      // Purchase Order auto-approval threshold — see the schema comment on
+      // Organization.poApprovalThreshold. Same convention as every other
+      // field on this endpoint: omit it (or send null) to clear it back to
+      // "always require manual approval".
+      poApprovalThreshold: poApprovalThreshold != null ? Number(poApprovalThreshold) : null,
     },
     select: {
       id: true, name: true, cin: true, companyPan: true, companyType: true,
-      incorporationDate: true, registeredOfficeAddress: true,
+      incorporationDate: true, registeredOfficeAddress: true, poApprovalThreshold: true,
     },
   });
   logAudit({

@@ -41,6 +41,9 @@ interface LineInput {
   // line's INR taxable value. See the schema comment on
   // PurchaseBillLine.customsDutyRate for the full design.
   customsDutyRate?: number;
+  // Optional — which PurchaseOrderLine (of the bill's purchaseOrderId) this
+  // line fulfills. Only meaningful when the bill itself is linked to a PO.
+  purchaseOrderLineId?: string;
 }
 
 router.get("/", async (req, res) => {
@@ -60,7 +63,10 @@ router.get("/:id", async (req, res) => {
   if (!organizationId) return;
   const bill = await prisma.purchaseBill.findFirst({
     where: { id: req.params.id, organizationId },
-    include: { businessPartner: true, lines: { include: { item: true } }, journalEntry: { include: { journalLines: true } } },
+    include: {
+      businessPartner: true, lines: { include: { item: true } }, journalEntry: { include: { journalLines: true } },
+      purchaseOrder: { select: { id: true, poNumber: true } },
+    },
   });
   if (!bill) return res.status(404).json({ message: "Purchase bill not found." });
   res.json({ data: bill });
@@ -116,10 +122,34 @@ router.post("/", canPost, async (req, res) => {
 
   const {
     businessPartnerId, billDate, branchId, narration, lines, currency, exchangeRate,
-    billOfEntryNumber, billOfEntryDate, portCode,
+    billOfEntryNumber, billOfEntryDate, portCode, purchaseOrderId,
   } = req.body ?? {};
-  if (!businessPartnerId || !billDate || !Array.isArray(lines) || lines.length === 0) {
-    return res.status(400).json({ message: "businessPartnerId, billDate, and at least one line are required." });
+  if (!billDate || !Array.isArray(lines) || lines.length === 0) {
+    return res.status(400).json({ message: "billDate and at least one line are required." });
+  }
+
+  // Linked to a Purchase Order — must be APPROVED (only an approved PO is a
+  // real commitment), and the vendor is *derived* from the PO rather than
+  // taken from the request, so a bill can never be posted against a
+  // different vendor than the one the PO was approved for. See
+  // routes/purchaseOrders.ts for the approval workflow itself.
+  let linkedPo: { id: string; businessPartnerId: string; status: string; lines: { id: string; quantity: any; billedQuantity: any }[] } | null = null;
+  if (purchaseOrderId) {
+    linkedPo = await prisma.purchaseOrder.findFirst({
+      where: { id: purchaseOrderId, organizationId },
+      include: { lines: { select: { id: true, quantity: true, billedQuantity: true } } },
+    });
+    if (!linkedPo) return res.status(400).json({ message: "purchaseOrderId is not a valid Purchase Order for this organization." });
+    if (linkedPo.status !== "APPROVED") {
+      return res.status(400).json({ message: `Purchase Order ${purchaseOrderId} is ${linkedPo.status}, not Approved — only an approved PO can be billed.` });
+    }
+    if (businessPartnerId && businessPartnerId !== linkedPo.businessPartnerId) {
+      return res.status(400).json({ message: "businessPartnerId doesn't match the vendor on the linked Purchase Order." });
+    }
+  }
+  const effectiveBusinessPartnerId = linkedPo?.businessPartnerId ?? businessPartnerId;
+  if (!effectiveBusinessPartnerId) {
+    return res.status(400).json({ message: "businessPartnerId (or purchaseOrderId) is required." });
   }
 
   // Foreign currency (import bills) — see lib/currencies.ts and the matching
@@ -137,7 +167,7 @@ router.post("/", canPost, async (req, res) => {
   const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { costingMethod: true } });
   if (!org?.costingMethod) return res.status(422).json({ message: "Set the organization's stock costing method first." });
 
-  const vendor = await prisma.businessPartner.findFirst({ where: { id: businessPartnerId, organizationId, bpType: "VENDOR" } });
+  const vendor = await prisma.businessPartner.findFirst({ where: { id: effectiveBusinessPartnerId, organizationId, bpType: "VENDOR" } });
   if (!vendor) return res.status(400).json({ message: "businessPartnerId must be an existing vendor." });
 
   let resolvedBranchId: string | null = branchId ?? null;
@@ -160,45 +190,87 @@ router.post("/", canPost, async (req, res) => {
   // regardless of whether the foreign vendor has an Indian state code.
   const interState = isForeign ? true : isInterState(branch?.stateCode, vendor.stateCode);
   let subtotal = 0, taxTotal = 0, cgstTotal = 0, sgstTotal = 0, igstTotal = 0, customsDutyTotal = 0;
-  const computed = typedLines.map((l) => {
-    if (isForeign) {
-      if (!l.itemId || !(l.quantity > 0) || !(l.rateFc! >= 0)) {
-        throw Object.assign(new Error("Every line needs itemId, quantity > 0, and rateFc >= 0."), { status: 400 });
+  // Line validation below can reject with a {status:400} throw (from
+  // inside .map(), where an early `return res...` isn't possible) — caught
+  // right here and turned into a real 400. Pre-existing pattern in this
+  // route; wrapping it properly rather than letting it fall through to the
+  // generic 500 handler in index.ts, which is what happened before this
+  // fix for any line-validation failure, PO-linked or not.
+  let computed;
+  try {
+    computed = typedLines.map((l) => {
+      if (isForeign) {
+        if (!l.itemId || !(l.quantity > 0) || !(l.rateFc! >= 0)) {
+          throw Object.assign(new Error("Every line needs itemId, quantity > 0, and rateFc >= 0."), { status: 400 });
+        }
+        // rateFc is authoritative for a foreign-currency bill — overwrite
+        // rate so tax/costing below (and receiveStock's unitCost) run on
+        // the correct INR figure without any further change.
+        l.rate = round2(l.rateFc! * fxRate);
+      } else if (!l.itemId || !(l.quantity > 0) || !(l.rate >= 0)) {
+        throw Object.assign(new Error("Every line needs itemId, quantity > 0, and rate >= 0."), { status: 400 });
       }
-      // rateFc is authoritative for a foreign-currency bill — overwrite
-      // rate so tax/costing below (and receiveStock's unitCost) run on the
-      // correct INR figure without any further change.
-      l.rate = round2(l.rateFc! * fxRate);
-    } else if (!l.itemId || !(l.quantity > 0) || !(l.rate >= 0)) {
-      throw Object.assign(new Error("Every line needs itemId, quantity > 0, and rate >= 0."), { status: 400 });
-    }
-    const lineSubtotal = round2(l.quantity * l.rate);
-    // Basic Customs Duty — non-creditable, folds into landed cost. Always 0
-    // on a domestic bill. Computed on goods value only (never on itself).
-    const customsDutyAmount = isForeign ? round2(lineSubtotal * (l.customsDutyRate ?? 0) / 100) : 0;
-    // Import IGST is charged on (goods value + duty), not goods value
-    // alone — customsDutyAmount is 0 on a domestic bill, so this taxBase
-    // collapses to lineSubtotal there, leaving domestic tax computation
-    // byte-for-byte unchanged.
-    const taxBase = lineSubtotal + customsDutyAmount;
-    const taxAmount = round2(taxBase * (l.taxRate ?? 0) / 100);
-    const { cgst, sgst, igst } = splitGst(taxAmount, interState);
-    subtotal += lineSubtotal; taxTotal += taxAmount; cgstTotal += cgst; sgstTotal += sgst; igstTotal += igst;
-    customsDutyTotal += customsDutyAmount;
-    return {
-      ...l, lineSubtotal, customsDutyAmount, taxAmount,
-      lineTotal: lineSubtotal + customsDutyAmount + taxAmount,
-      cgstAmount: cgst, sgstAmount: sgst, igstAmount: igst,
-      rateFc: isForeign ? l.rateFc : undefined,
-      // Landed unit cost (goods value + duty, per unit) feeds receiveStock
-      // below. Only diverges from l.rate when duty is actually entered —
-      // a domestic bill, or a foreign bill with 0% duty, keeps the exact
-      // same unitCost as before this feature.
-      unitCost: customsDutyAmount > 0 ? round2(taxBase / l.quantity) : l.rate,
-    };
-  });
+      const lineSubtotal = round2(l.quantity * l.rate);
+      // Basic Customs Duty — non-creditable, folds into landed cost.
+      // Always 0 on a domestic bill. Computed on goods value only (never
+      // on itself).
+      const customsDutyAmount = isForeign ? round2(lineSubtotal * (l.customsDutyRate ?? 0) / 100) : 0;
+      // Import IGST is charged on (goods value + duty), not goods value
+      // alone — customsDutyAmount is 0 on a domestic bill, so this taxBase
+      // collapses to lineSubtotal there, leaving domestic tax computation
+      // byte-for-byte unchanged.
+      const taxBase = lineSubtotal + customsDutyAmount;
+      const taxAmount = round2(taxBase * (l.taxRate ?? 0) / 100);
+      const { cgst, sgst, igst } = splitGst(taxAmount, interState);
+      subtotal += lineSubtotal; taxTotal += taxAmount; cgstTotal += cgst; sgstTotal += sgst; igstTotal += igst;
+      customsDutyTotal += customsDutyAmount;
+      return {
+        ...l, lineSubtotal, customsDutyAmount, taxAmount,
+        lineTotal: lineSubtotal + customsDutyAmount + taxAmount,
+        cgstAmount: cgst, sgstAmount: sgst, igstAmount: igst,
+        rateFc: isForeign ? l.rateFc : undefined,
+        // Landed unit cost (goods value + duty, per unit) feeds
+        // receiveStock below. Only diverges from l.rate when duty is
+        // actually entered — a domestic bill, or a foreign bill with 0%
+        // duty, keeps the exact same unitCost as before this feature.
+        unitCost: customsDutyAmount > 0 ? round2(taxBase / l.quantity) : l.rate,
+      };
+    });
+  } catch (err: any) {
+    if (err?.status === 400) return res.status(400).json({ message: err.message });
+    throw err;
+  }
   const grandTotal = subtotal + taxTotal + customsDutyTotal;
   const grandTotalFc = isForeign ? round2(grandTotal / fxRate) : null;
+
+  // Purchase-Order-linked lines: can't bill more than what's still open on
+  // that PO line (ordered qty minus whatever's already been billed against
+  // it, including by other Purchase Bills raised earlier against the same
+  // PO). Two lines on *this* bill referencing the same PO line are summed
+  // together before comparing.
+  if (linkedPo) {
+    const poLineById = new Map(linkedPo.lines.map((l) => [l.id, l]));
+    const billedOnThisBill = new Map<string, number>();
+    for (const l of computed as (typeof computed[number] & { purchaseOrderLineId?: string })[]) {
+      if (!l.purchaseOrderLineId) continue;
+      const poLine = poLineById.get(l.purchaseOrderLineId);
+      if (!poLine) {
+        return res.status(400).json({ message: "One or more lines reference a purchaseOrderLineId that isn't on this Purchase Order." });
+      }
+      billedOnThisBill.set(l.purchaseOrderLineId, (billedOnThisBill.get(l.purchaseOrderLineId) ?? 0) + l.quantity);
+    }
+    for (const [poLineId, qtyOnThisBill] of billedOnThisBill) {
+      const poLine = poLineById.get(poLineId)!;
+      const alreadyBilled = Number(poLine.billedQuantity);
+      const ordered = Number(poLine.quantity);
+      if (round2(alreadyBilled + qtyOnThisBill) > ordered) {
+        return res.status(400).json({
+          message: `Billing ${qtyOnThisBill} against Purchase Order line ${poLineId} would exceed the ordered quantity ` +
+            `(${ordered} ordered, ${alreadyBilled} already billed, ${round2(ordered - alreadyBilled)} remaining).`,
+        });
+      }
+    }
+  }
 
   const [cgstInput, sgstInput, igstInput, tradePayables, customsDutyPayable] = await Promise.all([
     prisma.account.findFirst({ where: { organizationId, accountCode: CGST_INPUT_CODE } }),
@@ -257,7 +329,7 @@ router.post("/", canPost, async (req, res) => {
 
       const created = await tx.purchaseBill.create({
         data: {
-          organizationId, branchId: resolvedBranchId, businessPartnerId,
+          organizationId, branchId: resolvedBranchId, businessPartnerId: effectiveBusinessPartnerId,
           billNumber, billDate: new Date(billDate), narration: narration ?? "",
           journalEntryId: journalEntry.id, subtotal, taxTotal, grandTotal,
           cgstTotal, sgstTotal, igstTotal, customsDutyTotal,
@@ -268,6 +340,7 @@ router.post("/", canPost, async (req, res) => {
           billOfEntryNumber: isForeign && billOfEntryNumber ? String(billOfEntryNumber) : null,
           billOfEntryDate: isForeign && billOfEntryDate ? new Date(billOfEntryDate) : null,
           portCode: isForeign && portCode ? String(portCode) : null,
+          purchaseOrderId: linkedPo?.id ?? null,
           createdBy: req.user!.userId,
         },
       });
@@ -280,6 +353,7 @@ router.post("/", canPost, async (req, res) => {
           rateFc: l.rateFc ?? null, lineTotalFc: isForeign ? round2(l.lineTotal / fxRate) : null,
           customsDutyRate: isForeign && l.customsDutyRate ? l.customsDutyRate : null,
           customsDutyAmount: l.customsDutyAmount,
+          purchaseOrderLineId: (l as { purchaseOrderLineId?: string }).purchaseOrderLineId ?? null,
         })),
       });
 
@@ -290,6 +364,29 @@ router.post("/", canPost, async (req, res) => {
           movementType: "PURCHASE", referenceType: "purchase_bill", referenceId: created.id,
           movementDate: new Date(billDate), narration: `Purchase bill ${billNumber}`,
         });
+      }
+
+      // Roll the billed quantity forward on each referenced PO line, then
+      // close the PO out once every one of its lines is fully billed —
+      // same transaction, so this can never drift out of sync with the
+      // bill that just posted.
+      if (linkedPo) {
+        const billedByLine = new Map<string, number>();
+        for (const l of computed as (typeof computed[number] & { purchaseOrderLineId?: string })[]) {
+          if (!l.purchaseOrderLineId) continue;
+          billedByLine.set(l.purchaseOrderLineId, (billedByLine.get(l.purchaseOrderLineId) ?? 0) + l.quantity);
+        }
+        for (const [poLineId, qty] of billedByLine) {
+          await tx.purchaseOrderLine.update({
+            where: { id: poLineId },
+            data: { billedQuantity: { increment: qty } },
+          });
+        }
+        const allLines = await tx.purchaseOrderLine.findMany({ where: { purchaseOrderId: linkedPo.id } });
+        const fullyBilled = allLines.every((l) => Number(l.billedQuantity) >= Number(l.quantity));
+        if (fullyBilled) {
+          await tx.purchaseOrder.update({ where: { id: linkedPo.id }, data: { status: "CLOSED" } });
+        }
       }
 
       return created;

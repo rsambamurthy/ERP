@@ -180,6 +180,10 @@ export interface CompanyMaster {
   companyType: string | null;
   incorporationDate: string | null;
   registeredOfficeAddress: string | null;
+  // Purchase Order approval workflow — null means every submitted PO
+  // requires manual approval regardless of amount. See
+  // PurchaseOrder.status and the "Purchase Order Workflow" ROADMAP section.
+  poApprovalThreshold: string | null;
   directors: Director[];
   auditors: Auditor[];
 }
@@ -448,6 +452,9 @@ export interface DocumentLineInput {
   // line's INR taxable value. See customsDutyAmount on DocumentLine and the
   // PurchaseBill.customsDutyTotal note below.
   customsDutyRate?: number;
+  // Purchase Bill lines only — which PurchaseOrderLine this line fulfills,
+  // when the bill is raised from an approved PO. See PurchaseOrder above.
+  purchaseOrderLineId?: string;
 }
 
 // ── Foreign currency (exports/imports) ───────────────────────────────────
@@ -582,7 +589,72 @@ export interface PurchaseBill {
   billOfEntryNumber: string | null;
   billOfEntryDate: string | null;
   portCode: string | null;
+  // Set when this bill was raised against an approved Purchase Order —
+  // see PurchaseOrder below and routes/purchaseBills.ts's POST / handler.
+  purchaseOrderId: string | null;
+  purchaseOrder?: { id: string; poNumber: string } | null;
   lines: DocumentLine[];
+}
+
+// ── Purchase Order ───────────────────────────────────────────────────────
+// A pre-commitment/approval document, entirely separate from posting — see
+// backend/prisma/schema.prisma's PurchaseOrder model comment for the full
+// status state machine and ROADMAP.md's "Purchase Order Workflow" section.
+export type PurchaseOrderStatus = "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "CANCELLED" | "CLOSED";
+
+export const PURCHASE_ORDER_STATUS_LABELS: Record<PurchaseOrderStatus, string> = {
+  DRAFT: "Draft",
+  PENDING_APPROVAL: "Pending Approval",
+  APPROVED: "Approved",
+  REJECTED: "Rejected",
+  CANCELLED: "Cancelled",
+  CLOSED: "Closed (fully billed)",
+};
+
+export interface PurchaseOrderLineInput {
+  itemId: string;
+  quantity: number;
+  rate: number;
+  taxRate?: number;
+}
+
+export interface PurchaseOrderLine extends PurchaseOrderLineInput {
+  id: string;
+  item: { id: string; sku: string; name: string };
+  lineSubtotal: string;
+  taxAmount: string;
+  lineTotal: string;
+  // Running total already billed against this line across every linked
+  // Purchase Bill — never exceeds `quantity`.
+  billedQuantity: string;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  poNumber: string;
+  poDate: string;
+  expectedDeliveryDate: string | null;
+  narration: string;
+  status: PurchaseOrderStatus;
+  businessPartner: { id: string; name: string };
+  branch?: { id: string; name: string } | null;
+  subtotal: string;
+  taxTotal: string;
+  grandTotal: string;
+  submittedBy: string | null;
+  submittedAt: string | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  autoApproved: boolean;
+  rejectedBy: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
+  cancelledBy: string | null;
+  cancelledAt: string | null;
+  lines: PurchaseOrderLine[];
+  // Every Purchase Bill raised against this PO so far — the detail screen
+  // shows this as the billing progress trail.
+  purchaseBills?: { id: string; billNumber: string; billDate: string; grandTotal: string }[];
 }
 
 // ── Sales / Purchase Returns ─────────────────────────────────────────────
@@ -788,6 +860,7 @@ export const PERMISSIONS = [
   "branches.manage",
   "sales.post",
   "purchase.post",
+  "purchase.approve",
   "inventory.post",
   "journal.post",
   "company.manage",
@@ -801,7 +874,8 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "businessPartners.manage": "Manage Business Partners (Customers/Vendors)",
   "branches.manage": "Manage Branches",
   "sales.post": "Post Sales Invoices & Sales Returns",
-  "purchase.post": "Post Purchase Bills & Purchase Returns",
+  "purchase.post": "Create Purchase Orders, post Purchase Bills & Purchase Returns",
+  "purchase.approve": "Approve or reject Purchase Orders",
   "inventory.post": "Post Stock Adjustments",
   "journal.post": "Post Journal Entries",
   "company.manage": "Manage Company Master Data (CIN, directors, auditors)",

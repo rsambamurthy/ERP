@@ -1,17 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
-import { ApiError, createPurchaseBill, getBranches, getBusinessPartners, getItems, getPurchaseBill, getPurchaseBills, updatePurchaseBillReference } from "@/lib/api";
+import {
+  ApiError, createPurchaseBill, getBranches, getBusinessPartners, getItems, getPurchaseBill, getPurchaseBills,
+  getPurchaseOrder, getPurchaseOrders, updatePurchaseBillReference,
+} from "@/lib/api";
 import { isInterState, round2, splitGst } from "@/lib/discountGst";
-import type { Branch, BusinessPartner, DocumentLineInput, Item, PurchaseBill } from "@/lib/types";
+import type { Branch, BusinessPartner, DocumentLineInput, Item, PurchaseBill, PurchaseOrder } from "@/lib/types";
 import { SUPPORTED_CURRENCIES, currencySymbol } from "@/lib/types";
 
 const emptyLine = (): DocumentLineInput => ({ itemId: "", quantity: 0, rate: 0, rateFc: 0, taxRate: 0, customsDutyRate: 0 });
 
 function PurchaseBillsInner() {
+  const searchParams = useSearchParams();
+  const initialPoId = searchParams.get("purchaseOrderId") ?? "";
+
   const [bills, setBills] = useState<PurchaseBill[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [vendors, setVendors] = useState<BusinessPartner[]>([]);
@@ -28,6 +35,14 @@ function PurchaseBillsInner() {
   const [currency, setCurrency] = useState("INR");
   const [exchangeRate, setExchangeRate] = useState("1");
   const isForeign = currency !== "INR";
+
+  // Optional — raising this bill against an approved Purchase Order. Only
+  // ever offered for a domestic (INR) bill: Purchase Orders don't carry a
+  // currency/exchange-rate concept yet, so linking one to a foreign bill
+  // isn't supported. See routes/purchaseBills.ts's purchaseOrderId handling.
+  const [linkedPO, setLinkedPO] = useState<PurchaseOrder | null>(null);
+  const [availablePOs, setAvailablePOs] = useState<PurchaseOrder[]>([]);
+  const [poLoadError, setPoLoadError] = useState<string | null>(null);
   // Optional at creation — the backend accepts these on POST too, for
   // whichever orgs already have the Bill of Entry before posting. Most
   // won't yet, which is why the detail view also offers PATCH-based entry
@@ -79,11 +94,17 @@ function PurchaseBillsInner() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [billsRes, itemsRes, vendorsRes, branchRes] = await Promise.all([getPurchaseBills(), getItems(), getBusinessPartners("VENDOR"), getBranches()]);
+      const [billsRes, itemsRes, vendorsRes, branchRes, poRes] = await Promise.all([
+        getPurchaseBills(), getItems(), getBusinessPartners("VENDOR"), getBranches(), getPurchaseOrders({ status: "APPROVED" }),
+      ]);
       setBills(billsRes.data);
       setItems(itemsRes.data);
       setVendors(vendorsRes.data);
       setBranches(branchRes.data);
+      // Only orders with at least one line not yet fully billed are worth
+      // offering — a fully-billed APPROVED order should already have
+      // auto-closed, but this filter is a harmless belt-and-braces check.
+      setAvailablePOs(poRes.data.filter((po) => po.lines.some((l) => Number(l.billedQuantity) < Number(l.quantity))));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load purchase bills.");
     } finally {
@@ -92,6 +113,42 @@ function PurchaseBillsInner() {
   }
 
   useEffect(() => { loadAll(); }, []);
+
+  // Deep link from the Purchase Order detail screen ("Create Purchase
+  // Bill" button) — ?purchaseOrderId=<id> opens the form pre-linked.
+  useEffect(() => {
+    if (!initialPoId) return;
+    (async () => {
+      try {
+        const res = await getPurchaseOrder(initialPoId);
+        linkPO(res.data);
+        setShowForm(true);
+      } catch (err) {
+        setPoLoadError(err instanceof ApiError ? err.message : "Could not load the linked Purchase Order.");
+      }
+    })();
+    // Only meant to run once, off the URL param present at first render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPoId]);
+
+  function linkPO(po: PurchaseOrder) {
+    setLinkedPO(po);
+    setBusinessPartnerId(po.businessPartner.id);
+    setCurrency("INR");
+    const openLines = po.lines.filter((l) => Number(l.billedQuantity) < Number(l.quantity));
+    setLines(openLines.map((l) => ({
+      itemId: l.itemId,
+      quantity: round2(Number(l.quantity) - Number(l.billedQuantity)),
+      rate: Number(l.rate),
+      taxRate: Number(l.taxRate),
+      purchaseOrderLineId: l.id,
+    })));
+  }
+
+  function unlinkPO() {
+    setLinkedPO(null);
+    setLines([emptyLine()]);
+  }
 
   async function openDetail(id: string) {
     setShowForm(false);
@@ -174,7 +231,7 @@ function PurchaseBillsInner() {
     setError(null);
     try {
       await createPurchaseBill({
-        businessPartnerId, billDate, narration,
+        businessPartnerId: linkedPO ? undefined : businessPartnerId, billDate, narration,
         lines: lines
           .filter((l) => l.itemId && l.quantity > 0)
           .map((l) => (isForeign ? l : { ...l, customsDutyRate: undefined })),
@@ -182,11 +239,13 @@ function PurchaseBillsInner() {
         billOfEntryNumber: isForeign ? newBoeNumber || undefined : undefined,
         billOfEntryDate: isForeign ? newBoeDate || undefined : undefined,
         portCode: isForeign ? newPortCode || undefined : undefined,
+        purchaseOrderId: linkedPO?.id,
       });
       setShowForm(false);
       setBusinessPartnerId(""); setNarration(""); setLines([emptyLine()]);
       setCurrency("INR"); setExchangeRate("1");
       setNewBoeNumber(""); setNewBoeDate(""); setNewPortCode("");
+      setLinkedPO(null);
       await loadAll();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not post bill.");
@@ -210,10 +269,43 @@ function PurchaseBillsInner() {
       {showForm && (
         <form onSubmit={handleCreate} className="ent-section">
           <div className="ent-section-hdr"><span className="ent-section-title">New Purchase Bill</span></div>
+
+          {poLoadError && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 10px" }}>{poLoadError}</p>}
+
+          <div style={{ padding: "0 14px 10px" }}>
+            {!linkedPO ? (
+              <div className="ent-fg" style={{ maxWidth: 420 }}>
+                <label className="ent-fl">From Purchase Order <span style={{ fontWeight: 400, color: "var(--color-muted)" }}>(optional)</span></label>
+                <select
+                  className="ent-fc"
+                  value=""
+                  onChange={(e) => {
+                    const po = availablePOs.find((p) => p.id === e.target.value);
+                    if (po) linkPO(po);
+                  }}
+                >
+                  <option value="">Not linked to a Purchase Order</option>
+                  {availablePOs.map((po) => (
+                    <option key={po.id} value={po.id}>{po.poNumber} — {po.businessPartner.name} (₹{Number(po.grandTotal).toFixed(2)})</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div style={{
+                display: "flex", flexWrap: "wrap", gap: "6px 18px", alignItems: "center",
+                background: "#f5f3ff", border: "1px solid #ddd6fe", borderRadius: 6,
+                padding: "8px 14px", fontSize: 13,
+              }}>
+                <span>Linked to <strong>{linkedPO.poNumber}</strong> — {linkedPO.businessPartner.name}. Lines pre-filled from what's still open on this order.</span>
+                <button type="button" className="ent-ia ent-ia-edit" onClick={unlinkPO}>Unlink</button>
+              </div>
+            )}
+          </div>
+
           <div className="ent-form-grid" style={{ gridTemplateColumns: "1fr 1fr 2fr" }}>
             <div className="ent-fg">
               <label className="ent-fl">Vendor</label>
-              <select className="ent-fc" value={businessPartnerId} onChange={(e) => setBusinessPartnerId(e.target.value)} required>
+              <select className="ent-fc" value={businessPartnerId} onChange={(e) => setBusinessPartnerId(e.target.value)} required disabled={!!linkedPO}>
                 <option value="">Select…</option>
                 {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select>
@@ -231,9 +323,10 @@ function PurchaseBillsInner() {
           <div className="ent-form-grid" style={{ gridTemplateColumns: isForeign ? "1fr 1fr 2fr" : "1fr 3fr" }}>
             <div className="ent-fg">
               <label className="ent-fl">Currency</label>
-              <select className="ent-fc" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+              <select className="ent-fc" value={currency} onChange={(e) => setCurrency(e.target.value)} disabled={!!linkedPO}>
                 {SUPPORTED_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.name}</option>)}
               </select>
+              {linkedPO && <span style={{ fontSize: 11, color: "var(--color-muted)" }}>Purchase Orders are INR-only for now.</span>}
             </div>
             {isForeign && (
               <div className="ent-fg">
@@ -360,6 +453,7 @@ function PurchaseBillsInner() {
                   {new Date(detail.billDate).toLocaleDateString()} · {detail.businessPartner.name}
                   {detail.narration ? ` · ${detail.narration}` : ""}
                   {docForeign && ` · ${detail.currency} @ ${Number(detail.exchangeRate).toFixed(4)}`}
+                  {detail.purchaseOrder && ` · from ${detail.purchaseOrder.poNumber}`}
                 </div>
 
                 {docForeign && (
@@ -498,7 +592,9 @@ export default function PurchaseBillsPage() {
   return (
     <AppShell>
       <CostingMethodGate>
-        <PurchaseBillsInner />
+        <Suspense fallback={null}>
+          <PurchaseBillsInner />
+        </Suspense>
       </CostingMethodGate>
     </AppShell>
   );

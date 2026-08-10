@@ -34,6 +34,8 @@ import type {
   OrgUsersResponse,
   PnLResponse,
   PurchaseBill,
+  PurchaseOrder,
+  PurchaseOrderLineInput,
   PurchaseReturn,
   PurchaseReturnableResponse,
   PurchaseReturnLineInput,
@@ -207,6 +209,7 @@ export function getCompanyMaster() {
 export function updateCompanyMaster(body: {
   cin?: string | null; companyPan?: string | null; companyType?: string | null;
   incorporationDate?: string | null; registeredOfficeAddress?: string | null;
+  poApprovalThreshold?: number | null;
 }) {
   return request<{ data: CompanyMaster }>("/company-master", { method: "PATCH", body: JSON.stringify(body) });
 }
@@ -501,9 +504,12 @@ export function getPurchaseBill(id: string) {
 }
 
 export function createPurchaseBill(body: {
-  businessPartnerId: string; billDate: string; branchId?: string; narration?: string; lines: DocumentLineInput[];
+  // Omit businessPartnerId when purchaseOrderId is given — the vendor is
+  // derived from the (approved) PO server-side. See routes/purchaseBills.ts.
+  businessPartnerId?: string; billDate: string; branchId?: string; narration?: string; lines: DocumentLineInput[];
   currency?: string; exchangeRate?: number;
   billOfEntryNumber?: string; billOfEntryDate?: string; portCode?: string;
+  purchaseOrderId?: string;
 }) {
   return request<{ data: PurchaseBill }>("/purchase-bills", { method: "POST", body: JSON.stringify(body) });
 }
@@ -514,6 +520,56 @@ export function updatePurchaseBillReference(id: string, body: {
   billOfEntryNumber?: string | null; billOfEntryDate?: string | null; portCode?: string | null;
 }) {
   return request<{ data: PurchaseBill }>(`/purchase-bills/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+// ── Purchase Orders ──────────────────────────────────────────────────────
+
+export function getPurchaseOrders(params?: { status?: string; businessPartnerId?: string }) {
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set("status", params.status);
+  if (params?.businessPartnerId) qs.set("businessPartnerId", params.businessPartnerId);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request<{ data: PurchaseOrder[] }>(`/purchase-orders${suffix}`);
+}
+
+export function getPurchaseOrder(id: string) {
+  return request<{ data: PurchaseOrder }>(`/purchase-orders/${id}`);
+}
+
+export function createPurchaseOrder(body: {
+  businessPartnerId: string; poDate: string; branchId?: string; expectedDeliveryDate?: string; narration?: string;
+  lines: PurchaseOrderLineInput[];
+}) {
+  return request<{ data: PurchaseOrder }>("/purchase-orders", { method: "POST", body: JSON.stringify(body) });
+}
+
+// Full edit — Draft only (the backend 400s otherwise). See PATCH
+// /purchase-orders/:id.
+export function updatePurchaseOrder(id: string, body: {
+  businessPartnerId?: string; poDate?: string; branchId?: string | null; expectedDeliveryDate?: string | null; narration?: string;
+  lines: PurchaseOrderLineInput[];
+}) {
+  return request<{ data: PurchaseOrder }>(`/purchase-orders/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function submitPurchaseOrder(id: string) {
+  return request<{ data: PurchaseOrder }>(`/purchase-orders/${id}/submit`, { method: "POST" });
+}
+
+export function approvePurchaseOrder(id: string) {
+  return request<{ data: PurchaseOrder }>(`/purchase-orders/${id}/approve`, { method: "POST" });
+}
+
+export function rejectPurchaseOrder(id: string, reason: string) {
+  return request<{ data: PurchaseOrder }>(`/purchase-orders/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+}
+
+export function reopenPurchaseOrder(id: string) {
+  return request<{ data: PurchaseOrder }>(`/purchase-orders/${id}/reopen`, { method: "POST" });
+}
+
+export function cancelPurchaseOrder(id: string) {
+  return request<{ data: PurchaseOrder }>(`/purchase-orders/${id}/cancel`, { method: "POST" });
 }
 
 export function getSalesInvoices() {

@@ -335,6 +335,64 @@ from Templates** for every already-provisioned org (`POST
 accounts in `migration_014`. `POST /purchase-bills` 500s with a clear
 message if a foreign bill needs the account and it isn't there yet.
 
+### Purchase Orders (`/purchase-orders`)
+
+A `PurchaseOrder` is a pre-commitment/approval document — it never posts a
+journal entry or touches stock. Only once `status === "APPROVED"` can it
+be linked into a Purchase Bill (see below). Full state machine on the
+`PurchaseOrder` model's schema comment; routes:
+
+| Route | Notes |
+| --- | --- |
+| `GET /purchase-orders` | List, org-scoped. Optional `?status=` / `?businessPartnerId=` filters. Includes full lines (with item) so the frontend can compute "has open lines" client-side without a second request. |
+| `GET /purchase-orders/:id` | Detail — includes `businessPartner`, `branch`, `lines`, and every `purchaseBills` raised against it (billing history trail). |
+| `POST /purchase-orders` | Creates as `DRAFT`. `purchase.post`. |
+| `PATCH /purchase-orders/:id` | Full edit — 400s unless `status === "DRAFT"`. Replaces every line wholesale (delete + recreate), same "no per-line diffing" convention as the rest of this app. `purchase.post`. |
+| `POST /purchase-orders/:id/submit` | `DRAFT` only. Looks up `Organization.poApprovalThreshold`; if set and `grandTotal` is strictly below it, goes straight to `APPROVED` (`autoApproved: true`); otherwise `PENDING_APPROVAL`. `purchase.post`. |
+| `POST /purchase-orders/:id/approve` | `PENDING_APPROVAL` only → `APPROVED`. New `purchase.approve` permission (see below). |
+| `POST /purchase-orders/:id/reject` | `PENDING_APPROVAL` only → `REJECTED`. Body `{ reason }`, required (400 without it). `purchase.approve`. |
+| `POST /purchase-orders/:id/reopen` | `REJECTED` only → `DRAFT`, editable and resubmittable. Rejection reason/who/when stays on the record as history, not cleared. `purchase.post`. |
+| `POST /purchase-orders/:id/cancel` | `DRAFT`/`PENDING_APPROVAL`/`APPROVED` (only if nothing's been billed against any line yet) → `CANCELLED`. `purchase.post`. |
+
+**Approval permission.** New `purchase.approve` in `lib/permissions.ts`,
+deliberately excluded from `ACCOUNTANT`'s built-in permission set —
+separation of duties, so the same role that creates/posts orders and bills
+doesn't also approve by default. Owner/Admin get it automatically (their
+built-in sets spread the whole `PERMISSIONS` array); grant it to a custom
+role via Access Control for anyone else who should approve.
+
+**Approval threshold.** `Organization.poApprovalThreshold` (nullable
+`Decimal`), set via `PATCH /company-master` (reused `company.manage`
+permission — same endpoint the CIN/PAN/directors fields already live on).
+Null (the default) means every PO needs manual approval regardless of
+amount; once set, `POST /:id/submit` auto-approves anything strictly below
+it.
+
+**Billing a Purchase Order.** `POST /purchase-bills` takes an optional
+`purchaseOrderId`. When present: the PO must belong to the org and be
+`APPROVED` (else 400); `businessPartnerId` is *derived* from the PO rather
+than taken from the request body (a mismatched `businessPartnerId` in the
+body 400s); each line may separately carry a `purchaseOrderLineId`. Before
+posting, cumulative billed quantity (existing `PurchaseOrderLine.billedQuantity`
++ this bill's quantity for that line, lines on *this* bill summed together
+first) is checked against the line's ordered `quantity` — exceeding it
+400s with the exact ordered/billed/remaining figures. On successful post,
+in the same transaction: each referenced `PurchaseOrderLine.billedQuantity`
+increments, then every line on the PO is re-checked and the PO flips to
+`CLOSED` the moment all of them are fully billed. A bill not linked to a PO
+behaves exactly as before this feature — `purchaseOrderId`/
+`purchaseOrderLineId` are both nullable and unused.
+
+**Bug fixed in passing:** per-line validation in `POST /purchase-bills`
+(bad quantity, invalid item, and now the new PO-quantity check) used to
+`throw` outside the route's only `try/catch` — express-async-errors would
+forward it to `index.ts`'s catch-all, which always returns a generic 500,
+discarding the actual validation message. Now wrapped properly and returns
+the intended 400.
+
+Requires `db/migration_022_purchase_orders.sql`. No new GL accounts and no
+`prisma db seed` step — a Purchase Order never posts to the journal.
+
 ### Bulk upload (`/accounts`, `/items`, `/business-partners` — `/bulk-upload/*`)
 
 Same three-step flow on all three, ported from SmartAppt Gold's vendor/bank upload pattern (`lib/xlsxTemplate.ts` + `lib/upload.ts` are the shared pieces): `GET .../bulk-upload/template` downloads a styled `.xlsx` (header row, inline hints, dropdown validation on enum columns); `POST .../bulk-upload/preview` (multipart, field name `file`) parses it server-side and returns every row tagged `create` / `update` / `error` — nothing is written yet; `POST .../bulk-upload/apply` takes back only the rows the user confirmed (body `{ rows: [...] }`) and commits them. Matching an uploaded row to an existing record: Chart of Accounts by Account Code, Items by SKU, Business Partners by the optional `code` field (blank code always creates new — see `migration_007`). Requires `db/migration_007_user_name_and_bp_code.sql`.

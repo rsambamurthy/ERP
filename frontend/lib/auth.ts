@@ -98,6 +98,15 @@ export function canPostTransactions(): boolean {
 export function canManageTeam(): boolean {
   return ["OWNER", "ADMIN"].includes(getRole() ?? "");
 }
+// Purchase Order approve/reject — Owner/Admin by default (see the
+// separation-of-duties note on backend/src/lib/permissions.ts's
+// BUILT_IN_PERMISSIONS.ACCOUNTANT: it deliberately excludes
+// "purchase.approve"). A CUSTOM role needs it explicitly granted.
+export function canApprovePurchaseOrders(): boolean {
+  const role = getRole() ?? "";
+  if (role === "CUSTOM") return getPermissions().includes("purchase.approve");
+  return ["OWNER", "ADMIN"].includes(role);
+}
 
 export function clearSession() {
   if (typeof window === "undefined") return;

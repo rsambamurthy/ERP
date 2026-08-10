@@ -93,6 +93,11 @@ model Organization {
   companyType             String?   @map("company_type") @db.VarChar(30)
   incorporationDate       DateTime? @map("incorporation_date") @db.Date
   registeredOfficeAddress Json?     @map("registered_office_address")
+  // Purchase Order approval workflow — null means "always require manual
+  // approval" (the safe default). When set, a submitted PO whose
+  // grandTotal is strictly below this amount auto-approves instead of
+  // going to PENDING_APPROVAL. See routes/purchaseOrders.ts POST /:id/submit.
+  poApprovalThreshold     Decimal?  @map("po_approval_threshold") @db.Decimal(14, 2)
   createdAt               DateTime  @default(now()) @map("created_at")
   updatedAt               DateTime  @default(now()) @updatedAt @map("updated_at")
   deletedAt               DateTime? @map("deleted_at")
@@ -120,6 +125,7 @@ model Organization {
   stockLots        StockLot[]
   directors        Director[]
   auditors         Auditor[]
+  purchaseOrders   PurchaseOrder[]
 
   @@map("organizations")
 }
@@ -205,6 +211,7 @@ model Branch {
   stockAdjustments StockAdjustment[]
   salesReturns     SalesReturn[]
   purchaseReturns  PurchaseReturn[]
+  purchaseOrders   PurchaseOrder[]
 
   @@unique([organizationId, code])
   @@map("branches")
@@ -478,6 +485,7 @@ model Item {
   stockAdjustmentLines StockAdjustmentLine[]
   salesReturnLines     SalesReturnLine[]
   purchaseReturnLines  PurchaseReturnLine[]
+  purchaseOrderLines   PurchaseOrderLine[]
 
   @@unique([organizationId, sku])
   @@map("items")
@@ -682,6 +690,12 @@ model PurchaseBill {
   // taxTotal both credit the new Customs Duty Payable account instead,
   // since neither is actually owed to the vendor.
   customsDutyTotal  Decimal  @default(0) @map("customs_duty_total") @db.Decimal(14, 2)
+  // Optional — set when this bill was raised against an approved Purchase
+  // Order rather than created standalone. See routes/purchaseBills.ts:
+  // when present, businessPartnerId is derived from the PO (not taken from
+  // the request), and each line may separately carry its own
+  // purchaseOrderLineId to track exactly which ordered line it fulfills.
+  purchaseOrderId   String?  @map("purchase_order_id") @db.Uuid
   createdBy         String?  @map("created_by") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at")
 
@@ -689,6 +703,7 @@ model PurchaseBill {
   branch          Branch?            @relation(fields: [branchId], references: [id])
   businessPartner BusinessPartner    @relation(fields: [businessPartnerId], references: [id])
   journalEntry    JournalEntry       @relation(fields: [journalEntryId], references: [id])
+  purchaseOrder   PurchaseOrder?     @relation(fields: [purchaseOrderId], references: [id])
   lines           PurchaseBillLine[]
   returns         PurchaseReturn[]
 
@@ -719,12 +734,95 @@ model PurchaseBillLine {
   // a domestic bill.
   customsDutyRate   Decimal? @map("customs_duty_rate") @db.Decimal(5, 2)
   customsDutyAmount Decimal  @default(0) @map("customs_duty_amount") @db.Decimal(14, 2)
+  // Optional — which PurchaseOrderLine this bill line fulfills, when the
+  // bill was raised from a PO. See routes/purchaseBills.ts: on post, this
+  // line's quantity is added to that PurchaseOrderLine.billedQuantity.
+  purchaseOrderLineId String? @map("purchase_order_line_id") @db.Uuid
 
-  purchaseBill PurchaseBill         @relation(fields: [purchaseBillId], references: [id])
-  item         Item                 @relation(fields: [itemId], references: [id])
-  returnLines  PurchaseReturnLine[]
+  purchaseBill      PurchaseBill         @relation(fields: [purchaseBillId], references: [id])
+  item              Item                 @relation(fields: [itemId], references: [id])
+  purchaseOrderLine PurchaseOrderLine?   @relation(fields: [purchaseOrderLineId], references: [id])
+  returnLines       PurchaseReturnLine[]
 
   @@map("purchase_bill_lines")
+}
+
+// ── Purchase Order ───────────────────────────────────────────────────────
+// A pre-commitment document with its own approval workflow, entirely
+// separate from posting — a PurchaseOrder never touches the journal or
+// stock. Only once it's APPROVED can it be turned into one or more
+// Purchase Bills (routes/purchaseBills.ts), which still does all the real
+// accounting/stock work exactly as it always has. See ROADMAP.md's
+// "Purchase Order Workflow" section for the full state machine.
+//
+// Status values: DRAFT (freely editable) -> submit ->
+// APPROVED (auto, when grandTotal is below Organization.poApprovalThreshold)
+//   or PENDING_APPROVAL (needs a purchase.approve holder) -> approve -> APPROVED
+//                                                          -> reject -> REJECTED
+// REJECTED -> reopen -> DRAFT (editable again, resubmittable)
+// DRAFT/PENDING_APPROVAL/APPROVED(nothing billed yet) -> cancel -> CANCELLED
+// APPROVED -> (every line fully billed) -> CLOSED, automatically
+model PurchaseOrder {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String    @map("organization_id") @db.Uuid
+  branchId          String?   @map("branch_id") @db.Uuid
+  businessPartnerId String    @map("business_partner_id") @db.Uuid
+  poNumber          String    @map("po_number") @db.VarChar(30)
+  poDate            DateTime  @map("po_date") @db.Date
+  expectedDeliveryDate DateTime? @map("expected_delivery_date") @db.Date
+  narration         String    @default("") @db.VarChar(255)
+  status            String    @default("DRAFT") @db.VarChar(20)
+  subtotal          Decimal   @default(0) @db.Decimal(14, 2)
+  taxTotal          Decimal   @default(0) @map("tax_total") @db.Decimal(14, 2)
+  grandTotal        Decimal   @default(0) @map("grand_total") @db.Decimal(14, 2)
+
+  submittedBy    String?   @map("submitted_by") @db.Uuid
+  submittedAt    DateTime? @map("submitted_at")
+  approvedBy     String?   @map("approved_by") @db.Uuid
+  approvedAt     DateTime? @map("approved_at")
+  // True when APPROVED was reached automatically via poApprovalThreshold
+  // rather than a human clicking Approve — kept for the audit trail shown
+  // on the PO detail screen.
+  autoApproved   Boolean   @default(false) @map("auto_approved")
+  rejectedBy     String?   @map("rejected_by") @db.Uuid
+  rejectedAt     DateTime? @map("rejected_at")
+  rejectionReason String?  @map("rejection_reason") @db.VarChar(500)
+  cancelledBy    String?   @map("cancelled_by") @db.Uuid
+  cancelledAt    DateTime? @map("cancelled_at")
+
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  organization    Organization        @relation(fields: [organizationId], references: [id])
+  branch          Branch?             @relation(fields: [branchId], references: [id])
+  businessPartner BusinessPartner     @relation(fields: [businessPartnerId], references: [id])
+  lines           PurchaseOrderLine[]
+  purchaseBills   PurchaseBill[]
+
+  @@unique([organizationId, poNumber])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderLine {
+  id              String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  purchaseOrderId String  @map("purchase_order_id") @db.Uuid
+  itemId          String  @map("item_id") @db.Uuid
+  quantity        Decimal @db.Decimal(14, 4)
+  rate            Decimal @db.Decimal(14, 2)
+  taxRate         Decimal @map("tax_rate") @db.Decimal(5, 2)
+  lineSubtotal    Decimal @map("line_subtotal") @db.Decimal(14, 2)
+  taxAmount       Decimal @map("tax_amount") @db.Decimal(14, 2)
+  lineTotal       Decimal @map("line_total") @db.Decimal(14, 2)
+  // Running total of quantity already billed against this line across every
+  // linked Purchase Bill — see routes/purchaseBills.ts. Never exceeds
+  // `quantity` (enforced server-side at bill-post time).
+  billedQuantity  Decimal @default(0) @map("billed_quantity") @db.Decimal(14, 4)
+
+  purchaseOrder PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id])
+  item          Item               @relation(fields: [itemId], references: [id])
+  purchaseBillLines PurchaseBillLine[]
+
+  @@map("purchase_order_lines")
 }
 
 // ── Sales Return (Credit Note) ──────────────────────────────────────────
@@ -922,6 +1020,7 @@ model BusinessPartner {
   purchaseBills PurchaseBill[]
   salesReturns    SalesReturn[]
   purchaseReturns PurchaseReturn[]
+  purchaseOrders  PurchaseOrder[]
 
   @@map("business_partners")
 }
