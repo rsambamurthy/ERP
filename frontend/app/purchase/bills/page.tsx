@@ -28,6 +28,13 @@ function PurchaseBillsInner() {
   const [currency, setCurrency] = useState("INR");
   const [exchangeRate, setExchangeRate] = useState("1");
   const isForeign = currency !== "INR";
+  // Optional at creation — the backend accepts these on POST too, for
+  // whichever orgs already have the Bill of Entry before posting. Most
+  // won't yet, which is why the detail view also offers PATCH-based entry
+  // after the fact (see startEditBoe below).
+  const [newBoeNumber, setNewBoeNumber] = useState("");
+  const [newBoeDate, setNewBoeDate] = useState("");
+  const [newPortCode, setNewPortCode] = useState("");
 
   const [detail, setDetail] = useState<PurchaseBill | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -164,10 +171,14 @@ function PurchaseBillsInner() {
         businessPartnerId, billDate, narration,
         lines: lines.filter((l) => l.itemId && l.quantity > 0),
         currency, exchangeRate: isForeign ? Number(exchangeRate) : undefined,
+        billOfEntryNumber: isForeign ? newBoeNumber || undefined : undefined,
+        billOfEntryDate: isForeign ? newBoeDate || undefined : undefined,
+        portCode: isForeign ? newPortCode || undefined : undefined,
       });
       setShowForm(false);
       setBusinessPartnerId(""); setNarration(""); setLines([emptyLine()]);
       setCurrency("INR"); setExchangeRate("1");
+      setNewBoeNumber(""); setNewBoeDate(""); setNewPortCode("");
       await loadAll();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not post bill.");
@@ -231,6 +242,23 @@ function PurchaseBillsInner() {
               </span>
             </div>
           </div>
+
+          {isForeign && (
+            <div className="ent-form-grid" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+              <div className="ent-fg">
+                <label className="ent-fl">Bill of Entry Number <span style={{ fontWeight: 400, color: "var(--color-muted)" }}>(optional)</span></label>
+                <input className="ent-fc" value={newBoeNumber} onChange={(e) => setNewBoeNumber(e.target.value)} placeholder="If already known" />
+              </div>
+              <div className="ent-fg">
+                <label className="ent-fl">Bill of Entry Date <span style={{ fontWeight: 400, color: "var(--color-muted)" }}>(optional)</span></label>
+                <input type="date" className="ent-fc" value={newBoeDate} onChange={(e) => setNewBoeDate(e.target.value)} />
+              </div>
+              <div className="ent-fg">
+                <label className="ent-fl">Port Code <span style={{ fontWeight: 400, color: "var(--color-muted)" }}>(optional)</span></label>
+                <input className="ent-fc" value={newPortCode} onChange={(e) => setNewPortCode(e.target.value)} placeholder="e.g. INNSA1" />
+              </div>
+            </div>
+          )}
 
           <div style={{ padding: "0 14px" }}>
             <table className="ent-table">

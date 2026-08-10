@@ -99,6 +99,10 @@ router.patch("/:id", canPost, async (req, res) => {
       lutBondNumber: lutBondNumber !== undefined ? (lutBondNumber ? String(lutBondNumber) : null) : invoice.lutBondNumber,
       lutBondDate: lutBondDate !== undefined ? (lutBondDate ? new Date(lutBondDate) : null) : invoice.lutBondDate,
     },
+    // Same shape as GET /:id — the frontend sets its detail state straight
+    // from this response and immediately re-renders the line table, so it
+    // needs businessPartner/lines present, not just the updated scalars.
+    include: { businessPartner: true, lines: { include: { item: true } } },
   });
   logAudit({
     organizationId, actorUserId: req.user!.userId,

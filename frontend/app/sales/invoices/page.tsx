@@ -33,6 +33,13 @@ function SalesInvoicesInner() {
   const [exportType, setExportType] = useState<ExportType>("LUT");
   const [lutBondNumber, setLutBondNumber] = useState("");
   const [lutBondDate, setLutBondDate] = useState("");
+  // Optional at creation — the backend accepts these on POST too, for
+  // whichever orgs already know the shipping bill before invoicing. Most
+  // won't yet, which is why the detail view also offers PATCH-based entry
+  // after the fact (see startEditShipping below).
+  const [newShippingBillNumber, setNewShippingBillNumber] = useState("");
+  const [newShippingBillDate, setNewShippingBillDate] = useState("");
+  const [newPortCode, setNewPortCode] = useState("");
   const isZeroRatedExport = isForeign && (exportType === "LUT" || exportType === "BOND");
   const hasLineTax = lines.some((l) => Number(l.taxRate || 0) > 0);
 
@@ -212,12 +219,16 @@ function SalesInvoicesInner() {
         exportType: isForeign ? exportType : undefined,
         lutBondNumber: isForeign && exportType !== "WPAY" ? lutBondNumber : undefined,
         lutBondDate: isForeign && exportType !== "WPAY" ? lutBondDate : undefined,
+        shippingBillNumber: isForeign ? newShippingBillNumber || undefined : undefined,
+        shippingBillDate: isForeign ? newShippingBillDate || undefined : undefined,
+        portCode: isForeign ? newPortCode || undefined : undefined,
       });
       setShowForm(false);
       setBusinessPartnerId(""); setNarration(""); setLines([emptyLine()]);
       setInvoiceDiscountType(""); setInvoiceDiscountValue("");
       setCurrency("INR"); setExchangeRate("1");
       setExportType("LUT"); setLutBondNumber(""); setLutBondDate("");
+      setNewShippingBillNumber(""); setNewShippingBillDate(""); setNewPortCode("");
       await loadAll();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not post invoice.");
@@ -309,6 +320,23 @@ function SalesInvoicesInner() {
                   </span>
                 </div>
               )}
+            </div>
+          )}
+
+          {isForeign && (
+            <div className="ent-form-grid" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+              <div className="ent-fg">
+                <label className="ent-fl">Shipping Bill Number <span style={{ fontWeight: 400, color: "var(--color-muted)" }}>(optional)</span></label>
+                <input className="ent-fc" value={newShippingBillNumber} onChange={(e) => setNewShippingBillNumber(e.target.value)} placeholder="If already known" />
+              </div>
+              <div className="ent-fg">
+                <label className="ent-fl">Shipping Bill Date <span style={{ fontWeight: 400, color: "var(--color-muted)" }}>(optional)</span></label>
+                <input type="date" className="ent-fc" value={newShippingBillDate} onChange={(e) => setNewShippingBillDate(e.target.value)} />
+              </div>
+              <div className="ent-fg">
+                <label className="ent-fl">Port Code <span style={{ fontWeight: 400, color: "var(--color-muted)" }}>(optional)</span></label>
+                <input className="ent-fc" value={newPortCode} onChange={(e) => setNewPortCode(e.target.value)} placeholder="e.g. INNSA1" />
+              </div>
             </div>
           )}
 
