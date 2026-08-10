@@ -446,6 +446,39 @@ far on that side.
 
 Requires `db/migration_019_lut_bond.sql`.
 
+## Shipping Bill / Bill of Entry (built)
+
+Third slice of "Export/Import invoices" — the customs reference fields
+GSTR-1 Table 6A will eventually need: shipping bill number/date/port code
+on Sales Invoice, Bill of Entry number/date/port code on Purchase Bill.
+
+The interesting decision here wasn't the fields themselves, it was *when*
+they're captured. These documents essentially never exist yet at the
+moment of posting — an export invoice gets raised before goods actually
+ship, an import bill gets posted before customs clearance is done — so
+requiring them at `POST` time would just block normal invoicing. They're
+accepted optionally at creation (in case an org happens to have them
+upfront) but the real mechanism is a new narrow `PATCH` endpoint on each
+document, restricted to only these reference fields (plus LUT/Bond, on the
+Sales Invoice side, in case that needs correcting later too). Deliberately
+not a general invoice/bill edit capability — no amount, GST figure, or
+journal entry is touched, so unlike a real edit there's nothing to
+re-post or reverse. Sales Invoice and Purchase Bill still have no way to
+edit anything else after posting.
+
+Also fixed the same latent bug found while building LUT/Bond, this time on
+the import side: `POST /purchase-bills` was still splitting foreign-vendor
+tax into CGST+SGST instead of IGST when the vendor had no Indian state
+code on file. Now forces `interState = true` for any foreign-currency
+bill, matching the Sales Invoice fix.
+
+Still not built: GSTR-1 Table 6A (exports) reporting itself — these fields
+exist now, but nothing reads them into a report yet — and the rest of the
+import side (customs duty as a landed-cost addition, IGST-on-import
+treated as ITC rather than a normal purchase tax line).
+
+Requires `db/migration_020_shipping_bill.sql`.
+
 ## From the earlier "what's next" review
 
 Flagged as gaps before Sales/Purchase/Inventory was chosen as the next

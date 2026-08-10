@@ -588,6 +588,14 @@ model SalesInvoice {
   exportType        String?  @map("export_type") @db.VarChar(10)
   lutBondNumber     String?  @map("lut_bond_number") @db.VarChar(40)
   lutBondDate       DateTime? @map("lut_bond_date") @db.Date
+  // Shipping bill (GSTR-1 Table 6A needs this) and port code — almost
+  // always unknown at the moment of invoicing (goods ship after the
+  // invoice is raised), so these stay nullable and are filled in later via
+  // PATCH rather than required at POST time. Freeform, not validated
+  // against ICEGATE's port code list — see routes/salesInvoices.ts.
+  shippingBillNumber String?  @map("shipping_bill_number") @db.VarChar(30)
+  shippingBillDate   DateTime? @map("shipping_bill_date") @db.Date
+  portCode           String?  @map("port_code") @db.VarChar(10)
   createdBy         String?  @map("created_by") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at")
 
@@ -659,6 +667,14 @@ model PurchaseBill {
   currency          String   @default("INR") @db.VarChar(3)
   exchangeRate      Decimal  @default(1) @map("exchange_rate") @db.Decimal(12, 6)
   grandTotalFc      Decimal? @map("grand_total_fc") @db.Decimal(14, 2)
+  // Bill of Entry (customs clearance doc) and port code — same rationale
+  // as SalesInvoice.shippingBillNumber above: usually unknown at posting
+  // time, filled in later via PATCH. Also what a real ITC claim on an
+  // import would eventually need to reference (not built yet — this pass
+  // is just capturing the reference fields).
+  billOfEntryNumber String?  @map("bill_of_entry_number") @db.VarChar(30)
+  billOfEntryDate   DateTime? @map("bill_of_entry_date") @db.Date
+  portCode          String?  @map("port_code") @db.VarChar(10)
   createdBy         String?  @map("created_by") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at")
 

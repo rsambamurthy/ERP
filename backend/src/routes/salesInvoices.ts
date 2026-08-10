@@ -65,6 +65,41 @@ router.get("/:id", async (req, res) => {
   res.json({ data: invoice });
 });
 
+// PATCH /sales-invoices/:id — reference-data-only edit, for the export
+// paperwork (shipping bill, LUT/Bond ARN) that's almost never known yet at
+// posting time and arrives later. Deliberately whitelisted to these five
+// fields — nothing here touches an amount, a GST figure, or the journal
+// entry, so there's no re-posting/reversal to do, unlike a real invoice
+// edit (which this app doesn't support at all — see PATCH /journal/:id for
+// the one document type that does, and why it's safe there: manual
+// entries only, no downstream stock/COGS impact).
+router.patch("/:id", canPost, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+
+  const invoice = await prisma.salesInvoice.findFirst({ where: { id: req.params.id, organizationId } });
+  if (!invoice) return res.status(404).json({ message: "Sales invoice not found." });
+  if (invoice.currency === "INR") {
+    return res.status(400).json({ message: "Shipping bill / LUT-Bond fields only apply to a foreign-currency (export) invoice." });
+  }
+
+  const { shippingBillNumber, shippingBillDate, portCode, lutBondNumber, lutBondDate } = req.body ?? {};
+  const data: Record<string, unknown> = {};
+  if (shippingBillNumber !== undefined) data.shippingBillNumber = shippingBillNumber ? String(shippingBillNumber) : null;
+  if (shippingBillDate !== undefined) data.shippingBillDate = shippingBillDate ? new Date(shippingBillDate) : null;
+  if (portCode !== undefined) data.portCode = portCode ? String(portCode) : null;
+  if (lutBondNumber !== undefined) data.lutBondNumber = lutBondNumber ? String(lutBondNumber) : null;
+  if (lutBondDate !== undefined) data.lutBondDate = lutBondDate ? new Date(lutBondDate) : null;
+
+  const updated = await prisma.salesInvoice.update({ where: { id: invoice.id }, data });
+  logAudit({
+    organizationId, actorUserId: req.user!.userId,
+    action: "UPDATE", entityType: "sales_invoice", entityId: invoice.id,
+    summary: `Updated export reference fields on ${invoice.invoiceNumber}`,
+  });
+  res.json({ data: updated });
+});
+
 // POST /sales-invoices — create and post in one step. Stock outward for
 // every line (rejected if any line's branch stock can't cover it), one
 // journal entry: Dr Trade Receivables (tagged the customer) / Cr Sales
@@ -81,6 +116,7 @@ router.post("/", canPost, async (req, res) => {
   const {
     businessPartnerId, invoiceDate, branchId, narration, lines, discountType, discountValue,
     currency, exchangeRate, exportType, lutBondNumber, lutBondDate,
+    shippingBillNumber, shippingBillDate, portCode,
   } = req.body ?? {};
   if (!businessPartnerId || !invoiceDate || !Array.isArray(lines) || lines.length === 0) {
     return res.status(400).json({ message: "businessPartnerId, invoiceDate, and at least one line are required." });
@@ -263,6 +299,13 @@ router.post("/", canPost, async (req, res) => {
           cgstTotal, sgstTotal, igstTotal,
           currency: currencyCode, exchangeRate: fxRate, grandTotalFc,
           exportType: exportTypeCode, lutBondNumber: lutBondNumberVal, lutBondDate: lutBondDateVal,
+          // Almost never known yet at posting time — see the schema
+          // comment on shippingBillNumber. Accepted here in case the org
+          // happens to have it upfront, but PATCH /:id (below) is the
+          // normal way this gets filled in.
+          shippingBillNumber: isForeign && shippingBillNumber ? String(shippingBillNumber) : null,
+          shippingBillDate: isForeign && shippingBillDate ? new Date(shippingBillDate) : null,
+          portCode: isForeign && portCode ? String(portCode) : null,
           createdBy: req.user!.userId,
         },
       });

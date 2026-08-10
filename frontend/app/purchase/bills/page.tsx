@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
-import { ApiError, createPurchaseBill, getBranches, getBusinessPartners, getItems, getPurchaseBill, getPurchaseBills } from "@/lib/api";
+import { ApiError, createPurchaseBill, getBranches, getBusinessPartners, getItems, getPurchaseBill, getPurchaseBills, updatePurchaseBillReference } from "@/lib/api";
 import { isInterState, round2, splitGst } from "@/lib/discountGst";
 import type { Branch, BusinessPartner, DocumentLineInput, Item, PurchaseBill } from "@/lib/types";
 import { SUPPORTED_CURRENCIES, currencySymbol } from "@/lib/types";
@@ -33,12 +33,25 @@ function PurchaseBillsInner() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
 
+  // Editing Bill of Entry / port code on an already-posted import bill —
+  // almost never known at posting time (customs clearance happens after),
+  // so this is the normal way it gets filled in. See PATCH /purchase-bills/:id.
+  const [editingBoe, setEditingBoe] = useState(false);
+  const [boeNumber, setBoeNumber] = useState("");
+  const [boeDate, setBoeDate] = useState("");
+  const [boePort, setBoePort] = useState("");
+  const [savingBoe, setSavingBoe] = useState(false);
+  const [boeError, setBoeError] = useState<string | null>(null);
+
   const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
   const selectedVendor = useMemo(() => vendors.find((v) => v.id === businessPartnerId), [vendors, businessPartnerId]);
   // No branch selector on this form yet — the server defaults to head
   // office when branchId isn't given, so the preview mirrors that here too.
   const headOffice = useMemo(() => branches.find((b) => b.isHeadOffice), [branches]);
-  const interState = isInterState(headOffice?.stateCode, selectedVendor?.stateCode);
+  // An import is always inter-state (IGST) under GST law — see the same
+  // note on POST /purchase-bills. Never fall back to CGST+SGST just
+  // because a foreign vendor has no Indian state code on file.
+  const interState = isForeign ? true : isInterState(headOffice?.stateCode, selectedVendor?.stateCode);
 
   const totals = useMemo(() => {
     let subtotal = 0, tax = 0, cgst = 0, sgst = 0, igst = 0;
@@ -73,6 +86,8 @@ function PurchaseBillsInner() {
     setDetail(null);
     setDetailError(null);
     setDetailLoading(true);
+    setEditingBoe(false);
+    setBoeError(null);
     try {
       const res = await getPurchaseBill(id);
       setDetail(res.data);
@@ -80,6 +95,31 @@ function PurchaseBillsInner() {
       setDetailError(err instanceof ApiError ? err.message : "Could not load bill.");
     } finally {
       setDetailLoading(false);
+    }
+  }
+
+  function startEditBoe(bill: PurchaseBill) {
+    setBoeNumber(bill.billOfEntryNumber ?? "");
+    setBoeDate(bill.billOfEntryDate ? bill.billOfEntryDate.slice(0, 10) : "");
+    setBoePort(bill.portCode ?? "");
+    setBoeError(null);
+    setEditingBoe(true);
+  }
+
+  async function handleSaveBoe(id: string) {
+    setSavingBoe(true);
+    setBoeError(null);
+    try {
+      const res = await updatePurchaseBillReference(id, {
+        billOfEntryNumber: boeNumber || null, billOfEntryDate: boeDate || null, portCode: boePort || null,
+      });
+      setDetail(res.data);
+      setEditingBoe(false);
+      await loadAll();
+    } catch (err) {
+      setBoeError(err instanceof ApiError ? err.message : "Could not save Bill of Entry details.");
+    } finally {
+      setSavingBoe(false);
     }
   }
 
@@ -260,8 +300,11 @@ function PurchaseBillsInner() {
           {detailLoading && <p style={{ padding: "0 14px 14px", fontSize: 13, color: "var(--color-muted)" }}>Loading…</p>}
           {detailError && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 14px" }}>{detailError}</p>}
           {detail && (() => {
-            const docInterState = Number(detail.igstTotal) > 0;
             const docForeign = detail.currency !== "INR";
+            // An import is always inter-state (IGST) — show that column
+            // even at 0, matching what actually determined the split (see
+            // the note on POST /purchase-bills).
+            const docInterState = docForeign || Number(detail.igstTotal) > 0;
             return (
               <>
                 <div style={{ padding: "0 14px 10px", fontSize: 13, color: "var(--color-muted)" }}>
@@ -269,6 +312,43 @@ function PurchaseBillsInner() {
                   {detail.narration ? ` · ${detail.narration}` : ""}
                   {docForeign && ` · ${detail.currency} @ ${Number(detail.exchangeRate).toFixed(4)}`}
                 </div>
+
+                {docForeign && (
+                  <div style={{ padding: "0 14px 10px" }}>
+                    {!editingBoe ? (
+                      <div style={{
+                        display: "flex", flexWrap: "wrap", gap: "6px 18px", alignItems: "center",
+                        background: "#f8fafd", border: "1px solid var(--color-border)", borderRadius: 6,
+                        padding: "8px 14px", fontSize: 13,
+                      }}>
+                        <span>Bill of Entry: <strong>{detail.billOfEntryNumber || "not added yet"}</strong>{detail.billOfEntryDate && ` (${new Date(detail.billOfEntryDate).toLocaleDateString()})`}</span>
+                        <span>Port: <strong>{detail.portCode || "—"}</strong></span>
+                        <button type="button" className="ent-ia ent-ia-edit" onClick={() => startEditBoe(detail)}>Edit</button>
+                      </div>
+                    ) : (
+                      <div className="ent-form-grid" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+                        <div className="ent-fg">
+                          <label className="ent-fl">Bill of Entry Number</label>
+                          <input className="ent-fc" value={boeNumber} onChange={(e) => setBoeNumber(e.target.value)} />
+                        </div>
+                        <div className="ent-fg">
+                          <label className="ent-fl">Bill of Entry Date</label>
+                          <input type="date" className="ent-fc" value={boeDate} onChange={(e) => setBoeDate(e.target.value)} />
+                        </div>
+                        <div className="ent-fg">
+                          <label className="ent-fl">Port Code</label>
+                          <input className="ent-fc" value={boePort} onChange={(e) => setBoePort(e.target.value)} placeholder="e.g. INNSA1" />
+                        </div>
+                        <div className="ent-fg" style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
+                          <button type="button" className="ent-btn-save" disabled={savingBoe} onClick={() => handleSaveBoe(detail.id)}>{savingBoe ? "Saving…" : "Save"}</button>
+                          <button type="button" className="ent-ia ent-ia-edit" onClick={() => setEditingBoe(false)}>Cancel</button>
+                        </div>
+                        {boeError && <p style={{ color: "#dc2626", fontSize: 13, gridColumn: "1 / -1" }}>{boeError}</p>}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div style={{ padding: "0 14px" }}>
                   <table className="ent-table">
                     <thead>

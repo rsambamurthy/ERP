@@ -514,6 +514,12 @@ export interface SalesInvoice {
   exportType: ExportType | null;
   lutBondNumber: string | null;
   lutBondDate: string | null;
+  // Almost always filled in later via PATCH, not at creation — see
+  // routes/salesInvoices.ts. Null for a domestic invoice or an export that
+  // hasn't shipped yet.
+  shippingBillNumber: string | null;
+  shippingBillDate: string | null;
+  portCode: string | null;
   lines: SalesInvoiceLine[];
 }
 
@@ -540,6 +546,11 @@ export interface PurchaseBill {
   currency: string;
   exchangeRate: string;
   grandTotalFc: string | null;
+  // Same rationale as SalesInvoice.shippingBillNumber — almost always
+  // filled in later via PATCH once customs clearance actually happens.
+  billOfEntryNumber: string | null;
+  billOfEntryDate: string | null;
+  portCode: string | null;
   lines: DocumentLine[];
 }
 

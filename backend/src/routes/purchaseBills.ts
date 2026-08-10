@@ -58,6 +58,36 @@ router.get("/:id", async (req, res) => {
   res.json({ data: bill });
 });
 
+// PATCH /purchase-bills/:id — reference-data-only edit for the Bill of
+// Entry (customs clearance doc), same rationale as
+// salesInvoices.ts PATCH /:id: almost never known at posting time, filled
+// in later, and none of these three fields touch an amount or the journal
+// entry, so no re-posting is needed.
+router.patch("/:id", canPost, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+
+  const bill = await prisma.purchaseBill.findFirst({ where: { id: req.params.id, organizationId } });
+  if (!bill) return res.status(404).json({ message: "Purchase bill not found." });
+  if (bill.currency === "INR") {
+    return res.status(400).json({ message: "Bill of Entry fields only apply to a foreign-currency (import) bill." });
+  }
+
+  const { billOfEntryNumber, billOfEntryDate, portCode } = req.body ?? {};
+  const data: Record<string, unknown> = {};
+  if (billOfEntryNumber !== undefined) data.billOfEntryNumber = billOfEntryNumber ? String(billOfEntryNumber) : null;
+  if (billOfEntryDate !== undefined) data.billOfEntryDate = billOfEntryDate ? new Date(billOfEntryDate) : null;
+  if (portCode !== undefined) data.portCode = portCode ? String(portCode) : null;
+
+  const updated = await prisma.purchaseBill.update({ where: { id: bill.id }, data });
+  logAudit({
+    organizationId, actorUserId: req.user!.userId,
+    action: "UPDATE", entityType: "purchase_bill", entityId: bill.id,
+    summary: `Updated Bill of Entry fields on ${bill.billNumber}`,
+  });
+  res.json({ data: updated });
+});
+
 // POST /purchase-bills — create and post in one step, same UX as journal
 // entries. Stock inward for every line, one journal entry: Dr each item's
 // stock account (tagged that item's own ITEM business partner) + Dr
@@ -67,7 +97,10 @@ router.post("/", canPost, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
 
-  const { businessPartnerId, billDate, branchId, narration, lines, currency, exchangeRate } = req.body ?? {};
+  const {
+    businessPartnerId, billDate, branchId, narration, lines, currency, exchangeRate,
+    billOfEntryNumber, billOfEntryDate, portCode,
+  } = req.body ?? {};
   if (!businessPartnerId || !billDate || !Array.isArray(lines) || lines.length === 0) {
     return res.status(400).json({ message: "businessPartnerId, billDate, and at least one line are required." });
   }
@@ -104,7 +137,11 @@ router.post("/", canPost, async (req, res) => {
   if (items.length !== itemIds.length) return res.status(400).json({ message: "One or more items are invalid for this organization." });
   const itemById = new Map(items.map((i) => [i.id, i]));
 
-  const interState = isInterState(branch?.stateCode, vendor.stateCode);
+  // An import is always an inter-state (IGST) supply under GST law — same
+  // reasoning as the fix on the Sales Invoice side (see the note there).
+  // IGST paid on an import is what's actually creditable, never CGST+SGST,
+  // regardless of whether the foreign vendor has an Indian state code.
+  const interState = isForeign ? true : isInterState(branch?.stateCode, vendor.stateCode);
   let subtotal = 0, taxTotal = 0, cgstTotal = 0, sgstTotal = 0, igstTotal = 0;
   const computed = typedLines.map((l) => {
     if (isForeign) {
@@ -177,6 +214,12 @@ router.post("/", canPost, async (req, res) => {
           journalEntryId: journalEntry.id, subtotal, taxTotal, grandTotal,
           cgstTotal, sgstTotal, igstTotal,
           currency: currencyCode, exchangeRate: fxRate, grandTotalFc,
+          // Almost never known yet at posting time — see the schema
+          // comment on billOfEntryNumber. PATCH /:id is the normal way
+          // this gets filled in once customs clearance actually happens.
+          billOfEntryNumber: isForeign && billOfEntryNumber ? String(billOfEntryNumber) : null,
+          billOfEntryDate: isForeign && billOfEntryDate ? new Date(billOfEntryDate) : null,
+          portCode: isForeign && portCode ? String(portCode) : null,
           createdBy: req.user!.userId,
         },
       });

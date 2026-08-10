@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
-import { ApiError, createSalesInvoice, getBranches, getBusinessPartners, getItems, getSalesInvoice, getSalesInvoices } from "@/lib/api";
+import { ApiError, createSalesInvoice, getBranches, getBusinessPartners, getItems, getSalesInvoice, getSalesInvoices, updateSalesInvoiceReference } from "@/lib/api";
 import { computeDiscountedLines, isInterState, round2 } from "@/lib/discountGst";
 import type { Branch, BusinessPartner, DiscountType, ExportType, Item, SalesInvoice, SalesLineInput } from "@/lib/types";
 import { SUPPORTED_CURRENCIES, currencySymbol, EXPORT_TYPE_LABELS } from "@/lib/types";
@@ -39,6 +39,19 @@ function SalesInvoicesInner() {
   const [detail, setDetail] = useState<SalesInvoice | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+
+  // Editing shipping bill / LUT-Bond reference fields on an already-posted
+  // export invoice — these are almost never known at the moment of
+  // posting (goods ship after the invoice), so this is the normal way
+  // they get filled in, not the create form. See PATCH /sales-invoices/:id.
+  const [editingShipping, setEditingShipping] = useState(false);
+  const [shipNumber, setShipNumber] = useState("");
+  const [shipDate, setShipDate] = useState("");
+  const [shipPort, setShipPort] = useState("");
+  const [shipLutBondNumber, setShipLutBondNumber] = useState("");
+  const [shipLutBondDate, setShipLutBondDate] = useState("");
+  const [savingShipping, setSavingShipping] = useState(false);
+  const [shippingError, setShippingError] = useState<string | null>(null);
 
   const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
   const selectedCustomer = useMemo(() => customers.find((c) => c.id === businessPartnerId), [customers, businessPartnerId]);
@@ -93,6 +106,8 @@ function SalesInvoicesInner() {
     setDetail(null);
     setDetailError(null);
     setDetailLoading(true);
+    setEditingShipping(false);
+    setShippingError(null);
     try {
       const res = await getSalesInvoice(id);
       setDetail(res.data);
@@ -100,6 +115,34 @@ function SalesInvoicesInner() {
       setDetailError(err instanceof ApiError ? err.message : "Could not load invoice.");
     } finally {
       setDetailLoading(false);
+    }
+  }
+
+  function startEditShipping(inv: SalesInvoice) {
+    setShipNumber(inv.shippingBillNumber ?? "");
+    setShipDate(inv.shippingBillDate ? inv.shippingBillDate.slice(0, 10) : "");
+    setShipPort(inv.portCode ?? "");
+    setShipLutBondNumber(inv.lutBondNumber ?? "");
+    setShipLutBondDate(inv.lutBondDate ? inv.lutBondDate.slice(0, 10) : "");
+    setShippingError(null);
+    setEditingShipping(true);
+  }
+
+  async function handleSaveShipping(id: string) {
+    setSavingShipping(true);
+    setShippingError(null);
+    try {
+      const res = await updateSalesInvoiceReference(id, {
+        shippingBillNumber: shipNumber || null, shippingBillDate: shipDate || null, portCode: shipPort || null,
+        lutBondNumber: shipLutBondNumber || null, lutBondDate: shipLutBondDate || null,
+      });
+      setDetail(res.data);
+      setEditingShipping(false);
+      await loadAll();
+    } catch (err) {
+      setShippingError(err instanceof ApiError ? err.message : "Could not save shipping details.");
+    } finally {
+      setSavingShipping(false);
     }
   }
 
@@ -394,6 +437,51 @@ function SalesInvoicesInner() {
                   {detail.exportType && ` · ${EXPORT_TYPE_LABELS[detail.exportType]}`}
                   {detail.lutBondNumber && ` (${detail.lutBondNumber}${detail.lutBondDate ? `, ${new Date(detail.lutBondDate).toLocaleDateString()}` : ""})`}
                 </div>
+
+                {docForeign && (
+                  <div style={{ padding: "0 14px 10px" }}>
+                    {!editingShipping ? (
+                      <div style={{
+                        display: "flex", flexWrap: "wrap", gap: "6px 18px", alignItems: "center",
+                        background: "#f8fafd", border: "1px solid var(--color-border)", borderRadius: 6,
+                        padding: "8px 14px", fontSize: 13,
+                      }}>
+                        <span>Shipping Bill: <strong>{detail.shippingBillNumber || "not added yet"}</strong>{detail.shippingBillDate && ` (${new Date(detail.shippingBillDate).toLocaleDateString()})`}</span>
+                        <span>Port: <strong>{detail.portCode || "—"}</strong></span>
+                        <button type="button" className="ent-ia ent-ia-edit" onClick={() => startEditShipping(detail)}>Edit</button>
+                      </div>
+                    ) : (
+                      <div className="ent-form-grid" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+                        <div className="ent-fg">
+                          <label className="ent-fl">Shipping Bill Number</label>
+                          <input className="ent-fc" value={shipNumber} onChange={(e) => setShipNumber(e.target.value)} />
+                        </div>
+                        <div className="ent-fg">
+                          <label className="ent-fl">Shipping Bill Date</label>
+                          <input type="date" className="ent-fc" value={shipDate} onChange={(e) => setShipDate(e.target.value)} />
+                        </div>
+                        <div className="ent-fg">
+                          <label className="ent-fl">Port Code</label>
+                          <input className="ent-fc" value={shipPort} onChange={(e) => setShipPort(e.target.value)} placeholder="e.g. INNSA1" />
+                        </div>
+                        <div className="ent-fg">
+                          <label className="ent-fl">LUT/Bond Number</label>
+                          <input className="ent-fc" value={shipLutBondNumber} onChange={(e) => setShipLutBondNumber(e.target.value)} />
+                        </div>
+                        <div className="ent-fg">
+                          <label className="ent-fl">LUT/Bond Date</label>
+                          <input type="date" className="ent-fc" value={shipLutBondDate} onChange={(e) => setShipLutBondDate(e.target.value)} />
+                        </div>
+                        <div className="ent-fg" style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
+                          <button type="button" className="ent-btn-save" disabled={savingShipping} onClick={() => handleSaveShipping(detail.id)}>{savingShipping ? "Saving…" : "Save"}</button>
+                          <button type="button" className="ent-ia ent-ia-edit" onClick={() => setEditingShipping(false)}>Cancel</button>
+                        </div>
+                        {shippingError && <p style={{ color: "#dc2626", fontSize: 13, gridColumn: "1 / -1" }}>{shippingError}</p>}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div style={{ padding: "0 14px" }}>
                   <table className="ent-table">
                     <thead>

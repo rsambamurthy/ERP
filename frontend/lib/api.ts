@@ -503,8 +503,17 @@ export function getPurchaseBill(id: string) {
 export function createPurchaseBill(body: {
   businessPartnerId: string; billDate: string; branchId?: string; narration?: string; lines: DocumentLineInput[];
   currency?: string; exchangeRate?: number;
+  billOfEntryNumber?: string; billOfEntryDate?: string; portCode?: string;
 }) {
   return request<{ data: PurchaseBill }>("/purchase-bills", { method: "POST", body: JSON.stringify(body) });
+}
+
+// Reference-only fields (Bill of Entry, port code) — see the PATCH
+// /purchase-bills/:id note in the backend route. Never touches an amount.
+export function updatePurchaseBillReference(id: string, body: {
+  billOfEntryNumber?: string | null; billOfEntryDate?: string | null; portCode?: string | null;
+}) {
+  return request<{ data: PurchaseBill }>(`/purchase-bills/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 }
 
 export function getSalesInvoices() {
@@ -520,8 +529,18 @@ export function createSalesInvoice(body: {
   discountType?: DiscountType | null; discountValue?: number;
   currency?: string; exchangeRate?: number;
   exportType?: string; lutBondNumber?: string; lutBondDate?: string;
+  shippingBillNumber?: string; shippingBillDate?: string; portCode?: string;
 }) {
   return request<{ data: SalesInvoice }>("/sales-invoices", { method: "POST", body: JSON.stringify(body) });
+}
+
+// Reference-only fields (shipping bill, LUT/Bond ARN) — see the PATCH
+// /sales-invoices/:id note in the backend route. Never touches an amount.
+export function updateSalesInvoiceReference(id: string, body: {
+  shippingBillNumber?: string | null; shippingBillDate?: string | null; portCode?: string | null;
+  lutBondNumber?: string | null; lutBondDate?: string | null;
+}) {
+  return request<{ data: SalesInvoice }>(`/sales-invoices/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 }
 
 // ── Sales Returns ────────────────────────────────────────────────────────

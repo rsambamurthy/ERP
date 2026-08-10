@@ -244,6 +244,30 @@ sale instead of posting to IGST Output.
 
 Requires `db/migration_019_lut_bond.sql`.
 
+### Shipping Bill / Bill of Entry (Sales Invoice, Purchase Bill)
+
+`shippingBillNumber`/`shippingBillDate`/`portCode` on Sales Invoice
+(exports) and `billOfEntryNumber`/`billOfEntryDate`/`portCode` on Purchase
+Bill (imports) — the customs paperwork GSTR-1 Table 6A eventually needs.
+All nullable and accepted optionally on `POST`, but realistically these
+documents don't exist yet at the moment of posting (goods ship, or clear
+customs, after the invoice/bill is raised) — the normal way they get
+filled in is the new narrow `PATCH`:
+
+| Route | Notes |
+| --- | --- |
+| `PATCH /sales-invoices/:id` | Whitelisted to `shippingBillNumber`, `shippingBillDate`, `portCode`, `lutBondNumber`, `lutBondDate` only — 400s if the invoice is domestic (INR). Nothing here touches an amount, a GST figure, or the journal entry, so there's no re-posting to do — unlike a real invoice edit, which this app still doesn't support (see `PATCH /journal/:id` for the one document type that does, and why that's safe: manual entries only, no stock/COGS involved). |
+| `PATCH /purchase-bills/:id` | Same idea — whitelisted to `billOfEntryNumber`, `billOfEntryDate`, `portCode`. |
+
+Also fixed the same latent CGST+SGST-vs-IGST bug on the Purchase Bill side
+that LUT/Bond caught on Sales Invoice: `POST /purchase-bills` now forces
+`interState = true` whenever the bill is foreign-currency, for the same
+reason (an import is always inter-state/IGST under GST law, and a foreign
+vendor essentially never has an Indian state code to fall back on
+correctly).
+
+Requires `db/migration_020_shipping_bill.sql`.
+
 ### Bulk upload (`/accounts`, `/items`, `/business-partners` — `/bulk-upload/*`)
 
 Same three-step flow on all three, ported from SmartAppt Gold's vendor/bank upload pattern (`lib/xlsxTemplate.ts` + `lib/upload.ts` are the shared pieces): `GET .../bulk-upload/template` downloads a styled `.xlsx` (header row, inline hints, dropdown validation on enum columns); `POST .../bulk-upload/preview` (multipart, field name `file`) parses it server-side and returns every row tagged `create` / `update` / `error` — nothing is written yet; `POST .../bulk-upload/apply` takes back only the rows the user confirmed (body `{ rows: [...] }`) and commits them. Matching an uploaded row to an existing record: Chart of Accounts by Account Code, Items by SKU, Business Partners by the optional `code` field (blank code always creates new — see `migration_007`). Requires `db/migration_007_user_name_and_bp_code.sql`.
