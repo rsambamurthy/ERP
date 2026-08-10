@@ -508,8 +508,22 @@ export interface SalesInvoice {
   currency: string;
   exchangeRate: string;
   grandTotalFc: string | null;
+  // Export declaration — null for a domestic (INR) invoice. See
+  // ExportType below and the enforcement rules on POST /sales-invoices
+  // (LUT/BOND must be zero-rated; WPAY may carry tax).
+  exportType: ExportType | null;
+  lutBondNumber: string | null;
+  lutBondDate: string | null;
   lines: SalesInvoiceLine[];
 }
+
+export type ExportType = "LUT" | "BOND" | "WPAY";
+
+export const EXPORT_TYPE_LABELS: Record<ExportType, string> = {
+  LUT: "LUT (Letter of Undertaking) — zero-rated",
+  BOND: "Bond — zero-rated",
+  WPAY: "With Payment of IGST (claimed back as refund)",
+};
 
 export interface PurchaseBill {
   id: string;

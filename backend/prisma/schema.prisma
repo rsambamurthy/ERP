@@ -580,6 +580,14 @@ model SalesInvoice {
   currency          String   @default("INR") @db.VarChar(3)
   exchangeRate      Decimal  @default(1) @map("exchange_rate") @db.Decimal(12, 6)
   grandTotalFc      Decimal? @map("grand_total_fc") @db.Decimal(14, 2)
+  // Export declaration — only set when currency != "INR" (see
+  // routes/salesInvoices.ts). "LUT" | "BOND" | "WPAY" (with payment of
+  // IGST, tax charged then claimed back as refund). LUT/BOND exports are
+  // zero-rated by law — the server rejects any line with a nonzero taxRate
+  // when exportType is LUT/BOND rather than silently zeroing it.
+  exportType        String?  @map("export_type") @db.VarChar(10)
+  lutBondNumber     String?  @map("lut_bond_number") @db.VarChar(40)
+  lutBondDate       DateTime? @map("lut_bond_date") @db.Date
   createdBy         String?  @map("created_by") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at")
 

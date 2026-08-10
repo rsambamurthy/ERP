@@ -78,7 +78,10 @@ router.post("/", canPost, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
 
-  const { businessPartnerId, invoiceDate, branchId, narration, lines, discountType, discountValue, currency, exchangeRate } = req.body ?? {};
+  const {
+    businessPartnerId, invoiceDate, branchId, narration, lines, discountType, discountValue,
+    currency, exchangeRate, exportType, lutBondNumber, lutBondDate,
+  } = req.body ?? {};
   if (!businessPartnerId || !invoiceDate || !Array.isArray(lines) || lines.length === 0) {
     return res.status(400).json({ message: "businessPartnerId, invoiceDate, and at least one line are required." });
   }
@@ -94,6 +97,34 @@ router.post("/", canPost, async (req, res) => {
   const fxRate = isForeign ? Number(exchangeRate) : 1;
   if (isForeign && !(fxRate > 0)) {
     return res.status(400).json({ message: "exchangeRate must be greater than 0 for a non-INR invoice." });
+  }
+
+  // LUT/Bond export classification — every export must declare which route
+  // it's taking. LUT/BOND are zero-rated by law (no tax at all); WPAY (with
+  // payment of IGST) may carry tax, later claimed back as a refund. Not
+  // applicable to a domestic (INR) invoice — exportType stays null there.
+  const EXPORT_TYPES = ["LUT", "BOND", "WPAY"];
+  let exportTypeCode: string | null = null;
+  let lutBondNumberVal: string | null = null;
+  let lutBondDateVal: Date | null = null;
+  if (isForeign) {
+    exportTypeCode = String(exportType || "").toUpperCase();
+    if (!EXPORT_TYPES.includes(exportTypeCode)) {
+      return res.status(400).json({ message: "exportType must be LUT, BOND, or WPAY for a non-INR invoice." });
+    }
+    if (exportTypeCode === "LUT" || exportTypeCode === "BOND") {
+      if (!lutBondNumber || !lutBondDate) {
+        return res.status(400).json({ message: `lutBondNumber and lutBondDate are required for a ${exportTypeCode} export.` });
+      }
+      lutBondNumberVal = String(lutBondNumber);
+      lutBondDateVal = new Date(lutBondDate);
+      const hasTax = (lines as LineInput[]).some((l) => Number(l.taxRate ?? 0) > 0);
+      if (hasTax) {
+        return res.status(400).json({
+          message: `A ${exportTypeCode} export is zero-rated — no line may carry a tax rate. Use "With Payment of IGST" instead if this export pays and reclaims IGST.`,
+        });
+      }
+    }
   }
 
   const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { costingMethod: true } });
@@ -143,7 +174,11 @@ router.post("/", canPost, async (req, res) => {
     return res.status(500).json({ message: "Core Sales accounts not found — re-run provisioning." });
   }
 
-  const interState = isInterState(branch?.stateCode, customer.stateCode);
+  // An export is always an inter-state (IGST) supply under GST law,
+  // regardless of what stateCode (if any) is on file for the foreign
+  // customer — never fall back to CGST+SGST just because a foreign
+  // business partner has no Indian state code set.
+  const interState = isForeign ? true : isInterState(branch?.stateCode, customer.stateCode);
   const discountLines = computeDiscountedLines(
     typedLines.map((l) => ({ quantity: l.quantity, rate: l.rate, taxRate: l.taxRate ?? 0, discountType: l.discountType, discountValue: l.discountValue })),
     { type: discountType, value: discountValue },
@@ -227,6 +262,7 @@ router.post("/", canPost, async (req, res) => {
           discountType: discountType ?? null, discountValue: discountValue ?? 0, discountTotal,
           cgstTotal, sgstTotal, igstTotal,
           currency: currencyCode, exchangeRate: fxRate, grandTotalFc,
+          exportType: exportTypeCode, lutBondNumber: lutBondNumberVal, lutBondDate: lutBondDateVal,
           createdBy: req.user!.userId,
         },
       });

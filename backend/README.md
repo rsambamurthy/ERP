@@ -215,6 +215,35 @@ invoice is still entered/interpreted in INR, not the invoice's currency.
 
 Requires `db/migration_018_foreign_currency.sql`, then `npx prisma generate`.
 
+### LUT/Bond Export Classification (Sales Invoice)
+
+Every foreign-currency Sales Invoice must declare `exportType` — `"LUT"`
+(Letter of Undertaking), `"BOND"`, or `"WPAY"` (with payment of IGST,
+claimed back as a refund). Not applicable to a domestic (INR) invoice —
+`exportType` stays `null` there, and the field is ignored if sent.
+
+LUT and BOND exports are zero-rated by law: the server requires
+`lutBondNumber` + `lutBondDate` (the ARN and date) and **rejects the whole
+invoice (400)** if any line carries a nonzero `taxRate` — this is enforced
+server-side, not just defaulted in the UI, since charging tax on a
+declared zero-rated export is a compliance error, not a preference. WPAY
+doesn't need an ARN/date and may carry tax normally.
+
+Fixed a related bug while building this: `isInterState()` compares the
+branch's and customer's `stateCode`, and falls back to `false` (same-state,
+CGST+SGST) when either is unset — correct for a domestic customer with no
+GSTIN on file yet, wrong for a foreign customer, who will essentially never
+have an Indian state code. An export is always inter-state (IGST-only)
+supply under GST law regardless of the customer's on-file state code, so
+`POST /sales-invoices` now forces `interState = true` whenever the invoice
+is foreign-currency, before computing the CGST/SGST/IGST split. This only
+mattered for WPAY (LUT/BOND already zero-rates the line, so the split was
+`{0,0,0}` either way) but was a real latent bug for that path — a WPAY
+export would previously have been split into CGST+SGST like a domestic
+sale instead of posting to IGST Output.
+
+Requires `db/migration_019_lut_bond.sql`.
+
 ### Bulk upload (`/accounts`, `/items`, `/business-partners` — `/bulk-upload/*`)
 
 Same three-step flow on all three, ported from SmartAppt Gold's vendor/bank upload pattern (`lib/xlsxTemplate.ts` + `lib/upload.ts` are the shared pieces): `GET .../bulk-upload/template` downloads a styled `.xlsx` (header row, inline hints, dropdown validation on enum columns); `POST .../bulk-upload/preview` (multipart, field name `file`) parses it server-side and returns every row tagged `create` / `update` / `error` — nothing is written yet; `POST .../bulk-upload/apply` takes back only the rows the user confirmed (body `{ rows: [...] }`) and commits them. Matching an uploaded row to an existing record: Chart of Accounts by Account Code, Items by SKU, Business Partners by the optional `code` field (blank code always creates new — see `migration_007`). Requires `db/migration_007_user_name_and_bp_code.sql`.

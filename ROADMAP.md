@@ -408,13 +408,43 @@ defaults to `1`, and the old `rate`-only code path runs exactly as before.
 
 Known gaps, deliberately deferred: no forex gain/loss postings (there's no
 invoice-to-payment settlement/allocation feature in this app at all yet, in
-any currency, to anchor a realized-gain calculation to); no export/import
-compliance fields (LUT/bond, shipping bill, bill of entry, customs duty,
-GSTR-1 Table 6A) — that's the rest of the original "Export/Import invoices"
-scope, not started; a `FLAT` invoice-level discount on a foreign Sales
-Invoice is still entered in INR, not the invoice's currency.
+any currency, to anchor a realized-gain calculation to); no shipping bill/
+bill of entry fields, customs duty, or GSTR-1 Table 6A yet — see LUT/Bond
+Classification below for the piece of "Export/Import invoices" that is now
+built; a `FLAT` invoice-level discount on a foreign Sales Invoice is still
+entered in INR, not the invoice's currency.
 
 Requires `db/migration_018_foreign_currency.sql`.
+
+## LUT/Bond Export Classification (built)
+
+Second slice of the "Export/Import invoices" gap — every foreign-currency
+Sales Invoice now declares its export route: LUT (Letter of Undertaking),
+Bond, or WPAY (With Payment of IGST, claimed back as a refund). LUT/BOND
+are zero-rated by law, so the server rejects the invoice outright if any
+line still carries a tax rate — a real compliance rule enforced server-
+side, not just a UI default (the earlier UI default that resets tax to 0%
+on a foreign line is still there and still the common case, but isn't what
+actually prevents a bad post). LUT/BOND additionally require an ARN
+(`lutBondNumber`) and date on the invoice.
+
+Also fixed a real latent bug found while building this: the CGST+SGST vs.
+IGST split (`isInterState()`) falls back to same-state (CGST+SGST) when
+either side's GST state code is missing — reasonable for a domestic
+partner with no GSTIN yet, wrong for a foreign customer, who essentially
+never has one. Exports are always inter-state under GST law, so a
+foreign-currency invoice now always forces the IGST split regardless of
+what's on the customer record. Previously invisible because LUT/BOND
+already zero-rates the line either way — only the WPAY path was actually
+affected (would have posted a taxed export to CGST/SGST like a domestic
+sale instead of IGST Output).
+
+Still not built: shipping bill/port fields, GSTR-1 Table 6A (exports)
+reporting, and the whole import side (bill of entry, customs duty on
+Purchase Bills) — see Foreign Currency Support above for what's covered so
+far on that side.
+
+Requires `db/migration_019_lut_bond.sql`.
 
 ## From the earlier "what's next" review
 

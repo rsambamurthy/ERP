@@ -519,6 +519,7 @@ export function createSalesInvoice(body: {
   businessPartnerId: string; invoiceDate: string; branchId?: string; narration?: string; lines: SalesLineInput[];
   discountType?: DiscountType | null; discountValue?: number;
   currency?: string; exchangeRate?: number;
+  exportType?: string; lutBondNumber?: string; lutBondDate?: string;
 }) {
   return request<{ data: SalesInvoice }>("/sales-invoices", { method: "POST", body: JSON.stringify(body) });
 }

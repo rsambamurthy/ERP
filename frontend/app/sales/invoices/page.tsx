@@ -6,8 +6,8 @@ import AppShell from "@/components/layout/AppShell";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import { ApiError, createSalesInvoice, getBranches, getBusinessPartners, getItems, getSalesInvoice, getSalesInvoices } from "@/lib/api";
 import { computeDiscountedLines, isInterState, round2 } from "@/lib/discountGst";
-import type { Branch, BusinessPartner, DiscountType, Item, SalesInvoice, SalesLineInput } from "@/lib/types";
-import { SUPPORTED_CURRENCIES, currencySymbol } from "@/lib/types";
+import type { Branch, BusinessPartner, DiscountType, ExportType, Item, SalesInvoice, SalesLineInput } from "@/lib/types";
+import { SUPPORTED_CURRENCIES, currencySymbol, EXPORT_TYPE_LABELS } from "@/lib/types";
 
 const emptyLine = (): SalesLineInput => ({ itemId: "", quantity: 0, rate: 0, rateFc: 0, taxRate: 0, discountType: null, discountValue: 0 });
 
@@ -30,6 +30,11 @@ function SalesInvoicesInner() {
   const [currency, setCurrency] = useState("INR");
   const [exchangeRate, setExchangeRate] = useState("1");
   const isForeign = currency !== "INR";
+  const [exportType, setExportType] = useState<ExportType>("LUT");
+  const [lutBondNumber, setLutBondNumber] = useState("");
+  const [lutBondDate, setLutBondDate] = useState("");
+  const isZeroRatedExport = isForeign && (exportType === "LUT" || exportType === "BOND");
+  const hasLineTax = lines.some((l) => Number(l.taxRate || 0) > 0);
 
   const [detail, setDetail] = useState<SalesInvoice | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -40,7 +45,10 @@ function SalesInvoicesInner() {
   // No branch selector on this form yet — the server defaults to head
   // office when branchId isn't given, so the preview mirrors that here too.
   const headOffice = useMemo(() => branches.find((b) => b.isHeadOffice), [branches]);
-  const interState = isInterState(headOffice?.stateCode, selectedCustomer?.stateCode);
+  // An export is always inter-state (IGST) under GST law — see the same
+  // note on POST /sales-invoices. Never fall back to CGST+SGST just
+  // because a foreign customer has no Indian state code on file.
+  const interState = isForeign ? true : isInterState(headOffice?.stateCode, selectedCustomer?.stateCode);
 
   const discountLines = useMemo(
     () =>
@@ -158,11 +166,15 @@ function SalesInvoicesInner() {
         discountType: invoiceDiscountType || null,
         discountValue: invoiceDiscountValue ? Number(invoiceDiscountValue) : 0,
         currency, exchangeRate: isForeign ? Number(exchangeRate) : undefined,
+        exportType: isForeign ? exportType : undefined,
+        lutBondNumber: isForeign && exportType !== "WPAY" ? lutBondNumber : undefined,
+        lutBondDate: isForeign && exportType !== "WPAY" ? lutBondDate : undefined,
       });
       setShowForm(false);
       setBusinessPartnerId(""); setNarration(""); setLines([emptyLine()]);
       setInvoiceDiscountType(""); setInvoiceDiscountValue("");
       setCurrency("INR"); setExchangeRate("1");
+      setExportType("LUT"); setLutBondNumber(""); setLutBondDate("");
       await loadAll();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not post invoice.");
@@ -221,11 +233,41 @@ function SalesInvoicesInner() {
               <label className="ent-fl">&nbsp;</label>
               <span style={{ fontSize: 12, color: "var(--color-muted)" }}>
                 {isForeign
-                  ? "Export invoice — zero-rated by default (LUT/bond), tax rate reset to 0% on each line. Override per line if this export pays IGST for refund instead."
+                  ? "Export invoice — tax rate reset to 0% on each line by default."
                   : "Domestic invoice — INR only."}
               </span>
             </div>
           </div>
+
+          {isForeign && (
+            <div className="ent-form-grid" style={{ gridTemplateColumns: isZeroRatedExport ? "1.5fr 1fr 1fr" : "1.5fr 2fr" }}>
+              <div className="ent-fg">
+                <label className="ent-fl">Export Type</label>
+                <select className="ent-fc" value={exportType} onChange={(e) => setExportType(e.target.value as ExportType)}>
+                  {(Object.keys(EXPORT_TYPE_LABELS) as ExportType[]).map((t) => <option key={t} value={t}>{EXPORT_TYPE_LABELS[t]}</option>)}
+                </select>
+              </div>
+              {isZeroRatedExport ? (
+                <>
+                  <div className="ent-fg">
+                    <label className="ent-fl">{exportType} ARN / Number</label>
+                    <input className="ent-fc" value={lutBondNumber} onChange={(e) => setLutBondNumber(e.target.value)} required />
+                  </div>
+                  <div className="ent-fg">
+                    <label className="ent-fl">{exportType} Date</label>
+                    <input type="date" className="ent-fc" value={lutBondDate} onChange={(e) => setLutBondDate(e.target.value)} required />
+                  </div>
+                </>
+              ) : (
+                <div className="ent-fg">
+                  <label className="ent-fl">&nbsp;</label>
+                  <span style={{ fontSize: 12, color: "var(--color-muted)" }}>
+                    Tax charged on this export is posted as IGST and expected to be claimed back as a refund — not zero-rated.
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
 
           <div style={{ padding: "0 14px" }}>
             <table className="ent-table">
@@ -314,9 +356,14 @@ function SalesInvoicesInner() {
             </div>
           </div>
 
+          {isZeroRatedExport && hasLineTax && (
+            <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 10px" }}>
+              A {exportType} export is zero-rated — remove the tax rate from every line, or switch Export Type to "With Payment of IGST".
+            </p>
+          )}
           {error && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 10px" }}>{error}</p>}
           <div style={{ padding: "0 14px 14px" }}>
-            <button type="submit" className="ent-btn-save" disabled={saving || !businessPartnerId}>{saving ? "Posting…" : "Post Invoice"}</button>
+            <button type="submit" className="ent-btn-save" disabled={saving || !businessPartnerId || (isZeroRatedExport && hasLineTax)}>{saving ? "Posting…" : "Post Invoice"}</button>
           </div>
         </form>
       )}
@@ -332,14 +379,20 @@ function SalesInvoicesInner() {
           {detailLoading && <p style={{ padding: "0 14px 14px", fontSize: 13, color: "var(--color-muted)" }}>Loading…</p>}
           {detailError && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 14px" }}>{detailError}</p>}
           {detail && (() => {
-            const docInterState = Number(detail.igstTotal) > 0;
             const docForeign = detail.currency !== "INR";
+            // An export is always inter-state (IGST) — show that column even
+            // when the amount is 0 (LUT/BOND), rather than only when tax
+            // happened to be charged, so the layout matches what actually
+            // determined the split (see the note on POST /sales-invoices).
+            const docInterState = docForeign || Number(detail.igstTotal) > 0;
             return (
               <>
                 <div style={{ padding: "0 14px 10px", fontSize: 13, color: "var(--color-muted)" }}>
                   {new Date(detail.invoiceDate).toLocaleDateString()} · {detail.businessPartner.name}
                   {detail.narration ? ` · ${detail.narration}` : ""}
                   {docForeign && ` · ${detail.currency} @ ${Number(detail.exchangeRate).toFixed(4)}`}
+                  {detail.exportType && ` · ${EXPORT_TYPE_LABELS[detail.exportType]}`}
+                  {detail.lutBondNumber && ` (${detail.lutBondNumber}${detail.lutBondDate ? `, ${new Date(detail.lutBondDate).toLocaleDateString()}` : ""})`}
                 </div>
                 <div style={{ padding: "0 14px" }}>
                   <table className="ent-table">
