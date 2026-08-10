@@ -270,6 +270,19 @@ export interface Gstr1HsnRow {
   igst: number;
 }
 
+export interface Gstr1ExportRow {
+  invoiceNumber: string;
+  invoiceDate: string;
+  invoiceValue: number;
+  shippingBillNumber: string | null;
+  shippingBillDate: string | null;
+  portCode: string | null;
+  rate: number;
+  taxableValue: number;
+  igst: number;
+  exportType: "WPAY" | "WOPAY";
+}
+
 export interface Gstr1CreditNoteRow {
   noteNumber: string;
   noteDate: string;
@@ -289,9 +302,11 @@ export interface Gstr1Report {
   to: string;
   b2b: Gstr1B2BRow[];
   b2c: Gstr1B2CRow[];
+  exports: Gstr1ExportRow[];
   hsn: Gstr1HsnRow[];
   creditNotes: Gstr1CreditNoteRow[];
   totals: { taxableValue: number; cgst: number; sgst: number; igst: number; invoiceValue: number };
+  exportsTotal: { taxableValue: number; igst: number; invoiceValue: number };
 }
 
 export interface Gstr3bSection {

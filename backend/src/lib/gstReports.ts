@@ -22,6 +22,14 @@
 //     no CGST/SGST/IGST split — recomputed here via isInterState/splitGst,
 //     same as routes/salesReturns.ts and purchaseReturns.ts do at posting
 //     time.
+//   - Table 6A (exports — see Gstr1ExportRow) is a separate table, not
+//     mixed into B2B/B2C/`totals`: a foreign-currency Sales Invoice
+//     (currency != "INR") is routed here instead of B2B/B2C regardless of
+//     whether the customer happens to have a GSTIN on file. Still included
+//     in the HSN summary, same as the real return does. exportType is
+//     WPAY (with payment of IGST) or WOPAY (LUT/Bond — zero-rated); an
+//     invoice with no exportType set at all (shouldn't happen going
+//     forward, since it's required at posting) is treated as WOPAY.
 import { prisma } from "../db";
 import { isInterState, splitGst, round2 } from "./discountGst";
 
@@ -60,6 +68,19 @@ export interface Gstr1HsnRow {
   igst: number;
 }
 
+export interface Gstr1ExportRow {
+  invoiceNumber: string;
+  invoiceDate: string;
+  invoiceValue: number; // grandTotal — INR, same convention as B2B's invoiceValue
+  shippingBillNumber: string | null;
+  shippingBillDate: string | null;
+  portCode: string | null;
+  rate: number;
+  taxableValue: number;
+  igst: number; // exports are always IGST-only (or 0) — never CGST/SGST, see routes/salesInvoices.ts
+  exportType: "WPAY" | "WOPAY";
+}
+
 export interface Gstr1CreditNoteRow {
   noteNumber: string;
   noteDate: string;
@@ -79,9 +100,13 @@ export interface Gstr1Report {
   to: string;
   b2b: Gstr1B2BRow[];
   b2c: Gstr1B2CRow[];
+  exports: Gstr1ExportRow[];
   hsn: Gstr1HsnRow[];
   creditNotes: Gstr1CreditNoteRow[];
   totals: { taxableValue: number; cgst: number; sgst: number; igst: number; invoiceValue: number };
+  // Separate from `totals` — Table 6A is its own subtotal in the real
+  // return, not folded into the domestic B2B+B2C taxable value/tax figures.
+  exportsTotal: { taxableValue: number; igst: number; invoiceValue: number };
 }
 
 type RateAcc = { taxableValue: number; cgst: number; sgst: number; igst: number };
@@ -109,9 +134,11 @@ export async function computeGstr1(
 
   const b2b: Gstr1B2BRow[] = [];
   const b2cMap = new Map<string, Gstr1B2CRow>();
+  const exports: Gstr1ExportRow[] = [];
   const hsnMap = new Map<string, Gstr1HsnRow>();
 
   for (const inv of invoices) {
+    const isForeign = inv.currency !== "INR";
     const placeOfSupply = inv.businessPartner.stateCode ?? inv.branch?.stateCode ?? "—";
     const byRate = new Map<number, RateAcc>();
     for (const line of inv.lines) {
@@ -136,7 +163,25 @@ export async function computeGstr1(
       });
     }
 
-    if (inv.businessPartner.gstin) {
+    if (isForeign) {
+      // Table 6A — never B2B/B2C, regardless of whether the foreign
+      // customer happens to have a GSTIN on file.
+      const exportType: "WPAY" | "WOPAY" = inv.exportType === "WPAY" ? "WPAY" : "WOPAY";
+      for (const [rate, acc] of byRate) {
+        exports.push({
+          invoiceNumber: inv.invoiceNumber,
+          invoiceDate: inv.invoiceDate.toISOString().slice(0, 10),
+          invoiceValue: Number(inv.grandTotal),
+          shippingBillNumber: inv.shippingBillNumber,
+          shippingBillDate: inv.shippingBillDate ? inv.shippingBillDate.toISOString().slice(0, 10) : null,
+          portCode: inv.portCode,
+          rate,
+          taxableValue: acc.taxableValue,
+          igst: acc.igst,
+          exportType,
+        });
+      }
+    } else if (inv.businessPartner.gstin) {
       for (const [rate, acc] of byRate) {
         b2b.push({
           gstin: inv.businessPartner.gstin,
@@ -191,6 +236,10 @@ export async function computeGstr1(
   const b2c = [...b2cMap.values()].sort((a, b) => a.placeOfSupply.localeCompare(b.placeOfSupply) || a.rate - b.rate);
   const hsn = [...hsnMap.values()].sort((a, b) => a.hsnCode.localeCompare(b.hsnCode) || a.rate - b.rate);
 
+  // Domestic-only — exports get their own exportsTotal below, same
+  // separation the real GSTR-1 return has between the main taxable-value
+  // summary and Table 6A.
+  const domesticInvoiceValue = round2(invoices.filter((i) => i.currency === "INR").reduce((s, i) => s + Number(i.grandTotal), 0));
   const totals = [...b2b, ...b2c].reduce(
     (t, r) => ({
       taxableValue: round2(t.taxableValue + r.taxableValue),
@@ -199,10 +248,20 @@ export async function computeGstr1(
       igst: round2(t.igst + r.igst),
       invoiceValue: t.invoiceValue,
     }),
-    { taxableValue: 0, cgst: 0, sgst: 0, igst: 0, invoiceValue: round2(invoices.reduce((s, i) => s + Number(i.grandTotal), 0)) }
+    { taxableValue: 0, cgst: 0, sgst: 0, igst: 0, invoiceValue: domesticInvoiceValue }
   );
 
-  return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10), b2b, b2c, hsn, creditNotes, totals };
+  const exportsInvoiceValue = round2(invoices.filter((i) => i.currency !== "INR").reduce((s, i) => s + Number(i.grandTotal), 0));
+  const exportsTotal = exports.reduce(
+    (t, r) => ({
+      taxableValue: round2(t.taxableValue + r.taxableValue),
+      igst: round2(t.igst + r.igst),
+      invoiceValue: t.invoiceValue,
+    }),
+    { taxableValue: 0, igst: 0, invoiceValue: exportsInvoiceValue }
+  );
+
+  return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10), b2b, b2c, exports, hsn, creditNotes, totals, exportsTotal };
 }
 
 export interface Gstr3bSection {

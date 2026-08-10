@@ -86,8 +86,27 @@ Sheet) — no `requirePermission` gate.
 
 | Route | Notes |
 | --- | --- |
-| `GET /gst/gstr1?from=&to=&branchId=` | Outward supplies for a period — B2B (invoice-wise), B2C (summarized by state+rate), HSN summary, and credit notes (Sales Returns). |
+| `GET /gst/gstr1?from=&to=&branchId=` | Outward supplies for a period — B2B (invoice-wise), B2C (summarized by state+rate), Exports (Table 6A), HSN summary, and credit notes (Sales Returns). |
 | `GET /gst/gstr1/export?from=&to=&branchId=` | Same data as an `.xlsx`, one sheet per table. |
+
+Table 6A (`report.exports`) is a foreign-currency Sales Invoice's own table
+— routed there instead of B2B/B2C regardless of whether the customer
+happens to have a GSTIN on file, since an export is never a domestic
+supply. One row per (invoice, tax rate) combination, same convention as
+B2B. `exportType` is `"WPAY"` (with payment of IGST) or `"WOPAY"` (LUT/
+Bond — zero-rated); an invoice somehow missing `exportType` is treated as
+WOPAY. `shippingBillNumber`/`shippingBillDate`/`portCode` come through as
+whatever's on the invoice at read time — often `null` until filled in via
+`PATCH /sales-invoices/:id` (see the Shipping Bill / Bill of Entry section
+above). `exportsTotal` is a separate subtotal from `totals` — the domestic
+B2B+B2C taxable value/tax figures never include exports, matching how the
+real return keeps Table 6A distinct from the main taxable-value summary.
+Still included in the HSN summary, same as the real return does.
+
+Known related gap, not fixed in this pass: GSTR-3B's outward-supplies
+figure (3.1(a)) still lumps every Sales Invoice together, including
+exports — the real return has a separate 3.1(b) row for zero-rated
+supplies. `computeGstr3b` doesn't split that out yet.
 | `GET /gst/gstr3b?from=&to=&branchId=` | Outward tax liability vs. ITC available (from Purchase Bills) vs. indicative net payable, both net of the period's Sales/Purchase Returns. |
 | `GET /gst/gstr3b/export?from=&to=&branchId=` | Same data as an `.xlsx`. |
 

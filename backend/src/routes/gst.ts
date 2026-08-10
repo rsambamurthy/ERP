@@ -45,7 +45,7 @@ router.get("/gstr1", async (req, res) => {
 });
 
 // GET /gst/gstr1/export?from=&to=&branchId= — same data as an .xlsx with
-// one sheet per table (B2B / B2C / HSN Summary / Credit Notes).
+// one sheet per table (B2B / B2C / Exports (6A) / HSN Summary / Credit Notes).
 router.get("/gstr1/export", async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
@@ -82,6 +82,26 @@ router.get("/gstr1/export", async (req, res) => {
         { header: "IGST", width: 14, numFmt: "#,##0.00" },
       ],
       rows: report.b2c.map((r) => [r.placeOfSupply, r.rate, r.taxableValue, r.cgst, r.sgst, r.igst]),
+    },
+    {
+      name: "Exports (6A)",
+      columns: [
+        { header: "Invoice Number", width: 18 },
+        { header: "Invoice Date", width: 14 },
+        { header: "Invoice Value", width: 16, numFmt: "#,##0.00" },
+        { header: "Shipping Bill No.", width: 18 },
+        { header: "Shipping Bill Date", width: 16 },
+        { header: "Port Code", width: 12 },
+        { header: "Integrated Tax Rate (%)", width: 16 },
+        { header: "Taxable Value", width: 16, numFmt: "#,##0.00" },
+        { header: "Integrated Tax Amount", width: 16, numFmt: "#,##0.00" },
+        { header: "Export Type", width: 14 },
+      ],
+      rows: report.exports.map((r) => [
+        r.invoiceNumber, r.invoiceDate, r.invoiceValue,
+        r.shippingBillNumber ?? "", r.shippingBillDate ?? "", r.portCode ?? "",
+        r.rate, r.taxableValue, r.igst, r.exportType,
+      ]),
     },
     {
       name: "HSN Summary",

@@ -42,7 +42,7 @@ export default function Gstr1Page() {
     <AppShell>
       <div className="ent-page-hdr">
         <h1>GSTR-1</h1>
-        <p>Outward supplies for a period — B2B, B2C, HSN summary, and credit notes.</p>
+        <p>Outward supplies for a period — B2B, B2C, Exports (Table 6A), HSN summary, and credit notes.</p>
       </div>
 
       <div className="ent-toolbar">
@@ -57,8 +57,10 @@ export default function Gstr1Page() {
 
       <p style={{ fontSize: 11.5, color: "var(--color-muted)", marginBottom: 14 }}>
         Place of supply is the customer's own state (bill-to) — this app doesn't track a separate ship-to state. B2C is
-        one summarized table by state + rate rather than the &gt;₹2.5L invoice-wise split. No cess, exempt/nil-rated, or
-        reverse-charge handling. Treat this as a working draft for filing, not a final return.
+        one summarized table by state + rate rather than the &gt;₹2.5L invoice-wise split. Exports (foreign-currency
+        Sales Invoices) always go to Table 6A below, never B2B/B2C, regardless of whether the customer has a GSTIN on
+        file. No cess, exempt/nil-rated, or reverse-charge handling. Treat this as a working draft for filing, not a
+        final return.
       </p>
 
       {error && <p style={{ color: "#dc2626", fontSize: 13, marginBottom: 12 }}>{error}</p>}
@@ -130,6 +132,49 @@ export default function Gstr1Page() {
                     <td style={{ color: "#2563eb" }}>{r.cgst.toFixed(2)}</td>
                     <td style={{ color: "#2563eb" }}>{r.sgst.toFixed(2)}</td>
                     <td style={{ color: "#16a34a" }}>{r.igst.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="ent-section">
+            <div className="ent-section-hdr"><span className="ent-section-title">Exports — Table 6A ({data.exports.length})</span></div>
+            <div className="grid-3" style={{ padding: "12px 14px 0" }}>
+              <div className="stat-card">
+                <div className="value">₹{data.exportsTotal.taxableValue.toFixed(2)}</div>
+                <div className="label">Export Taxable Value</div>
+              </div>
+              <div className="stat-card">
+                <div className="value" style={{ color: "#16a34a" }}>₹{data.exportsTotal.igst.toFixed(2)}</div>
+                <div className="label">Export IGST</div>
+              </div>
+              <div className="stat-card">
+                <div className="value">₹{data.exportsTotal.invoiceValue.toFixed(2)}</div>
+                <div className="label">Export Invoice Value</div>
+              </div>
+            </div>
+            <table className="ent-table">
+              <thead>
+                <tr>
+                  <th>Invoice #</th><th>Date</th><th>Invoice Value</th><th>Shipping Bill #</th><th>Shipping Bill Date</th>
+                  <th>Port</th><th>Rate</th><th>Taxable Value</th><th>IGST</th><th>Export Type</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.exports.length === 0 && <tr><td colSpan={10} className="ent-empty">No export invoices this period.</td></tr>}
+                {data.exports.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.invoiceNumber}</td>
+                    <td>{new Date(r.invoiceDate).toLocaleDateString()}</td>
+                    <td>{r.invoiceValue.toFixed(2)}</td>
+                    <td>{r.shippingBillNumber ?? <span style={{ color: "#a16207" }}>not added yet</span>}</td>
+                    <td>{r.shippingBillDate ? new Date(r.shippingBillDate).toLocaleDateString() : "—"}</td>
+                    <td>{r.portCode ?? "—"}</td>
+                    <td>{r.rate}%</td>
+                    <td>{r.taxableValue.toFixed(2)}</td>
+                    <td style={{ color: "#16a34a" }}>{r.igst.toFixed(2)}</td>
+                    <td>{r.exportType}</td>
                   </tr>
                 ))}
               </tbody>

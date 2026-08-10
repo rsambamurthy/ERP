@@ -479,6 +479,31 @@ treated as ITC rather than a normal purchase tax line).
 
 Requires `db/migration_020_shipping_bill.sql`.
 
+## GSTR-1 Table 6A — Exports (built)
+
+The last piece the shipping bill fields were captured for: a foreign-
+currency Sales Invoice now flows into its own Table 6A (Exports) table in
+`computeGstr1`, instead of B2B/B2C. That reclassification mattered on its
+own — before this, an export invoice fell into B2B or B2C purely based on
+whether the foreign customer happened to have a GSTIN on file, which is
+never actually correct; exports are a distinct category regardless.
+
+One row per (invoice, tax rate), same convention B2B already uses.
+`exportType` reports as WPAY (with payment of IGST) or WOPAY (LUT/Bond —
+zero-rated), and the shipping bill number/date/port code come straight off
+the invoice — showing "not added yet" in the UI table for any export that
+hasn't had them filled in via the PATCH edit yet. Table 6A gets its own
+subtotal (`exportsTotal`) entirely separate from the main B2B+B2C taxable-
+value/tax totals, matching how the real return keeps them apart.
+
+Also flagged, not fixed: GSTR-3B still doesn't split zero-rated exports
+into their own 3.1(b) row — `computeGstr3b`'s outward-supplies figure
+still lumps every Sales Invoice together regardless of currency.
+
+Still not built from the original "Export/Import invoices" scope: the
+entire import side (customs duty as a landed-cost addition, IGST-on-import
+treated as ITC rather than a normal purchase tax line).
+
 ## From the earlier "what's next" review
 
 Flagged as gaps before Sales/Purchase/Inventory was chosen as the next
