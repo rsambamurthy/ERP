@@ -74,12 +74,17 @@ router.patch("/:id", canPost, async (req, res) => {
   }
 
   const { billOfEntryNumber, billOfEntryDate, portCode } = req.body ?? {};
-  const data: Record<string, unknown> = {};
-  if (billOfEntryNumber !== undefined) data.billOfEntryNumber = billOfEntryNumber ? String(billOfEntryNumber) : null;
-  if (billOfEntryDate !== undefined) data.billOfEntryDate = billOfEntryDate ? new Date(billOfEntryDate) : null;
-  if (portCode !== undefined) data.portCode = portCode ? String(portCode) : null;
-
-  const updated = await prisma.purchaseBill.update({ where: { id: bill.id }, data });
+  // Typed literal, not a loosely-typed intermediate — see the matching
+  // note in salesInvoices.ts PATCH /:id (Record<string, unknown> here
+  // would fail `tsc`, i.e. fail the Railway build outright).
+  const updated = await prisma.purchaseBill.update({
+    where: { id: bill.id },
+    data: {
+      billOfEntryNumber: billOfEntryNumber !== undefined ? (billOfEntryNumber ? String(billOfEntryNumber) : null) : bill.billOfEntryNumber,
+      billOfEntryDate: billOfEntryDate !== undefined ? (billOfEntryDate ? new Date(billOfEntryDate) : null) : bill.billOfEntryDate,
+      portCode: portCode !== undefined ? (portCode ? String(portCode) : null) : bill.portCode,
+    },
+  });
   logAudit({
     organizationId, actorUserId: req.user!.userId,
     action: "UPDATE", entityType: "purchase_bill", entityId: bill.id,

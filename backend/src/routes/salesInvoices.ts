@@ -84,14 +84,22 @@ router.patch("/:id", canPost, async (req, res) => {
   }
 
   const { shippingBillNumber, shippingBillDate, portCode, lutBondNumber, lutBondDate } = req.body ?? {};
-  const data: Record<string, unknown> = {};
-  if (shippingBillNumber !== undefined) data.shippingBillNumber = shippingBillNumber ? String(shippingBillNumber) : null;
-  if (shippingBillDate !== undefined) data.shippingBillDate = shippingBillDate ? new Date(shippingBillDate) : null;
-  if (portCode !== undefined) data.portCode = portCode ? String(portCode) : null;
-  if (lutBondNumber !== undefined) data.lutBondNumber = lutBondNumber ? String(lutBondNumber) : null;
-  if (lutBondDate !== undefined) data.lutBondDate = lutBondDate ? new Date(lutBondDate) : null;
-
-  const updated = await prisma.salesInvoice.update({ where: { id: invoice.id }, data });
+  // Built as a typed literal (not a loosely-typed intermediate variable) so
+  // it satisfies Prisma's generated update-input type exactly — a
+  // Record<string, unknown> here would fail `tsc` (this repo's `npm run
+  // build` is `prisma generate && tsc`), which is a hard build failure,
+  // not a runtime one; a key omitted from the request body keeps the
+  // invoice's existing value rather than being cleared.
+  const updated = await prisma.salesInvoice.update({
+    where: { id: invoice.id },
+    data: {
+      shippingBillNumber: shippingBillNumber !== undefined ? (shippingBillNumber ? String(shippingBillNumber) : null) : invoice.shippingBillNumber,
+      shippingBillDate: shippingBillDate !== undefined ? (shippingBillDate ? new Date(shippingBillDate) : null) : invoice.shippingBillDate,
+      portCode: portCode !== undefined ? (portCode ? String(portCode) : null) : invoice.portCode,
+      lutBondNumber: lutBondNumber !== undefined ? (lutBondNumber ? String(lutBondNumber) : null) : invoice.lutBondNumber,
+      lutBondDate: lutBondDate !== undefined ? (lutBondDate ? new Date(lutBondDate) : null) : invoice.lutBondDate,
+    },
+  });
   logAudit({
     organizationId, actorUserId: req.user!.userId,
     action: "UPDATE", entityType: "sales_invoice", entityId: invoice.id,
