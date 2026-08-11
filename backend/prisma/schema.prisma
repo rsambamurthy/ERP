@@ -141,8 +141,33 @@ model Organization {
   salesOrders      SalesOrder[]
   deliveryNotes    DeliveryNote[]
   currencyRates    CurrencyRate[]
+  integrationConnection IntegrationConnection?
 
   @@map("organizations")
+}
+
+// Service-to-service credential for an external system (currently just
+// Project OS) to pull master data from and push pre-approved procurement
+// documents into this organization — see routes/integrationConnections.ts
+// (issues the key, user-JWT-gated OWNER/ADMIN) and routes/integrationApi.ts
+// (the actual sync/push surface, gated by this key instead of a user
+// session — middleware/serviceAuth.ts). One per org for now, matching the
+// pilot's "one Project OS tenant per SmartERP tenant" assumption; calling
+// POST /integration/connections again rotates it rather than allowing a
+// second live key.
+model IntegrationConnection {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @unique @map("organization_id") @db.Uuid
+  apiKey         String    @unique @map("api_key") @db.VarChar(64)
+  label          String?   @db.VarChar(100)
+  createdBy      String?   @map("created_by") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at")
+  lastUsedAt     DateTime? @map("last_used_at")
+  revokedAt      DateTime? @map("revoked_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@map("integration_connections")
 }
 
 // Company Master — one row per director. History kept (isActive rather than
@@ -884,6 +909,17 @@ model PurchaseOrder {
   createdBy String?  @map("created_by") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at")
 
+  // Project OS integration (PRD Section 9.2 shadow-PO decision) — a PO
+  // pushed in already-approved from Project OS carries source=PROJECT_OS
+  // and externalId = Project OS's own PurchaseOrder.id, so a retried push
+  // (e.g. after a dropped response) is detected and returns the existing
+  // record instead of creating a duplicate. Native, in-app POs leave all
+  // three null/default — Postgres treats multiple NULLs in a unique index
+  // as distinct, so they never collide with each other or with pushed rows.
+  source         String    @default("SMARTERP") @db.VarChar(20) // SMARTERP | PROJECT_OS
+  externalSystem String?   @map("external_system") @db.VarChar(20)
+  externalId     String?   @map("external_id") @db.Uuid
+
   organization    Organization        @relation(fields: [organizationId], references: [id])
   branch          Branch?             @relation(fields: [branchId], references: [id])
   businessPartner BusinessPartner     @relation(fields: [businessPartnerId], references: [id])
@@ -892,6 +928,7 @@ model PurchaseOrder {
   goodsReceiptNotes GoodsReceiptNote[]
 
   @@unique([organizationId, poNumber])
+  @@unique([organizationId, externalSystem, externalId])
   @@map("purchase_orders")
 }
 
@@ -963,6 +1000,12 @@ model GoodsReceiptNote {
   createdBy         String?  @map("created_by") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at")
 
+  // Same Project OS integration convention as PurchaseOrder above — see
+  // that model's comment.
+  source         String  @default("SMARTERP") @db.VarChar(20) // SMARTERP | PROJECT_OS
+  externalSystem String? @map("external_system") @db.VarChar(20)
+  externalId     String? @map("external_id") @db.Uuid
+
   organization    Organization           @relation(fields: [organizationId], references: [id])
   branch          Branch                 @relation(fields: [branchId], references: [id])
   businessPartner BusinessPartner        @relation(fields: [businessPartnerId], references: [id])
@@ -970,6 +1013,7 @@ model GoodsReceiptNote {
   lines           GoodsReceiptNoteLine[]
 
   @@unique([organizationId, grnNumber])
+  @@unique([organizationId, externalSystem, externalId])
   @@map("goods_receipt_notes")
 }
 

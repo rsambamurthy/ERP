@@ -37,6 +37,8 @@ import meRoutes from "./routes/me";
 import gstRoutes from "./routes/gst";
 import companyMasterRoutes from "./routes/companyMaster";
 import currencyRatesRoutes from "./routes/currencyRates";
+import integrationConnectionsRoutes from "./routes/integrationConnections";
+import integrationApiRoutes from "./routes/integrationApi";
 
 // Last-resort net for anything outside Express's request cycle entirely
 // (a rejected promise with no .catch anywhere, a timer callback that
@@ -83,6 +85,14 @@ app.use("/me", meRoutes);
 app.use("/gst", gstRoutes);
 app.use("/company-master", companyMasterRoutes);
 app.use("/currency-rates", currencyRatesRoutes);
+// Both mounted at /integration — they don't actually overlap.
+// integrationConnectionsRoutes defines /connections internally (its own
+// GET/POST/DELETE, user-JWT auth, OWNER/ADMIN — key management);
+// integrationApiRoutes defines /business-partners, /items, /branches,
+// /purchase-orders, /goods-receipt-notes internally (service-key auth —
+// Project OS calling in).
+app.use("/integration", integrationConnectionsRoutes);
+app.use("/integration", integrationApiRoutes);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
