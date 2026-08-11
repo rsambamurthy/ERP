@@ -1001,7 +1001,7 @@ export function getAdminAuditLogs(organizationId?: string) {
 // (not JSON), and a preview request's body is FormData, which needs the
 // browser to set its own multipart Content-Type — request<T>() always
 // forces "application/json".
-export type BulkUploadEntity = "accounts" | "items" | "business-partners" | "currency-rates";
+export type BulkUploadEntity = "accounts" | "items" | "business-partners" | "currency-rates" | "journal";
 
 export async function downloadBulkTemplate(entity: BulkUploadEntity, filename: string): Promise<void> {
   const token = getToken();

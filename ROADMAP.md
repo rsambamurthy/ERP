@@ -1030,6 +1030,79 @@ only when foreign — same treatment `lib/salesInvoicePdf.ts` already had.
 Requires `db/migration_027_po_so_currency.sql`. No new GL accounts, no
 `prisma db seed` step, no new dependencies.
 
+## Journal Entry Bulk Upload (built)
+
+Extends the bulk-upload pattern (Chart of Accounts, Items, Business
+Partners, Currency Rates) to Journal Entries — the one entity in that list
+that isn't a flat, one-row-per-record master data table.
+
+**Why this one needed a different template shape.** Every prior bulk
+upload matches "one spreadsheet row = one database record." A Journal
+Entry doesn't fit that: it's a header (date, narration, voucher type) plus
+at least two balanced debit/credit lines. The template is therefore one
+row per **line**, grouped into a single entry by a "Voucher Ref" column
+the uploader assigns (any string, only needs to be unique within that
+file) — the same convention bulk-import tools for double-entry accounting
+generally use, since there's no other sane way to represent a
+one-to-many header/lines structure in a flat grid.
+
+**Header fields only need to be filled in once per voucher.** Entry Date,
+Voucher Type, Branch Code, and Entry Narration can be left blank on every
+line after the first in a group — `routes/journal.ts`'s preview logic
+takes the first non-blank value it finds per group as that voucher's
+header. Repeating the same value on every line (e.g. via Excel autofill)
+is also fine. What's *not* silently accepted is a **conflicting** value on
+a later line — that's flagged as an error rather than either overriding
+the first value or being ignored, since a mismatched date/narration on one
+line of a voucher is far more likely to be an autofill mistake than an
+intentional choice.
+
+**No "update" case, unlike every other bulk upload here.** Items and
+Business Partners can match an existing record by SKU/code and update it;
+a Journal Entry has no equivalent — every valid group always creates a
+new posted entry, the same as posting one by hand through the regular
+form. `bulk-upload/apply`'s response always reports `updated: 0`.
+
+**A group's problem fails the whole group, together.** If any line in a
+voucher has an issue — an unbalanced total, a bad account code, a control
+account missing its required business partner, a header-field mismatch —
+**every line in that group** is marked `status: "error"`, not just the
+one line that's actually wrong. This is deliberate: the shared
+`useBulkUpload` hook's Apply step submits only rows already marked
+`"create"`, so if only the broken line were flagged, its balanced siblings
+would still get submitted — creating a partial, unbalanced voucher server-
+side. Failing the group atomically at the preview stage is what makes that
+impossible. Each line keeps its own specific error message where it has
+one (e.g. "Account Code not found"); a line with nothing individually
+wrong falls back to whatever's holding up the rest of its voucher (e.g.
+the balance mismatch).
+
+**Codes, not IDs, resolve accounts/partners/branches** — Account Code
+(`Account.accountCode`, unique per org), Business Partner Code
+(`BusinessPartner.code`, optional — a partner with no code set can't be
+targeted by bulk upload, same limitation Business Partner's own bulk
+upload already has), and Branch Code (`Branch.code`). All three are
+resolved in three batched queries up front (every distinct code in the
+file, not one query per row), same performance convention as the other
+bulk-upload previews.
+
+**Apply re-validates from scratch rather than trusting preview.** Since
+this posts straight to the ledger, `bulk-upload/apply` re-resolves every
+code and re-checks each group's balance itself instead of trusting
+anything computed a few moments earlier during preview — cheap insurance
+against an account/partner/branch being deleted or deactivated in the
+gap between the two requests. A group that fails this second check is
+silently skipped (re-running the same file surfaces it as a normal error
+in preview) rather than aborting the whole batch. Voucher numbers
+(`JV-0001` etc.) are generated with the same sequential, per-org-per-type
+counter `POST /journal` already uses, seeded once per voucher type and
+incremented in memory across the batch — not concurrency-hardened, same
+accepted tradeoff as manual posting.
+
+No schema/migration changes — this reuses the existing `JournalEntry`/
+`JournalLine` tables and the same `journal.post` permission that already
+gates manual entry.
+
 ## From the earlier "what's next" review
 
 Flagged as gaps before Sales/Purchase/Inventory was chosen as the next

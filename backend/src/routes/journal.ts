@@ -5,6 +5,7 @@ import { authenticate, requirePermission, requireActiveSubscription, resolveOrgI
 import { logAudit } from "../lib/audit";
 import { upload } from "../lib/upload";
 import { computeScheduleIIIBalanceSheet } from "../lib/scheduleIII";
+import { buildTemplateWorkbook, loadUploadedWorksheet, cellText, cellDateIso } from "../lib/xlsxTemplate";
 
 function orgIdOr400(req: import("express").Request, res: import("express").Response): string | null {
   const organizationId = resolveOrgId(req);
@@ -698,6 +699,309 @@ router.get("/:id", async (req, res) => {
   });
   if (!entry) return res.status(404).json({ message: "Journal entry not found." });
   res.json({ data: entry });
+});
+
+// ── Bulk upload (Template Download + Bulk Upload) ─────────────────────────
+// Unlike every other bulk upload in this app (Chart of Accounts, Items,
+// Business Partners, Currency Rates — all flat, one row per record), a
+// Journal Entry is a header (date/narration/voucher type) plus at least two
+// balanced lines. The template is therefore one row per LINE, grouped into
+// a single entry by a shared "Voucher Ref" the uploader assigns — any
+// string works, it only has to be unique *within this file*. Header fields
+// (Entry Date, Voucher Type, Branch Code, Entry Narration) only need to be
+// filled in once per voucher; repeating the same value on every line is
+// fine too, but a *conflicting* value on a later line is flagged as an
+// error rather than silently overridden, to catch an accidental autofill
+// mistake rather than let it quietly change what gets posted.
+//
+// There is no "update" case here — unlike Items/Business Partners, an
+// uploaded voucher never matches an existing entry; every valid group
+// always creates a new posted entry, same as posting one by hand through
+// the regular form. A group with ANY problem (unbalanced, bad account
+// code, missing business partner on a control account, inconsistent
+// header fields) has every one of its lines marked "error" together —
+// never just the one line that happens to be wrong — so a partial voucher
+// can never reach Apply. Each row keeps its own specific message where it
+// has one; a row with nothing wrong on it individually falls back to
+// whatever problem is holding up the rest of its voucher.
+
+const JOURNAL_COLUMNS = [
+  { header: "Voucher Ref *", hint: "← required, groups lines into one entry", width: 14 },
+  { header: "Entry Date (YYYY-MM-DD) *", hint: "← required, once per voucher", width: 24 },
+  { header: "Voucher Type", hint: "optional, blank = JV", width: 12, dropdown: ["BV", "CV", "JV"] },
+  { header: "Branch Code", hint: "optional, blank = your default branch", width: 14 },
+  { header: "Account Code *", hint: "← required, from Chart of Accounts", width: 16 },
+  { header: "Business Partner Code", hint: "required only for control accounts", width: 20 },
+  { header: "Debit", hint: "exactly one of Debit/Credit per line", width: 14, numFmt: "#,##0.00" },
+  { header: "Credit", hint: "exactly one of Debit/Credit per line", width: 14, numFmt: "#,##0.00" },
+  { header: "Line Narration", hint: "optional", width: 26 },
+  { header: "Entry Narration *", hint: "← required, once per voucher", width: 30 },
+];
+
+interface JournalLinePreviewRow {
+  rowNum: number;
+  voucherRef: string;
+  entryDate: string | null;
+  voucherType: string;
+  branchCode: string | null;
+  accountCode: string;
+  accountName: string | null;
+  businessPartnerCode: string | null;
+  debit: number;
+  credit: number;
+  lineNarration: string | null;
+  entryNarration: string | null;
+  status: "create" | "update" | "error";
+  error?: string;
+}
+
+router.get("/bulk-upload/template", requirePermission("journal.post"), async (req, res) => {
+  const buffer = await buildTemplateWorkbook("Journal Entries", JOURNAL_COLUMNS);
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", 'attachment; filename="SmartERP_JournalEntries_Template.xlsx"');
+  res.send(buffer);
+});
+
+router.post("/bulk-upload/preview", requirePermission("journal.post"), upload.single("file"), async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  if (!req.file) return res.status(400).json({ message: "No file uploaded." });
+
+  const ws = await loadUploadedWorksheet(req.file.buffer);
+  if (!ws) return res.json({ data: [] });
+
+  // Parse every data row first, in file order. Rows are decorated in place
+  // by the grouping/validation pass below, but this array's order never
+  // changes — that's what the shared bulk-upload table expects.
+  const rows: JournalLinePreviewRow[] = [];
+  ws.eachRow((row, rowNum) => {
+    if (rowNum <= 2) return;
+    const voucherRef = cellText(row, 1);
+    const accountCode = cellText(row, 5);
+    const debitRaw = row.getCell(7).value;
+    const creditRaw = row.getCell(8).value;
+    if (!voucherRef && !accountCode && (debitRaw == null || debitRaw === "") && (creditRaw == null || creditRaw === "")) return;
+
+    rows.push({
+      rowNum,
+      voucherRef: voucherRef ?? "",
+      entryDate: cellDateIso(row, 2),
+      voucherType: (cellText(row, 3) ?? "").toUpperCase(),
+      branchCode: cellText(row, 4),
+      accountCode: accountCode ?? "",
+      accountName: null,
+      businessPartnerCode: cellText(row, 6),
+      debit: debitRaw != null && debitRaw !== "" ? Number(debitRaw) : 0,
+      credit: creditRaw != null && creditRaw !== "" ? Number(creditRaw) : 0,
+      lineNarration: cellText(row, 9),
+      entryNarration: cellText(row, 10),
+      status: "create",
+    });
+  });
+  if (rows.length === 0) return res.json({ data: [] });
+
+  // Rows with no Voucher Ref can't be grouped at all — fail individually,
+  // before anything else runs.
+  for (const r of rows) {
+    if (!r.voucherRef) { r.status = "error"; r.error = "Voucher Ref is required on every line"; }
+  }
+
+  // Resolve every distinct code referenced anywhere in the file in three
+  // queries total, rather than one query per row.
+  const accountCodes = [...new Set(rows.map((r) => r.accountCode).filter(Boolean))];
+  const bpCodes = [...new Set(rows.map((r) => r.businessPartnerCode).filter((c): c is string => !!c))];
+  const branchCodes = [...new Set(rows.map((r) => r.branchCode).filter((c): c is string => !!c))];
+  const [accounts, partners, branches] = await Promise.all([
+    prisma.account.findMany({ where: { organizationId, accountCode: { in: accountCodes }, isActive: true } }),
+    bpCodes.length ? prisma.businessPartner.findMany({ where: { organizationId, code: { in: bpCodes }, deletedAt: null } }) : Promise.resolve([]),
+    branchCodes.length ? prisma.branch.findMany({ where: { organizationId, code: { in: branchCodes }, deletedAt: null } }) : Promise.resolve([]),
+  ]);
+  const accountByCode = new Map(accounts.map((a) => [a.accountCode, a]));
+  const bpByCode = new Map(partners.map((p) => [p.code!, p]));
+  const branchByCode = new Map(branches.map((b) => [b.code, b]));
+
+  // Group by Voucher Ref, preserving first-seen order (a Map does this
+  // naturally as entries are inserted).
+  const groups = new Map<string, JournalLinePreviewRow[]>();
+  for (const r of rows) {
+    if (!r.voucherRef) continue; // already failed above
+    if (!groups.has(r.voucherRef)) groups.set(r.voucherRef, []);
+    groups.get(r.voucherRef)!.push(r);
+  }
+
+  for (const [voucherRef, group] of groups) {
+    let hasError = false;
+    const groupLevelErrors: string[] = [];
+
+    // Header fields: first non-blank value in row order wins; a later row
+    // that disagrees is flagged rather than silently overridden.
+    let entryDate: string | null = null;
+    let voucherType = "";
+    let branchCode: string | null = null;
+    let entryNarration: string | null = null;
+    for (const r of group) {
+      if (r.entryDate) {
+        if (entryDate === null) entryDate = r.entryDate;
+        else if (r.entryDate !== entryDate) { groupLevelErrors.push(`Row ${r.rowNum}: Entry Date doesn't match the rest of voucher "${voucherRef}"`); hasError = true; }
+      }
+      if (r.voucherType) {
+        if (voucherType === "") voucherType = r.voucherType;
+        else if (r.voucherType !== voucherType) { groupLevelErrors.push(`Row ${r.rowNum}: Voucher Type doesn't match the rest of voucher "${voucherRef}"`); hasError = true; }
+      }
+      if (r.branchCode) {
+        if (branchCode === null) branchCode = r.branchCode;
+        else if (r.branchCode !== branchCode) { groupLevelErrors.push(`Row ${r.rowNum}: Branch Code doesn't match the rest of voucher "${voucherRef}"`); hasError = true; }
+      }
+      if (r.entryNarration) {
+        if (entryNarration === null) entryNarration = r.entryNarration;
+        else if (r.entryNarration !== entryNarration) { groupLevelErrors.push(`Row ${r.rowNum}: Entry Narration doesn't match the rest of voucher "${voucherRef}"`); hasError = true; }
+      }
+    }
+    if (voucherType === "") voucherType = "JV";
+
+    if (group.length < 2) { groupLevelErrors.push(`Voucher "${voucherRef}" needs at least 2 lines`); hasError = true; }
+    if (!entryDate) { groupLevelErrors.push(`Voucher "${voucherRef}" is missing Entry Date`); hasError = true; }
+    if (!["BV", "CV", "JV"].includes(voucherType)) { groupLevelErrors.push(`Voucher "${voucherRef}": Voucher Type must be BV, CV, or JV`); hasError = true; }
+    if (!entryNarration) { groupLevelErrors.push(`Voucher "${voucherRef}" is missing Entry Narration`); hasError = true; }
+    if (branchCode && !branchByCode.has(branchCode)) { groupLevelErrors.push(`Voucher "${voucherRef}": Branch Code "${branchCode}" not found`); hasError = true; }
+
+    let totalDebit = 0, totalCredit = 0;
+    for (const r of group) {
+      if (!r.accountCode) { r.error = "Account Code is required"; hasError = true; continue; }
+      const account = accountByCode.get(r.accountCode);
+      if (!account) { r.error = `Account Code "${r.accountCode}" not found`; hasError = true; continue; }
+      r.accountName = account.accountName;
+
+      if (r.debit < 0 || r.credit < 0) { r.error = "Amounts cannot be negative"; hasError = true; }
+      else if (r.debit > 0 && r.credit > 0) { r.error = "A line can't have both a debit and a credit"; hasError = true; }
+      else if (r.debit === 0 && r.credit === 0) { r.error = "Needs a debit or a credit"; hasError = true; }
+      totalDebit += r.debit;
+      totalCredit += r.credit;
+
+      if (account.isControlAccount) {
+        if (!r.businessPartnerCode) { r.error = r.error ?? `${account.accountName} is a control account — a Business Partner Code is required`; hasError = true; }
+        else if (!bpByCode.has(r.businessPartnerCode)) { r.error = r.error ?? `Business Partner Code "${r.businessPartnerCode}" not found`; hasError = true; }
+      }
+    }
+    if (Math.abs(totalDebit - totalCredit) > 0.01) {
+      groupLevelErrors.push(`Voucher "${voucherRef}" is not balanced — debit ${totalDebit.toFixed(2)} vs credit ${totalCredit.toFixed(2)}`);
+      hasError = true;
+    }
+
+    if (hasError) {
+      const fallback = groupLevelErrors[0] ?? `Voucher "${voucherRef}" has an error on another line`;
+      for (const r of group) {
+        r.status = "error";
+        if (!r.error) r.error = fallback;
+      }
+    } else {
+      for (const r of group) {
+        r.status = "create";
+        r.entryDate = entryDate;
+        r.voucherType = voucherType;
+        r.branchCode = branchCode;
+        r.entryNarration = entryNarration;
+      }
+    }
+  }
+
+  res.json({ data: rows });
+});
+
+router.post("/bulk-upload/apply", requirePermission("journal.post"), async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const rows: JournalLinePreviewRow[] = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  const workRows = rows.filter((r) => r.status === "create");
+  if (workRows.length === 0) return res.json({ data: { created: 0, updated: 0 } });
+
+  const groups = new Map<string, JournalLinePreviewRow[]>();
+  for (const r of workRows) {
+    if (!groups.has(r.voucherRef)) groups.set(r.voucherRef, []);
+    groups.get(r.voucherRef)!.push(r);
+  }
+
+  // Re-resolve every code fresh rather than trust anything computed during
+  // preview — the file could have been sitting in the browser a while, and
+  // this posts straight to the ledger.
+  const accountCodes = [...new Set(workRows.map((r) => r.accountCode).filter(Boolean))];
+  const bpCodes = [...new Set(workRows.map((r) => r.businessPartnerCode).filter((c): c is string => !!c))];
+  const branchCodes = [...new Set(workRows.map((r) => r.branchCode).filter((c): c is string => !!c))];
+  const [accounts, partners, branches] = await Promise.all([
+    prisma.account.findMany({ where: { organizationId, accountCode: { in: accountCodes }, isActive: true } }),
+    bpCodes.length ? prisma.businessPartner.findMany({ where: { organizationId, code: { in: bpCodes }, deletedAt: null } }) : Promise.resolve([]),
+    branchCodes.length ? prisma.branch.findMany({ where: { organizationId, code: { in: branchCodes }, deletedAt: null } }) : Promise.resolve([]),
+  ]);
+  const accountByCode = new Map(accounts.map((a) => [a.accountCode, a]));
+  const bpByCode = new Map(partners.map((p) => [p.code!, p]));
+  const branchByCode = new Map(branches.map((b) => [b.code, b]));
+
+  // Sequential voucher numbers, same generation scheme as POST / above —
+  // seeded once per voucher type from the current count, then incremented
+  // in-memory across this loop (not concurrency-hardened, same accepted
+  // tradeoff as manual posting there).
+  const voucherTypesUsed = [...new Set([...groups.values()].map((g) => g[0].voucherType || "JV"))];
+  const counters = new Map<string, number>();
+  for (const vt of voucherTypesUsed) {
+    counters.set(vt, await prisma.journalEntry.count({ where: { organizationId, voucherType: vt, voucherNumber: { not: null } } }));
+  }
+
+  let created = 0;
+  for (const [voucherRef, group] of groups) {
+    try {
+      const first = group[0];
+      const vt = first.voucherType || "JV";
+      let totalDebit = 0, totalCredit = 0;
+      const lineData = group.map((r) => {
+        const account = accountByCode.get(r.accountCode);
+        if (!account) throw new Error(`Account Code "${r.accountCode}" not found`);
+        const businessPartner = r.businessPartnerCode ? bpByCode.get(r.businessPartnerCode) : null;
+        if (r.businessPartnerCode && !businessPartner) throw new Error(`Business Partner Code "${r.businessPartnerCode}" not found`);
+        if (account.isControlAccount && !businessPartner) throw new Error(`${account.accountName} is a control account — needs a Business Partner Code`);
+        totalDebit += r.debit;
+        totalCredit += r.credit;
+        return { accountId: account.id, businessPartnerId: businessPartner?.id ?? null, debit: r.debit, credit: r.credit, narration: r.lineNarration ?? null };
+      });
+      if (Math.abs(totalDebit - totalCredit) > 0.01) throw new Error(`Voucher "${voucherRef}" is not balanced`);
+      const branch = first.branchCode ? branchByCode.get(first.branchCode) : null;
+      if (first.branchCode && !branch) throw new Error(`Branch Code "${first.branchCode}" not found`);
+      if (!first.entryDate || !first.entryNarration) throw new Error(`Voucher "${voucherRef}" is missing Entry Date or Entry Narration`);
+
+      const count = counters.get(vt) ?? 0;
+      const voucherNumber = `${vt}-${String(count + 1).padStart(4, "0")}`;
+      counters.set(vt, count + 1);
+
+      // Same shape as the transaction body in POST / above — including the
+      // trg_lock_org_domains trigger firing on the first INSERT either way.
+      await prisma.$transaction(async (tx) => {
+        const entry = await tx.journalEntry.create({
+          data: {
+            organizationId,
+            branchId: branch?.id ?? req.user!.branchId ?? null,
+            entryDate: new Date(first.entryDate!),
+            narration: first.entryNarration!,
+            voucherType: vt,
+            voucherNumber,
+            createdBy: req.user!.userId,
+          },
+        });
+        await tx.journalLine.createMany({ data: lineData.map((l) => ({ ...l, journalEntryId: entry.id })) });
+      });
+      created++;
+    } catch {
+      // Data moved under us since preview (an account/business partner/
+      // branch was deleted or deactivated in the meantime, most likely) —
+      // skip this one voucher rather than fail the whole batch. Re-running
+      // the same file will surface it as an error in preview next time.
+    }
+  }
+
+  logAudit({
+    organizationId, actorUserId: req.user!.userId,
+    action: "BULK_UPLOAD", entityType: "journal_entry", entityId: organizationId,
+    summary: `Bulk upload: ${created} journal entr${created === 1 ? "y" : "ies"} posted`,
+  });
+  res.json({ data: { created, updated: 0 } });
 });
 
 export default router;

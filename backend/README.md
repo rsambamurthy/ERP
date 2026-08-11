@@ -154,6 +154,22 @@ not given to ACCOUNTANT by default).
 Requires `db/migration_026_currency_master.sql`. No new GL accounts, no
 `prisma db seed` step, no new dependencies.
 
+### Journal Entry Bulk Upload (`/journal/bulk-upload/...`)
+
+Extends the template/preview/apply bulk-upload pattern to Journal Entries
+— the one entity here that isn't flat, one-row-per-record master data.
+Full design rationale in ROADMAP.md's "Journal Entry Bulk Upload" section;
+short version:
+
+| Route | Notes |
+| --- | --- |
+| `GET /journal/bulk-upload/template` | One row per **line**, not per entry — rows sharing a "Voucher Ref" column (any string, unique only within the file) are grouped into a single entry. `journal.post`. |
+| `POST /journal/bulk-upload/preview` | Resolves Account/Business Partner/Branch codes, groups rows by Voucher Ref, and validates each group as a whole (balance, control-account partner requirement, consistent header fields across its lines). Any problem in a group fails **every line in that group** together — never just the offending line — so Apply can never receive half a voucher. `journal.post`. |
+| `POST /journal/bulk-upload/apply` | Re-resolves every code and re-checks balance fresh rather than trusting preview (this posts straight to the ledger); a group that fails this second check is skipped rather than aborting the batch. Voucher numbers use the same sequential per-type counter `POST /journal` already uses. Always returns `updated: 0` — a Journal Entry has no update case, every valid group creates a new posted entry. `journal.post`. |
+
+No schema/migration changes — reuses `JournalEntry`/`JournalLine` and the
+existing `journal.post` permission.
+
 ### Branches (`/branches`)
 
 Full CRUD, not just the read-only list + unauthenticated onboarding create it

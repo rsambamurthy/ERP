@@ -1294,3 +1294,25 @@ export interface CurrencyRateUploadRow extends BulkUploadRowBase {
   effectiveFrom: string | null;
   rate: number | null;
 }
+
+// ── Journal Entry bulk upload ────────────────────────────────────────────
+// One row per LINE, not per entry — a Journal Entry is a header plus at
+// least two balanced lines, unlike every other bulk-uploadable entity here.
+// Rows sharing the same voucherRef are grouped into one entry server-side;
+// see routes/journal.ts's bulk-upload section for the full grouping and
+// validation rules. status is always "create" in practice — there is no
+// "update" case for a journal entry — but the field stays typed as the
+// full union for compatibility with BulkUploadRowBase/BulkUpload.tsx.
+export interface JournalUploadRow extends BulkUploadRowBase {
+  voucherRef: string;
+  entryDate: string | null;
+  voucherType: string;
+  branchCode: string | null;
+  accountCode: string;
+  accountName: string | null;
+  businessPartnerCode: string | null;
+  debit: number;
+  credit: number;
+  lineNarration: string | null;
+  entryNarration: string | null;
+}

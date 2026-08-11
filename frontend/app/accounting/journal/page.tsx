@@ -13,7 +13,21 @@ import {
   updateJournalEntry,
   uploadJournalAttachment,
 } from "@/lib/api";
-import type { Account, BusinessPartner, JournalEntry, JournalLineInput } from "@/lib/types";
+import { useBulkUpload } from "@/components/shared/BulkUpload";
+import type { Account, BusinessPartner, JournalEntry, JournalLineInput, JournalUploadRow } from "@/lib/types";
+
+// One row per LINE, not per entry — see routes/journal.ts's bulk-upload
+// section. voucherRef is the only column worth showing beyond the usual
+// account/amount fields; entryDate/narration are header fields that only
+// need to appear once per voucher in the uploaded file, so most rows show
+// them blank here even on success.
+const JOURNAL_UPLOAD_COLUMNS: { key: keyof JournalUploadRow; label: string }[] = [
+  { key: "voucherRef", label: "Voucher Ref" },
+  { key: "accountCode", label: "Account" },
+  { key: "businessPartnerCode", label: "Partner" },
+  { key: "debit", label: "Debit" },
+  { key: "credit", label: "Credit" },
+];
 
 // Voucher-class abstraction (SmartAppt Gold's UX): the user picks a class —
 // Bank / Cash / Journal — plus, for Bank/Cash, a Receipt/Payment direction.
@@ -116,6 +130,10 @@ export default function JournalEntriesPage() {
   useEffect(() => {
     loadAll();
   }, []);
+
+  const bulk = useBulkUpload<JournalUploadRow>(
+    "journal", "SmartERP_JournalEntries_Template.xlsx", JOURNAL_UPLOAD_COLUMNS, loadAll
+  );
 
   const contraTotal = useMemo(
     () => contraLines.reduce((s, l) => s + Number(l.amount || 0), 0),
@@ -309,10 +327,13 @@ export default function JournalEntriesPage() {
 
       <div className="ent-toolbar">
         <div style={{ flex: 1 }} />
+        {bulk.buttons}
         <button className="ent-btn-add" onClick={startCreate}>
           + New Entry
         </button>
       </div>
+
+      {bulk.panel}
 
       {listError && <p style={{ color: "#dc2626", fontSize: 13, marginBottom: 12 }}>{listError}</p>}
 
