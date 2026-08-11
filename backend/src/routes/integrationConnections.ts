@@ -27,7 +27,7 @@ function orgIdOr400(req: import("express").Request, res: import("express").Respo
 // raw key is only ever returned in this response; it isn't retrievable
 // again afterwards (GET below only ever shows the last 4 characters),
 // same "shown once" convention as any API token issuer.
-router.post("/connections", requireRole("OWNER", "ADMIN"), async (req, res) => {
+router.post("/", requireRole("OWNER", "ADMIN"), async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
   const { label } = req.body ?? {};
@@ -47,7 +47,7 @@ router.post("/connections", requireRole("OWNER", "ADMIN"), async (req, res) => {
   res.status(201).json({ data: { id: connection.id, apiKey, label: connection.label, createdAt: connection.createdAt } });
 });
 
-router.get("/connections", requireRole("OWNER", "ADMIN"), async (req, res) => {
+router.get("/", requireRole("OWNER", "ADMIN"), async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
   const connection = await prisma.integrationConnection.findUnique({ where: { organizationId } });
@@ -61,7 +61,7 @@ router.get("/connections", requireRole("OWNER", "ADMIN"), async (req, res) => {
   });
 });
 
-router.delete("/connections", requireRole("OWNER", "ADMIN"), async (req, res) => {
+router.delete("/", requireRole("OWNER", "ADMIN"), async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
   const connection = await prisma.integrationConnection.findUnique({ where: { organizationId } });

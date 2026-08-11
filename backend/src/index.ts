@@ -85,13 +85,16 @@ app.use("/me", meRoutes);
 app.use("/gst", gstRoutes);
 app.use("/company-master", companyMasterRoutes);
 app.use("/currency-rates", currencyRatesRoutes);
-// Both mounted at /integration — they don't actually overlap.
-// integrationConnectionsRoutes defines /connections internally (its own
-// GET/POST/DELETE, user-JWT auth, OWNER/ADMIN — key management);
-// integrationApiRoutes defines /business-partners, /items, /branches,
-// /purchase-orders, /goods-receipt-notes internally (service-key auth —
-// Project OS calling in).
-app.use("/integration", integrationConnectionsRoutes);
+// Mounted at two different paths, most-specific first — both routers
+// apply their auth middleware via a path-less `router.use(...)`, so if
+// the broader /integration prefix were checked first, its router would
+// intercept every request (including /integration/business-partners)
+// before Express ever got to check the more specific one, rejecting
+// service-key calls with the wrong (Bearer-token) auth error. Learned
+// this the hard way — first version had both at "/integration" and the
+// sync job's X-Api-Key requests were swallowed by integrationConnections'
+// user-JWT `authenticate` before ever reaching integrationApi.
+app.use("/integration/connections", integrationConnectionsRoutes);
 app.use("/integration", integrationApiRoutes);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
