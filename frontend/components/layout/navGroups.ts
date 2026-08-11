@@ -50,6 +50,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: "my_profile", label: "My Profile", path: "/settings/profile", dot: "#64748b", roles: ALL_ROLES },
       { id: "company_master", label: "Company Master", path: "/settings/company-master", dot: "#0d9488", roles: ["OWNER", "ADMIN"], permission: "company.manage" },
+      { id: "currency_master", label: "Currency Master", path: "/settings/currency-master", dot: "#ca8a04", roles: ["OWNER", "ADMIN"], permission: "currency.manage" },
       { id: "chart_of_accounts", label: "Chart of Accounts", path: "/accounting/chart-of-accounts", dot: "#2563eb", roles: ALL_ROLES },
       { id: "business_partners", label: "Business Partners", path: "/accounting/business-partners", dot: "#0891b2", roles: ALL_ROLES },
       { id: "items", label: "Items", path: "/inventory/items", dot: "#0d9488", roles: ALL_ROLES },

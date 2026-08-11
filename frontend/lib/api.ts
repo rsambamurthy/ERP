@@ -12,6 +12,7 @@ import type {
   CashBookResponse,
   CompanyMaster,
   CostingMethod,
+  CurrencyRate,
   CustomRole,
   Director,
   Auditor,
@@ -996,7 +997,7 @@ export function getAdminAuditLogs(organizationId?: string) {
 // (not JSON), and a preview request's body is FormData, which needs the
 // browser to set its own multipart Content-Type — request<T>() always
 // forces "application/json".
-export type BulkUploadEntity = "accounts" | "items" | "business-partners";
+export type BulkUploadEntity = "accounts" | "items" | "business-partners" | "currency-rates";
 
 export async function downloadBulkTemplate(entity: BulkUploadEntity, filename: string): Promise<void> {
   const token = getToken();
@@ -1046,4 +1047,33 @@ export function applyBulkUpload<Row>(entity: BulkUploadEntity, rows: Row[]) {
     method: "POST",
     body: JSON.stringify({ rows }),
   });
+}
+
+// ── Currency Master ──────────────────────────────────────────────────────
+
+export function getCurrencyRates() {
+  return request<{ data: CurrencyRate[] }>("/currency-rates");
+}
+
+export function createCurrencyRate(body: { currencyCode: string; effectiveFrom: string; rate: number }) {
+  return request<{ data: CurrencyRate }>("/currency-rates", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function updateCurrencyRate(id: string, rate: number) {
+  return request<{ data: CurrencyRate }>(`/currency-rates/${id}`, { method: "PATCH", body: JSON.stringify({ rate }) });
+}
+
+export function deleteCurrencyRate(id: string) {
+  return request<{ data: { deleted: true } }>(`/currency-rates/${id}`, { method: "DELETE" });
+}
+
+// The Sales Invoice / Purchase Bill create forms call this whenever the
+// user has a foreign currency + a transaction date selected, to pre-fill
+// the Exchange Rate field. Returns `{ data: null }` (not an error) when no
+// rate has been entered yet for that currency/date — the field just stays
+// whatever the user already typed.
+export function lookupCurrencyRate(currencyCode: string, date: string) {
+  return request<{ data: { rate: string; effectiveFrom: string } | null }>(
+    `/currency-rates/lookup?currencyCode=${encodeURIComponent(currencyCode)}&date=${encodeURIComponent(date)}`
+  );
 }

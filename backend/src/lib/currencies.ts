@@ -4,9 +4,13 @@
 // Mirrored by hand in frontend/lib/types.ts (same convention as
 // SCHEDULE_III_HEADS — no shared package between the two apps).
 //
-// Exchange rate is always manual entry (the rate the user looked up
-// themselves, e.g. CBIC's notified rate or their bank's rate) — no live FX
-// API integration. All GST/accounting figures stay in INR, computed as
+// Exchange rate is manual entry — the rate the user looked up themselves
+// (e.g. CBIC's notified rate or their bank's rate) or one pre-filled from
+// this org's own Currency Master (see routes/currencyRates.ts /
+// CurrencyRate in schema.prisma — an effective-dated rate table, keyed
+// off this same fixed code list). Either way it's still just a plain
+// number typed onto the invoice/bill at posting time, no live FX API
+// integration. All GST/accounting figures stay in INR, computed as
 // rate = round2(rateFc * exchangeRate) before any existing discount/tax/
 // costing logic runs; the *Fc fields on the invoice/bill/line are a
 // display-only convenience (see routes/salesInvoices.ts, purchaseBills.ts).

@@ -15,6 +15,7 @@ export const PERMISSIONS = [
   "inventory.post",
   "journal.post",
   "company.manage",
+  "currency.manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -33,6 +34,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "inventory.post": "Post Stock Adjustments",
   "journal.post": "Post Journal Entries",
   "company.manage": "Manage Company Master Data (CIN, directors, auditors)",
+  "currency.manage": "Manage Currency Master (effective-dated exchange rates)",
 };
 
 export function isPermission(value: string): value is Permission {
@@ -58,6 +60,9 @@ const BUILT_IN_PERMISSIONS: Record<string, Permission[]> = {
   // deliberately excluded (same separation-of-duties reasoning as
   // "purchase.approve"), "sales.deliver" (raising a Delivery Note)
   // included (operational, same reasoning as "purchase.receive").
+  // "currency.manage" also deliberately excluded — master data in the same
+  // family as "coa.manage"/"items.manage"/"company.manage", none of which
+  // ACCOUNTANT gets by default either.
   ACCOUNTANT: ["businessPartners.manage", "sales.post", "sales.deliver", "purchase.post", "purchase.receive", "inventory.post", "journal.post"],
   VIEWER: [],
 };

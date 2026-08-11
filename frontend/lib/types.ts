@@ -1064,6 +1064,7 @@ export const PERMISSIONS = [
   "inventory.post",
   "journal.post",
   "company.manage",
+  "currency.manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -1082,6 +1083,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "inventory.post": "Post Stock Adjustments",
   "journal.post": "Post Journal Entries",
   "company.manage": "Manage Company Master Data (CIN, directors, auditors)",
+  "currency.manage": "Manage Currency Master (effective-dated exchange rates)",
 };
 
 export interface CustomRole {
@@ -1247,4 +1249,24 @@ export interface BpUploadRow extends BulkUploadRowBase {
   openingBalance: number | null;
   openingBalanceType: "DEBIT" | "CREDIT" | null;
   openingBalanceDate: string | null;
+}
+
+// ── Currency Master ──────────────────────────────────────────────────────
+// Effective-dated FX rates — see the schema.prisma comment on CurrencyRate.
+// The currency code/symbol/name list itself is still the fixed
+// SUPPORTED_CURRENCIES array above; this is the per-org "what rate applied
+// on what date" history layered on top of it.
+
+export interface CurrencyRate {
+  id: string;
+  currencyCode: string;
+  effectiveFrom: string;
+  rate: string;
+  createdAt: string;
+}
+
+export interface CurrencyRateUploadRow extends BulkUploadRowBase {
+  currencyCode: string;
+  effectiveFrom: string | null;
+  rate: number | null;
 }

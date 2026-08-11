@@ -140,6 +140,7 @@ model Organization {
   goodsReceiptNotes GoodsReceiptNote[]
   salesOrders      SalesOrder[]
   deliveryNotes    DeliveryNote[]
+  currencyRates    CurrencyRate[]
 
   @@map("organizations")
 }
@@ -1379,4 +1380,38 @@ model JournalLine {
   businessPartner BusinessPartner? @relation(fields: [businessPartnerId], references: [id])
 
   @@map("journal_lines")
+}
+
+// ── Currency Master ─────────────────────────────────────────────────────
+// Effective-dated FX rates — the currency code/symbol/name list itself
+// stays the small hardcoded array in lib/currencies.ts (display metadata
+// only, same convention as SCHEDULE_III_HEADS), but *what rate applies*
+// varies by date, so that part is real per-org master data with its own
+// bulk upload. A currency code can have any number of rows here, one per
+// effective date — same "history of independent point-in-time facts, not
+// a single mutable row" shape as an opening balance or a price list, not
+// a live-updating single "current rate" field.
+//
+// `rate` follows the exact meaning `SalesInvoice.exchangeRate` /
+// `PurchaseBill.exchangeRate` already use: "1 unit of currencyCode = rate
+// INR" (see the "Exchange Rate (1 {currency} = ₹)" label on both forms).
+// Nothing here is a foreign key target — a posted invoice/bill still
+// snapshots its own `exchangeRate` value directly at posting time (never a
+// pointer back to a CurrencyRate row), so editing or deleting a rate here
+// never touches anything already posted. This table exists purely to
+// *pre-fill* that field faster and more consistently than always typing
+// it by hand — see the lookup endpoint in routes/currencyRates.ts.
+model CurrencyRate {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  currencyCode   String   @map("currency_code") @db.VarChar(3)
+  effectiveFrom  DateTime @map("effective_from") @db.Date
+  rate           Decimal  @db.Decimal(14, 6)
+  createdBy      String?  @map("created_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, currencyCode, effectiveFrom])
+  @@map("currency_rates")
 }

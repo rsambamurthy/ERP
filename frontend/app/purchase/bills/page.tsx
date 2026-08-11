@@ -7,7 +7,7 @@ import AppShell from "@/components/layout/AppShell";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import {
   ApiError, approvePurchaseBill, createPurchaseBill, getBranches, getBusinessPartners, getGoodsReceiptNotes, getItems,
-  getPurchaseBill, getPurchaseBills, getPurchaseOrder, getPurchaseOrders, rejectPurchaseBill, updatePurchaseBillReference,
+  getPurchaseBill, getPurchaseBills, getPurchaseOrder, getPurchaseOrders, lookupCurrencyRate, rejectPurchaseBill, updatePurchaseBillReference,
 } from "@/lib/api";
 import { canApprovePurchaseOrders } from "@/lib/auth";
 import { isInterState, round2, splitGst } from "@/lib/discountGst";
@@ -283,6 +283,24 @@ function PurchaseBillsInner() {
     const fx = Number(v || 0);
     setLines((ls) => ls.map((l) => ({ ...l, rate: round2(Number(l.rateFc || 0) * fx) })));
   }
+
+  // Pre-fill the Exchange Rate field from Currency Master (see
+  // app/settings/currency-master) the moment the user has a foreign
+  // currency and a bill date selected — same lookup/rationale as the
+  // Sales Invoice form (app/sales/invoices/page.tsx). Does nothing if no
+  // rate has been entered for that currency/date yet — the field stays a
+  // plain, freely-editable number either way.
+  useEffect(() => {
+    if (!isForeign || !billDate) return;
+    let cancelled = false;
+    lookupCurrencyRate(currency, billDate)
+      .then((res) => {
+        if (!cancelled && res.data) handleExchangeRateChange(String(res.data.rate));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currency, billDate, isForeign]);
 
   function pickItem(i: number, itemId: string) {
     const item = itemById.get(itemId);

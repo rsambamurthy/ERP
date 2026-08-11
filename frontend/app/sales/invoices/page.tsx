@@ -7,7 +7,7 @@ import AppShell from "@/components/layout/AppShell";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import {
   ApiError, createSalesInvoice, downloadSalesInvoicePdf, getBranches, getBusinessPartners, getDeliveryNotes, getItems, getSalesInvoice,
-  getSalesInvoices, getSalesOrder, getSalesOrders, updateSalesInvoiceReference,
+  getSalesInvoices, getSalesOrder, getSalesOrders, lookupCurrencyRate, updateSalesInvoiceReference,
 } from "@/lib/api";
 import { computeDiscountedLines, isInterState, round2 } from "@/lib/discountGst";
 import type { Branch, BusinessPartner, DiscountType, ExportType, Item, SalesInvoice, SalesLineInput, SalesOrder } from "@/lib/types";
@@ -265,6 +265,26 @@ function SalesInvoicesInner() {
     const fx = Number(v || 0);
     setLines((ls) => ls.map((l) => ({ ...l, rate: round2(Number(l.rateFc || 0) * fx) })));
   }
+
+  // Pre-fill the Exchange Rate field from Currency Master (see
+  // app/settings/currency-master) the moment the user has a foreign
+  // currency and an invoice date selected — the most recent rate on or
+  // before that date, same lookup the backend applies conceptually (see
+  // routes/currencyRates.ts GET /lookup). Silently does nothing if no rate
+  // has been entered for that currency/date yet — the field is still a
+  // plain, freely-editable number either way, this just saves the lookup
+  // most of the time.
+  useEffect(() => {
+    if (!isForeign || !invoiceDate) return;
+    let cancelled = false;
+    lookupCurrencyRate(currency, invoiceDate)
+      .then((res) => {
+        if (!cancelled && res.data) handleExchangeRateChange(String(res.data.rate));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currency, invoiceDate, isForeign]);
 
   function handleCurrencyChange(code: string) {
     const wasForeign = isForeign;

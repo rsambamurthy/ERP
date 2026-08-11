@@ -925,6 +925,56 @@ Both "Download PDF" buttons live on their respective detail screen's
 header (`app/sales/orders/page.tsx`, `app/sales/invoices/page.tsx`), next
 to Close, same placement/pattern as the Purchase Order one.
 
+## Currency Master (built)
+
+Effective-dated FX rates, real per-org master data with its own bulk
+upload — layered on top of the existing fixed currency code/symbol/name
+list in `lib/currencies.ts`, which stays exactly as it was (display
+metadata only, not something worth making DB-backed). What's new is
+`CurrencyRate`: `(organizationId, currencyCode, effectiveFrom)` unique, so
+the same currency code can carry any number of rows, one per date it
+takes effect from — the same "history of independent point-in-time
+facts" shape as an opening balance, not a single mutable "current rate"
+field. `rate` keeps the exact meaning `SalesInvoice.exchangeRate` /
+`PurchaseBill.exchangeRate` already use ("1 unit of currencyCode = rate
+INR").
+
+**Deliberately not a foreign-key target anywhere.** A posted Sales
+Invoice/Purchase Bill still snapshots its own `exchangeRate` number
+directly at posting time, exactly as it did before this feature existed
+— nothing points back at a `CurrencyRate` row. This table exists purely
+so the create-invoice/bill form doesn't have to be typed by hand every
+time: `GET /currency-rates/lookup?currencyCode=&date=` returns the most
+recent rate with `effectiveFrom <= date` (or `null` if nothing's been
+entered yet, which never blocks the form — the field is still a plain,
+freely-editable number either way). Both `app/sales/invoices/page.tsx`
+and `app/purchase/bills/page.tsx` call this lookup in a `useEffect` keyed
+on `[currency, invoiceDate/billDate]` and pre-fill Exchange Rate the
+moment a foreign currency + date are both selected — a genuine
+convenience, not a new validation rule.
+
+**CRUD + bulk upload, same shape as every other master entity in this
+app.** New `currency.manage` permission (OWNER/ADMIN by default, same
+tier as `coa.manage`/`items.manage`/`company.manage` — not given to
+ACCOUNTANT). `routes/currencyRates.ts` follows the exact
+list/create/patch/delete pattern `routes/items.ts` established, plus the
+same three-route bulk-upload shape (`GET .../bulk-upload/template`,
+`POST .../preview`, `POST .../apply`) built on the shared
+`lib/xlsxTemplate.ts`/`useBulkUpload` hook — matching an uploaded row to
+an existing rate by the `(Currency Code, Effective From)` natural key,
+same idea as Items matching by SKU. `DELETE` is a genuine hard delete
+(not the soft-delete-via-`deletedAt` convention Item/BusinessPartner
+use) — safe here specifically because nothing references a rate row by
+foreign key, so there's no history that would be lost.
+
+New `app/settings/currency-master/page.tsx` (Configuration nav group,
+next to Company Master): create form, an inline-editable list (rate only
+— currency/date are locked after creation, edit by deleting and
+recreating), and the shared bulk-upload buttons/panel.
+
+Requires `db/migration_026_currency_master.sql`. No new GL accounts, no
+`prisma db seed` step, no new dependencies.
+
 ## From the earlier "what's next" review
 
 Flagged as gaps before Sales/Purchase/Inventory was chosen as the next

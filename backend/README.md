@@ -127,6 +127,33 @@ OWNER/ADMIN).
 | `POST/PATCH/DELETE /company-master/directors(/:id)` | DIN, name, designation, appointment/cessation dates. |
 | `POST/PATCH/DELETE /company-master/auditors(/:id)` | Firm name, membership/FRN number, appointment period. |
 
+### Currency Master (`/currency-rates`)
+
+Effective-dated FX rates. The currency code/symbol/name list itself is
+still the small hardcoded array in `lib/currencies.ts` (display metadata
+only — unchanged); what's new is a real per-org table of "1 unit of this
+currency = X INR, effective from this date" rows, any number per currency
+code. Nothing here is a foreign-key target — a posted Sales Invoice/
+Purchase Bill still snapshots its own `exchangeRate` number directly at
+posting time (unchanged), so this table exists purely to *pre-fill* that
+field, never to enforce or retroactively affect anything already posted.
+Read access is any org member; every write requires the new
+`currency.manage` permission (grantable to custom roles, defaults to
+OWNER/ADMIN — same tier as `coa.manage`/`items.manage`/`company.manage`,
+not given to ACCOUNTANT by default).
+
+| Route | Notes |
+| --- | --- |
+| `GET /currency-rates` | Full list for the org, newest effective date first within each currency code. |
+| `GET /currency-rates/lookup?currencyCode=&date=` | The applicable rate as of a given transaction date — most recent row with `effectiveFrom <= date`. Returns `{ data: null }` (not an error) when nothing's been entered yet. Called by the Sales Invoice / Purchase Bill create forms to pre-fill Exchange Rate the moment a foreign currency + date are picked — the field stays freely editable either way. |
+| `POST /currency-rates` | `{ currencyCode, effectiveFrom, rate }` — `currencyCode` must be a supported non-INR code (INR is always 1 by definition, never a row here); `(organizationId, currencyCode, effectiveFrom)` is unique, so a duplicate 400s asking you to edit the existing row instead. `currency.manage`. |
+| `PATCH /currency-rates/:id` | `{ rate }` only — `currencyCode`/`effectiveFrom` are structural (the row's own key and what the lookup query keys off), same "locked after creation" convention as `Item.sku`. Delete and recreate to change either. `currency.manage`. |
+| `DELETE /currency-rates/:id` | Hard delete (not soft) — unlike Item/BusinessPartner, nothing references a rate row by foreign key, so there's no history to preserve. `currency.manage`. |
+| `GET /currency-rates/bulk-upload/template`, `POST .../preview`, `POST .../apply` | Same three-step flow as Accounts/Items/Business Partners below — matches an uploaded row to an existing rate by the `(Currency Code, Effective From)` natural key. |
+
+Requires `db/migration_026_currency_master.sql`. No new GL accounts, no
+`prisma db seed` step, no new dependencies.
+
 ### Branches (`/branches`)
 
 Full CRUD, not just the read-only list + unauthenticated onboarding create it
@@ -610,9 +637,9 @@ Requires `db/migration_025_sales_orders.sql`. No new GL accounts and no
 `prisma db seed` step — a Sales Order never posts to the journal, a
 Delivery Note posts stock movements only. No new dependencies.
 
-### Bulk upload (`/accounts`, `/items`, `/business-partners` — `/bulk-upload/*`)
+### Bulk upload (`/accounts`, `/items`, `/business-partners`, `/currency-rates` — `/bulk-upload/*`)
 
-Same three-step flow on all three, ported from SmartAppt Gold's vendor/bank upload pattern (`lib/xlsxTemplate.ts` + `lib/upload.ts` are the shared pieces): `GET .../bulk-upload/template` downloads a styled `.xlsx` (header row, inline hints, dropdown validation on enum columns); `POST .../bulk-upload/preview` (multipart, field name `file`) parses it server-side and returns every row tagged `create` / `update` / `error` — nothing is written yet; `POST .../bulk-upload/apply` takes back only the rows the user confirmed (body `{ rows: [...] }`) and commits them. Matching an uploaded row to an existing record: Chart of Accounts by Account Code, Items by SKU, Business Partners by the optional `code` field (blank code always creates new — see `migration_007`). Requires `db/migration_007_user_name_and_bp_code.sql`.
+Same three-step flow on all four, ported from SmartAppt Gold's vendor/bank upload pattern (`lib/xlsxTemplate.ts` + `lib/upload.ts` are the shared pieces): `GET .../bulk-upload/template` downloads a styled `.xlsx` (header row, inline hints, dropdown validation on enum columns); `POST .../bulk-upload/preview` (multipart, field name `file`) parses it server-side and returns every row tagged `create` / `update` / `error` — nothing is written yet; `POST .../bulk-upload/apply` takes back only the rows the user confirmed (body `{ rows: [...] }`) and commits them. Matching an uploaded row to an existing record: Chart of Accounts by Account Code, Items by SKU, Business Partners by the optional `code` field (blank code always creates new — see `migration_007`), Currency Rates by the `(Currency Code, Effective From)` pair. Requires `db/migration_007_user_name_and_bp_code.sql`.
 
 ### Sales / Purchase Returns (`/sales-returns`, `/purchase-returns`)
 
