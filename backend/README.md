@@ -276,6 +276,7 @@ filled in is the new narrow `PATCH`:
 | Route | Notes |
 | --- | --- |
 | `PATCH /sales-invoices/:id` | Whitelisted to `shippingBillNumber`, `shippingBillDate`, `portCode`, `lutBondNumber`, `lutBondDate` only — 400s if the invoice is domestic (INR). Nothing here touches an amount, a GST figure, or the journal entry, so there's no re-posting to do — unlike a real invoice edit, which this app still doesn't support (see `PATCH /journal/:id` for the one document type that does, and why that's safe: manual entries only, no stock/COGS involved). |
+| `GET /sales-invoices/:id/pdf` | Streams the invoice as a formal GST "Tax Invoice" PDF (`application/pdf`, `Content-Disposition: attachment`) — unlike the PO/SO PDFs, a legal document, so it includes the CGST/SGST/IGST split (columns switch based on inter-/intra-state), HSN, taxable value, discount, and (for a foreign-currency export) the LUT/Bond/shipping-bill declaration. Read/export action, no extra permission. See PDF export below. |
 | `PATCH /purchase-bills/:id` | Same idea — whitelisted to `billOfEntryNumber`, `billOfEntryDate`, `portCode`. |
 
 Also fixed the same latent CGST+SGST-vs-IGST bug on the Purchase Bill side
@@ -547,6 +548,7 @@ fully invoiced.
 | `POST /sales-orders/:id/reject` | `PENDING_APPROVAL` only → `REJECTED`. Body `{ reason }`, required. `sales.approve`. |
 | `POST /sales-orders/:id/reopen` | `REJECTED` only → `DRAFT`. `sales.post`. |
 | `POST /sales-orders/:id/cancel` | `DRAFT`/`PENDING_APPROVAL`/`APPROVED` only, and only if nothing's been delivered or billed against any line. `sales.post`. |
+| `GET /sales-orders/:id/pdf` | Streams a formal PDF of the order (`application/pdf`, `Content-Disposition: attachment`) — layout mirror of `GET /purchase-orders/:id/pdf`. Read/export action, no extra permission, available at any status. See PDF export below. |
 
 **New permission `sales.approve`**, deliberately excluded from
 `ACCOUNTANT`'s built-in set — same separation-of-duties reasoning as

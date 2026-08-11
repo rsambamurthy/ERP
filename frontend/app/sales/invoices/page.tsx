@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import {
-  ApiError, createSalesInvoice, getBranches, getBusinessPartners, getDeliveryNotes, getItems, getSalesInvoice,
+  ApiError, createSalesInvoice, downloadSalesInvoicePdf, getBranches, getBusinessPartners, getDeliveryNotes, getItems, getSalesInvoice,
   getSalesInvoices, getSalesOrder, getSalesOrders, updateSalesInvoiceReference,
 } from "@/lib/api";
 import { computeDiscountedLines, isInterState, round2 } from "@/lib/discountGst";
@@ -74,6 +74,8 @@ function SalesInvoicesInner() {
   const [shipLutBondDate, setShipLutBondDate] = useState("");
   const [savingShipping, setSavingShipping] = useState(false);
   const [shippingError, setShippingError] = useState<string | null>(null);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
   const selectedCustomer = useMemo(() => customers.find((c) => c.id === businessPartnerId), [customers, businessPartnerId]);
@@ -229,6 +231,18 @@ function SalesInvoicesInner() {
       setShippingError(err instanceof ApiError ? err.message : "Could not save shipping details.");
     } finally {
       setSavingShipping(false);
+    }
+  }
+
+  async function handleDownloadPdf(invoice: SalesInvoice) {
+    setDownloadingPdf(true);
+    setDownloadError(null);
+    try {
+      await downloadSalesInvoicePdf(invoice.id, invoice.invoiceNumber);
+    } catch (err) {
+      setDownloadError(err instanceof ApiError ? err.message : "Could not download the PDF.");
+    } finally {
+      setDownloadingPdf(false);
     }
   }
 
@@ -560,10 +574,16 @@ function SalesInvoicesInner() {
         <div className="ent-section">
           <div className="ent-section-hdr">
             <span className="ent-section-title">{detail ? `Invoice ${detail.invoiceNumber}` : "Loading…"}</span>
+            {detail && (
+              <button type="button" className="ent-ia ent-ia-edit" disabled={downloadingPdf} onClick={() => handleDownloadPdf(detail)}>
+                {downloadingPdf ? "Downloading…" : "Download PDF"}
+              </button>
+            )}
             <button type="button" className="ent-ia ent-ia-edit" onClick={() => { setDetail(null); setDetailError(null); }}>Close</button>
           </div>
           {detailLoading && <p style={{ padding: "0 14px 14px", fontSize: 13, color: "var(--color-muted)" }}>Loading…</p>}
           {detailError && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 14px" }}>{detailError}</p>}
+          {downloadError && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 14px" }}>{downloadError}</p>}
           {detail && (() => {
             const docForeign = detail.currency !== "INR";
             // An export is always inter-state (IGST) — show that column even

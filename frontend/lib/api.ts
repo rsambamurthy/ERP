@@ -670,6 +670,12 @@ export function cancelSalesOrder(id: string) {
   return request<{ data: SalesOrder }>(`/sales-orders/${id}/cancel`, { method: "POST" });
 }
 
+// Same bypass-request<T>() pattern as downloadPurchaseOrderPdf — a real
+// file download, not JSON.
+export function downloadSalesOrderPdf(id: string, soNumber: string) {
+  return downloadFile(`/sales-orders/${id}/pdf`, `${soNumber}.pdf`);
+}
+
 // ── Delivery Notes ────────────────────────────────────────────────────────
 // Records physical dispatch against an APPROVED Sales Order and moves
 // stock immediately — creates and posts in one step, no separate "post"
@@ -722,6 +728,12 @@ export function updateSalesInvoiceReference(id: string, body: {
   lutBondNumber?: string | null; lutBondDate?: string | null;
 }) {
   return request<{ data: SalesInvoice }>(`/sales-invoices/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+// Same bypass-request<T>() pattern as downloadPurchaseOrderPdf — a real
+// file download, not JSON.
+export function downloadSalesInvoicePdf(id: string, invoiceNumber: string) {
+  return downloadFile(`/sales-invoices/${id}/pdf`, `${invoiceNumber}.pdf`);
 }
 
 // ── Sales Returns ────────────────────────────────────────────────────────

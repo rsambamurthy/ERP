@@ -6,6 +6,7 @@ import { logAudit } from "../lib/audit";
 import { consumeStock, InsufficientStockError } from "../lib/costing";
 import { computeDiscountedLines, isInterState, round2, type DiscountType } from "../lib/discountGst";
 import { isSupportedCurrency } from "../lib/currencies";
+import { buildSalesInvoicePdf } from "../lib/salesInvoicePdf";
 
 const TRADE_RECEIVABLES_CODE = "1005";
 const SALES_REVENUE_CODE = "5001";
@@ -77,6 +78,83 @@ router.get("/:id", async (req, res) => {
   });
   if (!invoice) return res.status(404).json({ message: "Sales invoice not found." });
   res.json({ data: invoice });
+});
+
+// GET /sales-invoices/:id/pdf — the same information already on the detail
+// screen, rendered as a downloadable GST Tax Invoice to actually send to
+// the customer. No extra permission beyond viewing the invoice itself
+// (this is a read/export action). See lib/salesInvoicePdf.ts.
+router.get("/:id/pdf", async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const invoice = await prisma.salesInvoice.findFirst({
+    where: { id: req.params.id, organizationId },
+    include: {
+      businessPartner: { select: { name: true, gstin: true, address: true, phone: true, email: true } },
+      branch: { select: { name: true, gstin: true, address: true, phone: true, email: true } },
+      lines: { include: { item: { select: { sku: true, name: true, hsnCode: true, uom: true } } } },
+      salesOrder: { select: { soNumber: true } },
+    },
+  });
+  if (!invoice) return res.status(404).json({ message: "Sales invoice not found." });
+
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { name: true, registeredOfficeAddress: true, cin: true },
+  });
+  if (!organization) return res.status(404).json({ message: "Organization not found." });
+
+  // Same "is this an inter-state / export supply" determination the
+  // detail screen uses — an export is always inter-state, otherwise go by
+  // whether any IGST actually posted (see the note on POST / above).
+  const isForeign = invoice.currency !== "INR";
+  const interState = isForeign || Number(invoice.igstTotal) > 0;
+
+  const buffer = await buildSalesInvoicePdf({
+    invoiceNumber: invoice.invoiceNumber,
+    invoiceDate: invoice.invoiceDate,
+    narration: invoice.narration,
+    subtotal: Number(invoice.subtotal),
+    discountTotal: Number(invoice.discountTotal),
+    taxTotal: Number(invoice.taxTotal),
+    cgstTotal: Number(invoice.cgstTotal),
+    sgstTotal: Number(invoice.sgstTotal),
+    igstTotal: Number(invoice.igstTotal),
+    grandTotal: Number(invoice.grandTotal),
+    interState,
+    currency: invoice.currency,
+    exchangeRate: Number(invoice.exchangeRate),
+    grandTotalFc: invoice.grandTotalFc !== null ? Number(invoice.grandTotalFc) : null,
+    exportType: invoice.exportType,
+    lutBondNumber: invoice.lutBondNumber,
+    lutBondDate: invoice.lutBondDate,
+    shippingBillNumber: invoice.shippingBillNumber,
+    shippingBillDate: invoice.shippingBillDate,
+    portCode: invoice.portCode,
+    salesOrderNumber: invoice.salesOrder?.soNumber ?? null,
+    organization: {
+      name: organization.name,
+      registeredOfficeAddress: organization.registeredOfficeAddress as string | null,
+      cin: organization.cin,
+    },
+    branch: invoice.branch
+      ? { name: invoice.branch.name, gstin: invoice.branch.gstin, address: invoice.branch.address, phone: invoice.branch.phone, email: invoice.branch.email }
+      : null,
+    customer: {
+      name: invoice.businessPartner.name, gstin: invoice.businessPartner.gstin,
+      address: invoice.businessPartner.address, phone: invoice.businessPartner.phone, email: invoice.businessPartner.email,
+    },
+    lines: invoice.lines.map((l) => ({
+      itemSku: l.item.sku, itemName: l.item.name, hsnCode: l.item.hsnCode, uom: l.item.uom,
+      quantity: Number(l.quantity), rate: Number(l.rate), taxableValue: Number(l.taxableValue),
+      cgstAmount: Number(l.cgstAmount), sgstAmount: Number(l.sgstAmount), igstAmount: Number(l.igstAmount),
+      lineTotal: Number(l.lineTotal),
+    })),
+  });
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${invoice.invoiceNumber}.pdf"`);
+  res.send(buffer);
 });
 
 // PATCH /sales-invoices/:id — reference-data-only edit, for the export

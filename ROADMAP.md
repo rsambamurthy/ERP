@@ -892,6 +892,39 @@ Requires `db/migration_025_sales_orders.sql`. No new GL accounts and no
 Delivery Note posts stock movements only, never a journal entry. No new
 dependencies.
 
+**PDF export — Sales Order and Sales Invoice (built).** The sales-side
+mirror of the Purchase Order PDF above, same `pdfkit` approach (no new
+dependency — already added for the PO PDF), one route each: `GET
+/sales-orders/:id/pdf` (`lib/salesOrderPdf.ts`) and `GET
+/sales-invoices/:id/pdf` (`lib/salesInvoicePdf.ts`). No extra permission
+beyond viewing the document — a read/export action, not a workflow
+transition.
+
+The Sales Order PDF is a byte-for-byte layout mirror of the Purchase Order
+one — CUSTOMER replaces VENDOR, the second box is the org's own issuing
+branch (labelled "FROM BRANCH", since nothing is "delivered to" from the
+seller's side), title reads "SALES ORDER".
+
+The Sales Invoice PDF is a different document in kind, not just naming —
+a Purchase Order/Sales Order is a pre-commitment record, but a posted
+Sales Invoice is a legal GST "Tax Invoice," so `salesInvoicePdf.ts` surfaces
+what the other two don't: a Supply Type line (Inter-State/IGST vs.
+Intra-State/CGST+SGST, decided the same way the invoice detail screen
+already does — an export is always inter-state, otherwise by whether any
+IGST actually posted), a line-item table whose tax columns switch between
+one IGST column or two CGST/SGST columns depending on that supply type
+(never both, matching GST law), a Taxable Value column (post-discount,
+what GST is actually computed on), a Discount line in the totals block,
+and — only for a foreign-currency export invoice — an export-declaration
+block (LUT/Bond/With-Payment-of-IGST classification, LUT/Bond number and
+date, shipping bill and port code once filled in) plus a foreign-currency
+equivalent grand total. When the invoice is SO-linked, the PDF also shows
+"Against Sales Order: SO-00xx".
+
+Both "Download PDF" buttons live on their respective detail screen's
+header (`app/sales/orders/page.tsx`, `app/sales/invoices/page.tsx`), next
+to Close, same placement/pattern as the Purchase Order one.
+
 ## From the earlier "what's next" review
 
 Flagged as gaps before Sales/Purchase/Inventory was chosen as the next
