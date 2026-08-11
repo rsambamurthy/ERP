@@ -4,6 +4,7 @@ import { authenticate, requirePermission, requireActiveSubscription, resolveOrgI
 import { logAudit } from "../lib/audit";
 import { round2 } from "../lib/discountGst";
 import { buildPurchaseOrderPdf } from "../lib/purchaseOrderPdf";
+import { isSupportedCurrency } from "../lib/currencies";
 
 // A Purchase Order never touches the journal or stock — it's a
 // pre-commitment/approval document only. See the schema.prisma comment on
@@ -27,7 +28,28 @@ interface LineInput {
   itemId: string;
   quantity: number;
   rate: number;
+  // Foreign-currency POs only — the unit rate as entered, in the PO's
+  // currency. When present (isForeign), it — not `rate` — is authoritative:
+  // rate gets overwritten server-side as round2(rateFc * exchangeRate)
+  // before anything else runs. Same convention as purchaseBills.ts.
+  rateFc?: number;
   taxRate?: number;
+}
+
+// Shared by POST / and PATCH /:id — validates currency/exchangeRate and
+// returns the resolved { currencyCode, isForeign, fxRate } triple. Throws
+// {status:400} on bad input, same convention as resolveAndComputeLines.
+function resolveCurrency(currency: unknown, exchangeRate: unknown) {
+  const currencyCode = String(currency || "INR").toUpperCase();
+  if (!isSupportedCurrency(currencyCode)) {
+    throw Object.assign(new Error(`Unsupported currency "${currencyCode}".`), { status: 400 });
+  }
+  const isForeign = currencyCode !== "INR";
+  const fxRate = isForeign ? Number(exchangeRate) : 1;
+  if (isForeign && !(fxRate > 0)) {
+    throw Object.assign(new Error("exchangeRate must be greater than 0 for a non-INR Purchase Order."), { status: 400 });
+  }
+  return { currencyCode, isForeign, fxRate };
 }
 
 const DETAIL_INCLUDE = {
@@ -98,6 +120,9 @@ router.get("/:id/pdf", async (req, res) => {
     subtotal: Number(order.subtotal),
     taxTotal: Number(order.taxTotal),
     grandTotal: Number(order.grandTotal),
+    currency: order.currency,
+    exchangeRate: Number(order.exchangeRate),
+    grandTotalFc: order.grandTotalFc !== null ? Number(order.grandTotalFc) : null,
     organization: {
       name: organization.name,
       registeredOfficeAddress: organization.registeredOfficeAddress as string | null,
@@ -122,8 +147,13 @@ router.get("/:id/pdf", async (req, res) => {
 });
 
 // Shared by POST / and PATCH /:id — validates + computes lines. Throws
-// {status:400} on bad input, same convention as purchaseBills.ts.
-async function resolveAndComputeLines(organizationId: string, lines: LineInput[]) {
+// {status:400} on bad input, same convention as purchaseBills.ts. isForeign/
+// fxRate come from resolveCurrency above — when isForeign, every line's
+// rateFc (not rate) is authoritative, overwritten into an INR `rate` before
+// any of the existing subtotal/tax math runs, so everything downstream
+// (GRN unitCost, the approval threshold, PDF totals) keeps reading a plain
+// INR `rate`/`grandTotal` exactly as it always has.
+async function resolveAndComputeLines(organizationId: string, lines: LineInput[], isForeign: boolean, fxRate: number) {
   if (!Array.isArray(lines) || lines.length === 0) {
     throw Object.assign(new Error("At least one line is required."), { status: 400 });
   }
@@ -134,16 +164,27 @@ async function resolveAndComputeLines(organizationId: string, lines: LineInput[]
     throw Object.assign(new Error("One or more items are invalid for this organization."), { status: 400 });
   }
 
-  let subtotal = 0, taxTotal = 0;
-  const computed = typedLines.map((l) => {
-    if (!l.itemId || !(l.quantity > 0) || !(l.rate >= 0)) {
+  for (const l of typedLines) {
+    if (isForeign) {
+      if (!l.itemId || !(l.quantity > 0) || !(l.rateFc! >= 0)) {
+        throw Object.assign(new Error("Every line needs itemId, quantity > 0, and rateFc >= 0."), { status: 400 });
+      }
+      l.rate = round2(l.rateFc! * fxRate);
+    } else if (!l.itemId || !(l.quantity > 0) || !(l.rate >= 0)) {
       throw Object.assign(new Error("Every line needs itemId, quantity > 0, and rate >= 0."), { status: 400 });
     }
+  }
+
+  let subtotal = 0, taxTotal = 0;
+  const computed = typedLines.map((l) => {
     const lineSubtotal = round2(l.quantity * l.rate);
     const taxAmount = round2(lineSubtotal * (l.taxRate ?? 0) / 100);
     const lineTotal = round2(lineSubtotal + taxAmount);
     subtotal += lineSubtotal; taxTotal += taxAmount;
-    return { itemId: l.itemId, quantity: l.quantity, rate: l.rate, taxRate: l.taxRate ?? 0, lineSubtotal, taxAmount, lineTotal };
+    return {
+      itemId: l.itemId, quantity: l.quantity, rate: l.rate, taxRate: l.taxRate ?? 0, lineSubtotal, taxAmount, lineTotal,
+      rateFc: isForeign ? l.rateFc : null, lineTotalFc: isForeign ? round2(lineTotal / fxRate) : null,
+    };
   });
   const grandTotal = round2(subtotal + taxTotal);
   return { computed, subtotal: round2(subtotal), taxTotal: round2(taxTotal), grandTotal };
@@ -156,7 +197,7 @@ router.post("/", canPost, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
 
-  const { businessPartnerId, poDate, branchId, expectedDeliveryDate, narration, lines } = req.body ?? {};
+  const { businessPartnerId, poDate, branchId, expectedDeliveryDate, narration, lines, currency, exchangeRate } = req.body ?? {};
   if (!businessPartnerId || !poDate) {
     return res.status(400).json({ message: "businessPartnerId and poDate are required." });
   }
@@ -171,7 +212,9 @@ router.post("/", canPost, async (req, res) => {
   }
 
   try {
-    const { computed, subtotal, taxTotal, grandTotal } = await resolveAndComputeLines(organizationId, lines);
+    const { currencyCode, isForeign, fxRate } = resolveCurrency(currency, exchangeRate);
+    const { computed, subtotal, taxTotal, grandTotal } = await resolveAndComputeLines(organizationId, lines, isForeign, fxRate);
+    const grandTotalFc = isForeign ? round2(grandTotal / fxRate) : null;
 
     const count = await prisma.purchaseOrder.count({ where: { organizationId } });
     const poNumber = `PO-${String(count + 1).padStart(4, "0")}`;
@@ -184,6 +227,7 @@ router.post("/", canPost, async (req, res) => {
           expectedDeliveryDate: expectedDeliveryDate ? new Date(expectedDeliveryDate) : null,
           narration: narration ?? "",
           subtotal, taxTotal, grandTotal,
+          currency: currencyCode, exchangeRate: fxRate, grandTotalFc,
           createdBy: req.user!.userId,
         },
       });
@@ -219,7 +263,7 @@ router.patch("/:id", canPost, async (req, res) => {
     return res.status(400).json({ message: `Cannot edit a Purchase Order in ${existing.status} status — only Draft is editable.` });
   }
 
-  const { businessPartnerId, poDate, branchId, expectedDeliveryDate, narration, lines } = req.body ?? {};
+  const { businessPartnerId, poDate, branchId, expectedDeliveryDate, narration, lines, currency, exchangeRate } = req.body ?? {};
 
   let vendorId = existing.businessPartnerId;
   if (businessPartnerId && businessPartnerId !== existing.businessPartnerId) {
@@ -229,7 +273,12 @@ router.patch("/:id", canPost, async (req, res) => {
   }
 
   try {
-    const { computed, subtotal, taxTotal, grandTotal } = await resolveAndComputeLines(organizationId, lines ?? []);
+    const { currencyCode, isForeign, fxRate } = resolveCurrency(
+      currency !== undefined ? currency : existing.currency,
+      exchangeRate !== undefined ? exchangeRate : existing.exchangeRate
+    );
+    const { computed, subtotal, taxTotal, grandTotal } = await resolveAndComputeLines(organizationId, lines ?? [], isForeign, fxRate);
+    const grandTotalFc = isForeign ? round2(grandTotal / fxRate) : null;
 
     await prisma.$transaction(async (tx) => {
       await tx.purchaseOrder.update({
@@ -241,6 +290,7 @@ router.patch("/:id", canPost, async (req, res) => {
           expectedDeliveryDate: expectedDeliveryDate !== undefined ? (expectedDeliveryDate ? new Date(expectedDeliveryDate) : null) : existing.expectedDeliveryDate,
           narration: narration !== undefined ? narration : existing.narration,
           subtotal, taxTotal, grandTotal,
+          currency: currencyCode, exchangeRate: fxRate, grandTotalFc,
         },
       });
       await tx.purchaseOrderLine.deleteMany({ where: { purchaseOrderId: existing.id } });

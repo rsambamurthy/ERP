@@ -855,6 +855,17 @@ model PurchaseOrder {
   subtotal          Decimal   @default(0) @db.Decimal(14, 2)
   taxTotal          Decimal   @default(0) @map("tax_total") @db.Decimal(14, 2)
   grandTotal        Decimal   @default(0) @map("grand_total") @db.Decimal(14, 2)
+  // Foreign-currency support (import POs) — see lib/currencies.ts and the
+  // matching note on PurchaseBill/SalesInvoice; identical semantics.
+  // grandTotal (INR, above) stays the sole figure the approval threshold,
+  // GRN unit cost, and every other downstream computation reads —
+  // grandTotalFc is a display-only round2(grandTotal / exchangeRate)
+  // derivative, same convention as everywhere else this pattern is used.
+  // A Purchase Bill raised against this PO derives its own currency from
+  // here (see routes/purchaseBills.ts) rather than choosing independently.
+  currency          String    @default("INR") @db.VarChar(3)
+  exchangeRate      Decimal   @default(1) @map("exchange_rate") @db.Decimal(12, 6)
+  grandTotalFc      Decimal?  @map("grand_total_fc") @db.Decimal(14, 2)
 
   submittedBy    String?   @map("submitted_by") @db.Uuid
   submittedAt    DateTime? @map("submitted_at")
@@ -894,6 +905,16 @@ model PurchaseOrderLine {
   lineSubtotal    Decimal @map("line_subtotal") @db.Decimal(14, 2)
   taxAmount       Decimal @map("tax_amount") @db.Decimal(14, 2)
   lineTotal       Decimal @map("line_total") @db.Decimal(14, 2)
+  // rateFc: unit rate as entered, in the PO's currency (null for INR POs —
+  // `rate` above is already the only figure that exists then, exactly the
+  // PurchaseBillLine/SalesInvoiceLine convention). `rate` itself stays the
+  // authoritative INR figure (round2(rateFc * exchangeRate)) either way,
+  // so GRN unitCost sourcing (routes/goodsReceiptNotes.ts reads
+  // PurchaseOrderLine.rate directly) needs no change at all — stock
+  // valuation stays INR-only regardless of the PO's own currency.
+  // lineTotalFc: display-only round2(lineTotal / exchangeRate).
+  rateFc          Decimal? @map("rate_fc") @db.Decimal(14, 4)
+  lineTotalFc     Decimal? @map("line_total_fc") @db.Decimal(14, 2)
   // Running total of quantity already received against this line across
   // every Goods Receipt Note — see routes/goodsReceiptNotes.ts. Never
   // exceeds `quantity` (enforced server-side at GRN-post time). This is
@@ -998,6 +1019,13 @@ model SalesOrder {
   subtotal          Decimal   @default(0) @db.Decimal(14, 2)
   taxTotal          Decimal   @default(0) @map("tax_total") @db.Decimal(14, 2)
   grandTotal        Decimal   @default(0) @map("grand_total") @db.Decimal(14, 2)
+  // Foreign-currency support (export SOs) — exact mirror of
+  // PurchaseOrder.currency/exchangeRate/grandTotalFc above. A Sales
+  // Invoice raised against this SO derives its own currency from here
+  // (see routes/salesInvoices.ts) rather than choosing independently.
+  currency          String    @default("INR") @db.VarChar(3)
+  exchangeRate      Decimal   @default(1) @map("exchange_rate") @db.Decimal(12, 6)
+  grandTotalFc      Decimal?  @map("grand_total_fc") @db.Decimal(14, 2)
 
   submittedBy    String?   @map("submitted_by") @db.Uuid
   submittedAt    DateTime? @map("submitted_at")
@@ -1037,6 +1065,12 @@ model SalesOrderLine {
   lineSubtotal Decimal @map("line_subtotal") @db.Decimal(14, 2)
   taxAmount    Decimal @map("tax_amount") @db.Decimal(14, 2)
   lineTotal    Decimal @map("line_total") @db.Decimal(14, 2)
+  // rateFc/lineTotalFc — exact mirror of PurchaseOrderLine's fields above.
+  // `rate` stays the authoritative INR figure either way, so DeliveryNote's
+  // sourcing of its own (purely descriptive) `rate` from this SO line
+  // needs no change — see the schema comment on DeliveryNoteLine.rate.
+  rateFc       Decimal? @map("rate_fc") @db.Decimal(14, 4)
+  lineTotalFc  Decimal? @map("line_total_fc") @db.Decimal(14, 2)
   // Running total of quantity already dispatched against this line across
   // every Delivery Note — see routes/deliveryNotes.ts. Never exceeds
   // `quantity` (enforced server-side at delivery-note-post time). This is

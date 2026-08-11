@@ -661,6 +661,9 @@ export interface PurchaseOrderLineInput {
   itemId: string;
   quantity: number;
   rate: number;
+  // Foreign-currency POs only — the unit rate as entered, in the PO's
+  // currency. See PurchaseOrder.currency below.
+  rateFc?: number;
   taxRate?: number;
 }
 
@@ -670,6 +673,8 @@ export interface PurchaseOrderLine extends PurchaseOrderLineInput {
   lineSubtotal: string;
   taxAmount: string;
   lineTotal: string;
+  // Display-only — null for an INR PO. See PurchaseOrder.grandTotalFc.
+  lineTotalFc?: string | null;
   // Running total already received against this line across every Goods
   // Receipt Note — never exceeds `quantity`. This is the real stock-in
   // signal; billedQuantity below is the separate, always-lagging-or-equal
@@ -692,6 +697,13 @@ export interface PurchaseOrder {
   subtotal: string;
   taxTotal: string;
   grandTotal: string;
+  // Foreign currency (imports) — currency is "INR" and grandTotalFc is
+  // null for every domestic PO. A Purchase Bill raised against this PO
+  // derives its own currency from here — see purchaseOrderId on
+  // PurchaseBill/createPurchaseBill.
+  currency: string;
+  exchangeRate: string;
+  grandTotalFc: string | null;
   submittedBy: string | null;
   submittedAt: string | null;
   approvedBy: string | null;
@@ -765,6 +777,9 @@ export interface SalesOrderLineInput {
   itemId: string;
   quantity: number;
   rate: number;
+  // Foreign-currency SOs only — the unit rate as entered, in the SO's
+  // currency. See SalesOrder.currency below.
+  rateFc?: number;
   taxRate?: number;
 }
 
@@ -774,6 +789,8 @@ export interface SalesOrderLine extends SalesOrderLineInput {
   lineSubtotal: string;
   taxAmount: string;
   lineTotal: string;
+  // Display-only — null for an INR SO. See SalesOrder.grandTotalFc.
+  lineTotalFc?: string | null;
   // Running total already dispatched against this line across every
   // Delivery Note — never exceeds `quantity`. This is the real stock-out
   // signal; billedQuantity below is the separate, always-lagging-or-equal
@@ -796,6 +813,13 @@ export interface SalesOrder {
   subtotal: string;
   taxTotal: string;
   grandTotal: string;
+  // Foreign currency (exports) — currency is "INR" and grandTotalFc is
+  // null for every domestic SO. A Sales Invoice raised against this SO
+  // derives its own currency from here — see salesOrderId on
+  // SalesInvoice/createSalesInvoice.
+  currency: string;
+  exchangeRate: string;
+  grandTotalFc: string | null;
   submittedBy: string | null;
   submittedAt: string | null;
   approvedBy: string | null;

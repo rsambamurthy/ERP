@@ -233,7 +233,7 @@ router.post("/", canPost, async (req, res) => {
   // than taken from the request, so an invoice can never be posted against
   // a different customer than the one the SO was approved for. See
   // routes/salesOrders.ts for the approval workflow itself.
-  let linkedSo: { id: string; businessPartnerId: string; status: string; lines: { id: string; quantity: any; rate: any; billedQuantity: any }[] } | null = null;
+  let linkedSo: { id: string; businessPartnerId: string; status: string; currency: string; lines: { id: string; quantity: any; rate: any; billedQuantity: any }[] } | null = null;
   if (salesOrderId) {
     linkedSo = await prisma.salesOrder.findFirst({
       where: { id: salesOrderId, organizationId },
@@ -246,6 +246,9 @@ router.post("/", canPost, async (req, res) => {
     if (businessPartnerId && businessPartnerId !== linkedSo.businessPartnerId) {
       return res.status(400).json({ message: "businessPartnerId doesn't match the customer on the linked Sales Order." });
     }
+    if (currency && String(currency).toUpperCase() !== linkedSo.currency) {
+      return res.status(400).json({ message: `currency doesn't match the currency on the linked Sales Order (${linkedSo.currency}).` });
+    }
   }
   const effectiveBusinessPartnerId = linkedSo?.businessPartnerId ?? businessPartnerId;
   if (!effectiveBusinessPartnerId) {
@@ -255,7 +258,13 @@ router.post("/", canPost, async (req, res) => {
   // Foreign currency (export invoices) — see lib/currencies.ts. Defaults
   // keep every domestic invoice byte-for-byte identical to before this
   // feature existed: currencyCode "INR", fxRate 1, isForeign false.
-  const currencyCode = String(currency || "INR").toUpperCase();
+  // SO-linked: the currency *code* is derived from the SO (validated
+  // above) — an invoice can't switch currencies mid-way through an SO's
+  // billing history. exchangeRate is deliberately still the invoice's own
+  // — the real market rate on the actual invoice date, not the SO's
+  // (possibly stale) rate at approval time, same reasoning as the PO-linked
+  // Purchase Bill (routes/purchaseBills.ts).
+  const currencyCode = linkedSo ? linkedSo.currency : String(currency || "INR").toUpperCase();
   if (!isSupportedCurrency(currencyCode)) {
     return res.status(400).json({ message: `Unsupported currency "${currencyCode}".` });
   }

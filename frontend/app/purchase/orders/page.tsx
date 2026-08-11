@@ -5,15 +5,15 @@ import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
 import {
   ApiError, approvePurchaseOrder, cancelPurchaseOrder, createPurchaseOrder, downloadPurchaseOrderPdf, getBranches,
-  getBusinessPartners, getItems, getPurchaseOrder, getPurchaseOrders, rejectPurchaseOrder, reopenPurchaseOrder,
+  getBusinessPartners, getItems, getPurchaseOrder, getPurchaseOrders, lookupCurrencyRate, rejectPurchaseOrder, reopenPurchaseOrder,
   submitPurchaseOrder, updatePurchaseOrder,
 } from "@/lib/api";
 import { round2 } from "@/lib/discountGst";
 import { canApprovePurchaseOrders, canReceiveGoods } from "@/lib/auth";
 import type { Branch, BusinessPartner, Item, PurchaseOrder, PurchaseOrderLineInput, PurchaseOrderStatus } from "@/lib/types";
-import { PURCHASE_ORDER_STATUS_LABELS } from "@/lib/types";
+import { PURCHASE_ORDER_STATUS_LABELS, SUPPORTED_CURRENCIES } from "@/lib/types";
 
-const emptyLine = (): PurchaseOrderLineInput => ({ itemId: "", quantity: 0, rate: 0, taxRate: 0 });
+const emptyLine = (): PurchaseOrderLineInput => ({ itemId: "", quantity: 0, rate: 0, rateFc: 0, taxRate: 0 });
 
 const STATUS_COLORS: Record<PurchaseOrderStatus, { bg: string; fg: string }> = {
   DRAFT: { bg: "#f1f5f9", fg: "#475569" },
@@ -52,6 +52,9 @@ function PurchaseOrdersInner() {
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
   const [narration, setNarration] = useState("");
   const [lines, setLines] = useState<PurchaseOrderLineInput[]>([emptyLine()]);
+  const [currency, setCurrency] = useState("INR");
+  const [exchangeRate, setExchangeRate] = useState("1");
+  const isForeign = currency !== "INR";
 
   const [detail, setDetail] = useState<PurchaseOrder | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -99,6 +102,7 @@ function PurchaseOrdersInner() {
   function resetForm() {
     setBusinessPartnerId(""); setPoDate(new Date().toISOString().slice(0, 10));
     setExpectedDeliveryDate(""); setNarration(""); setLines([emptyLine()]);
+    setCurrency("INR"); setExchangeRate("1");
     setEditingId(null);
   }
 
@@ -113,7 +117,11 @@ function PurchaseOrdersInner() {
     setPoDate(order.poDate.slice(0, 10));
     setExpectedDeliveryDate(order.expectedDeliveryDate ? order.expectedDeliveryDate.slice(0, 10) : "");
     setNarration(order.narration);
-    setLines(order.lines.map((l) => ({ itemId: l.itemId, quantity: Number(l.quantity), rate: Number(l.rate), taxRate: Number(l.taxRate) })));
+    setLines(order.lines.map((l) => ({
+      itemId: l.itemId, quantity: Number(l.quantity), rate: Number(l.rate),
+      rateFc: l.rateFc != null ? Number(l.rateFc) : 0, taxRate: Number(l.taxRate),
+    })));
+    setCurrency(order.currency); setExchangeRate(order.exchangeRate);
     setEditingId(order.id);
     setShowForm(true);
   }
@@ -122,14 +130,50 @@ function PurchaseOrdersInner() {
     const item = itemById.get(itemId);
     setLines((ls) => ls.map((l, idx) => idx !== i ? l : {
       ...l, itemId,
-      rate: item?.purchaseRate ? Number(item.purchaseRate) : 0,
+      // Item master rates are always INR — only useful as a default when
+      // the PO itself is in INR. A foreign-currency line starts blank.
+      rate: !isForeign && item?.purchaseRate ? Number(item.purchaseRate) : 0,
+      rateFc: 0,
       taxRate: item?.taxRate ? Number(item.taxRate) : 0,
     }));
   }
 
   function updateLine(i: number, patch: Partial<PurchaseOrderLineInput>) {
-    setLines((ls) => ls.map((l, idx) => idx === i ? { ...l, ...patch } : l));
+    setLines((ls) => ls.map((l, idx) => {
+      if (idx !== i) return l;
+      const next = { ...l, ...patch };
+      // rateFc is authoritative for a foreign-currency PO — rate (INR) is
+      // always the derived figure the totals preview uses, kept in lockstep
+      // here so it matches what the server computes. Same convention as
+      // the Purchase Bill / Sales Invoice forms.
+      if (isForeign && patch.rateFc !== undefined) {
+        next.rate = round2(Number(next.rateFc || 0) * Number(exchangeRate || 0));
+      }
+      return next;
+    }));
   }
+
+  function handleExchangeRateChange(v: string) {
+    setExchangeRate(v);
+    const fx = Number(v || 0);
+    setLines((ls) => ls.map((l) => ({ ...l, rate: round2(Number(l.rateFc || 0) * fx) })));
+  }
+
+  // Pre-fill the Exchange Rate field from Currency Master (see
+  // app/settings/currency-master) the moment the user has a foreign
+  // currency and a PO date selected — same lookup/rationale as the Sales
+  // Invoice / Purchase Bill forms.
+  useEffect(() => {
+    if (!isForeign || !poDate) return;
+    let cancelled = false;
+    lookupCurrencyRate(currency, poDate)
+      .then((res) => {
+        if (!cancelled && res.data) handleExchangeRateChange(String(res.data.rate));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currency, poDate, isForeign]);
 
   async function handleSaveDraft(e: React.FormEvent) {
     e.preventDefault();
@@ -140,6 +184,7 @@ function PurchaseOrdersInner() {
       expectedDeliveryDate: expectedDeliveryDate || undefined,
       narration,
       lines: lines.filter((l) => l.itemId && l.quantity > 0),
+      currency, exchangeRate: isForeign ? Number(exchangeRate) : undefined,
     };
     try {
       if (editingId) {
@@ -256,9 +301,32 @@ function PurchaseOrdersInner() {
             </div>
           </div>
 
+          <div className="ent-form-grid" style={{ gridTemplateColumns: isForeign ? "1fr 1fr 2fr" : "1fr 3fr" }}>
+            <div className="ent-fg">
+              <label className="ent-fl">Currency</label>
+              <select className="ent-fc" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+                {SUPPORTED_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.name}</option>)}
+              </select>
+            </div>
+            {isForeign && (
+              <div className="ent-fg">
+                <label className="ent-fl">Exchange Rate (1 {currency} = ₹)</label>
+                <input type="number" min={0} step="0.000001" className="ent-fc" value={exchangeRate} onChange={(e) => handleExchangeRateChange(e.target.value)} required />
+              </div>
+            )}
+            <div className="ent-fg">
+              <label className="ent-fl">&nbsp;</label>
+              <span style={{ fontSize: 12, color: "var(--color-muted)" }}>
+                {isForeign
+                  ? `Import PO — enter each line's rate in ${currency}. A Purchase Bill raised against this PO will bill in the same currency.`
+                  : "Domestic PO — INR only."}
+              </span>
+            </div>
+          </div>
+
           <div style={{ padding: "0 14px" }}>
             <table className="ent-table">
-              <thead><tr><th style={{ width: "40%" }}>Item</th><th>Qty</th><th>Rate (₹)</th><th>Tax %</th><th /></tr></thead>
+              <thead><tr><th style={{ width: "40%" }}>Item</th><th>Qty</th><th>Rate{isForeign ? ` (${currency})` : " (₹)"}</th>{isForeign && <th>Rate (₹)</th>}<th>Tax %</th><th /></tr></thead>
               <tbody>
                 {lines.map((line, i) => (
                   <tr key={i}>
@@ -269,7 +337,14 @@ function PurchaseOrdersInner() {
                       </select>
                     </td>
                     <td><input type="number" min={0} step="0.0001" className="ent-fc" value={line.quantity || ""} onChange={(e) => updateLine(i, { quantity: Number(e.target.value) })} /></td>
-                    <td><input type="number" min={0} step="0.01" className="ent-fc" value={line.rate || ""} onChange={(e) => updateLine(i, { rate: Number(e.target.value) })} /></td>
+                    {isForeign ? (
+                      <>
+                        <td><input type="number" min={0} step="0.01" className="ent-fc" value={line.rateFc || ""} onChange={(e) => updateLine(i, { rateFc: Number(e.target.value) })} /></td>
+                        <td style={{ color: "var(--color-muted)" }}>{(line.rate || 0).toFixed(2)}</td>
+                      </>
+                    ) : (
+                      <td><input type="number" min={0} step="0.01" className="ent-fc" value={line.rate || ""} onChange={(e) => updateLine(i, { rate: Number(e.target.value) })} /></td>
+                    )}
                     <td><input type="number" min={0} step="0.01" className="ent-fc" value={line.taxRate || ""} onChange={(e) => updateLine(i, { taxRate: Number(e.target.value) })} /></td>
                     <td><button type="button" className="ent-ia ent-ia-del" disabled={lines.length <= 1} onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))}>✕</button></td>
                   </tr>
@@ -286,6 +361,9 @@ function PurchaseOrdersInner() {
               <span>Subtotal: <strong>{totals.subtotal.toFixed(2)}</strong></span>
               <span>Tax: <strong>{totals.tax.toFixed(2)}</strong></span>
               <span>Grand Total: <strong>{totals.grand.toFixed(2)}</strong></span>
+              {isForeign && Number(exchangeRate) > 0 && (
+                <span>≈ <strong>{currency} {round2(totals.grand / Number(exchangeRate)).toFixed(2)}</strong></span>
+              )}
             </div>
           </div>
 
@@ -321,6 +399,7 @@ function PurchaseOrdersInner() {
               <div style={{ padding: "0 14px 10px", fontSize: 13, color: "var(--color-muted)" }}>
                 {new Date(detail.poDate).toLocaleDateString()} · {detail.businessPartner.name}
                 {detail.expectedDeliveryDate && ` · Expected ${new Date(detail.expectedDeliveryDate).toLocaleDateString()}`}
+                {detail.currency !== "INR" && ` · ${detail.currency} @ ${Number(detail.exchangeRate).toFixed(4)}`}
                 {detail.narration ? ` · ${detail.narration}` : ""}
               </div>
 
@@ -378,6 +457,9 @@ function PurchaseOrdersInner() {
                 <span>Subtotal: <strong>{Number(detail.subtotal).toFixed(2)}</strong></span>
                 <span>Tax: <strong>{Number(detail.taxTotal).toFixed(2)}</strong></span>
                 <span>Grand Total: <strong>{Number(detail.grandTotal).toFixed(2)}</strong></span>
+                {detail.currency !== "INR" && detail.grandTotalFc !== null && (
+                  <span>≈ <strong>{detail.currency} {Number(detail.grandTotalFc).toFixed(2)}</strong></span>
+                )}
               </div>
 
               {detail.goodsReceiptNotes && detail.goodsReceiptNotes.length > 0 && (

@@ -559,6 +559,7 @@ export function getPurchaseOrder(id: string) {
 export function createPurchaseOrder(body: {
   businessPartnerId: string; poDate: string; branchId?: string; expectedDeliveryDate?: string; narration?: string;
   lines: PurchaseOrderLineInput[];
+  currency?: string; exchangeRate?: number;
 }) {
   return request<{ data: PurchaseOrder }>("/purchase-orders", { method: "POST", body: JSON.stringify(body) });
 }
@@ -568,6 +569,7 @@ export function createPurchaseOrder(body: {
 export function updatePurchaseOrder(id: string, body: {
   businessPartnerId?: string; poDate?: string; branchId?: string | null; expectedDeliveryDate?: string | null; narration?: string;
   lines: PurchaseOrderLineInput[];
+  currency?: string; exchangeRate?: number;
 }) {
   return request<{ data: PurchaseOrder }>(`/purchase-orders/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 }
@@ -638,6 +640,7 @@ export function getSalesOrder(id: string) {
 export function createSalesOrder(body: {
   businessPartnerId: string; soDate: string; branchId?: string; expectedDeliveryDate?: string; narration?: string;
   lines: SalesOrderLineInput[];
+  currency?: string; exchangeRate?: number;
 }) {
   return request<{ data: SalesOrder }>("/sales-orders", { method: "POST", body: JSON.stringify(body) });
 }
@@ -647,6 +650,7 @@ export function createSalesOrder(body: {
 export function updateSalesOrder(id: string, body: {
   businessPartnerId?: string; soDate?: string; branchId?: string | null; expectedDeliveryDate?: string | null; narration?: string;
   lines: SalesOrderLineInput[];
+  currency?: string; exchangeRate?: number;
 }) {
   return request<{ data: SalesOrder }>(`/sales-orders/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 }

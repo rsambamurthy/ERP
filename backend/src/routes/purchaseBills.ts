@@ -176,11 +176,11 @@ router.post("/", canPost, async (req, res) => {
   // taken from the request, so a bill can never be posted against a
   // different vendor than the one the PO was approved for. See
   // routes/purchaseOrders.ts for the approval workflow itself.
-  let linkedPo: { id: string; businessPartnerId: string; status: string; lines: { id: string; quantity: any; rate: any; billedQuantity: any }[] } | null = null;
+  let linkedPo: { id: string; businessPartnerId: string; status: string; currency: string; exchangeRate: any; lines: { id: string; quantity: any; rate: any; rateFc: any; billedQuantity: any }[] } | null = null;
   if (purchaseOrderId) {
     linkedPo = await prisma.purchaseOrder.findFirst({
       where: { id: purchaseOrderId, organizationId },
-      include: { lines: { select: { id: true, quantity: true, rate: true, billedQuantity: true } } },
+      include: { lines: { select: { id: true, quantity: true, rate: true, rateFc: true, billedQuantity: true } } },
     });
     if (!linkedPo) return res.status(400).json({ message: "purchaseOrderId is not a valid Purchase Order for this organization." });
     if (linkedPo.status !== "APPROVED") {
@@ -188,6 +188,9 @@ router.post("/", canPost, async (req, res) => {
     }
     if (businessPartnerId && businessPartnerId !== linkedPo.businessPartnerId) {
       return res.status(400).json({ message: "businessPartnerId doesn't match the vendor on the linked Purchase Order." });
+    }
+    if (currency && String(currency).toUpperCase() !== linkedPo.currency) {
+      return res.status(400).json({ message: `currency doesn't match the currency on the linked Purchase Order (${linkedPo.currency}).` });
     }
   }
   const effectiveBusinessPartnerId = linkedPo?.businessPartnerId ?? businessPartnerId;
@@ -197,7 +200,17 @@ router.post("/", canPost, async (req, res) => {
 
   // Foreign currency (import bills) — see lib/currencies.ts and the matching
   // note in salesInvoices.ts; same semantics, same INR-is-authoritative rule.
-  const currencyCode = String(currency || "INR").toUpperCase();
+  // PO-linked: the currency *code* is derived from the PO (validated above,
+  // e.g. "USD") — a bill can't switch currencies mid-way through a PO's
+  // billing history. exchangeRate, though, is deliberately still the
+  // bill's own — the real market rate on the actual billing date, not the
+  // PO's (possibly weeks-stale) rate at approval time; forcing the PO's
+  // rate here would misstate what's actually posted to Trade Payables
+  // today. This is exactly why the price-variance check below compares in
+  // FC terms rather than INR: it isolates a genuine vendor price change
+  // from FX movement between the PO date and this bill's date, which an
+  // INR-only comparison would otherwise conflate.
+  const currencyCode = linkedPo ? linkedPo.currency : String(currency || "INR").toUpperCase();
   if (!isSupportedCurrency(currencyCode)) {
     return res.status(400).json({ message: `Unsupported currency "${currencyCode}".` });
   }
@@ -338,20 +351,32 @@ router.post("/", canPost, async (req, res) => {
   // posting it immediately — nothing partially posts. Tolerance null
   // means 0%: any variance at all requires approval. Not applicable to
   // ad-hoc (non-PO) bills, which have no PO rate to compare against.
+  //
+  // Foreign-currency PO: compare in FC terms (rateFc-to-rateFc), not INR.
+  // currency is now locked to match the PO's (see above), but exchangeRate
+  // is deliberately still independent — the bill uses today's real rate,
+  // the PO used whatever rate applied when it was raised. Comparing the
+  // converted INR figures would flag a bill for approval purely because
+  // the rupee moved between those two dates, even when the vendor's actual
+  // USD/EUR/etc. price never changed — comparing the original foreign
+  // amounts isolates a genuine price change from FX drift.
   const tolerancePct = org.priceVarianceTolerancePct != null ? Number(org.priceVarianceTolerancePct) : 0;
   let varianceNote: string | null = null;
   if (linkedPo) {
     const poLineById = new Map(linkedPo.lines.map((l) => [l.id, l]));
-    const typedComputed = computed as (typeof computed[number] & { purchaseOrderLineId?: string })[];
+    const typedComputed = computed as (typeof computed[number] & { purchaseOrderLineId?: string; rateFc?: number })[];
     const varianceDescriptions: string[] = [];
+    const compareFc = isForeign; // currency is guaranteed to match the PO's when linked — see currencyCode above
     for (const l of typedComputed) {
       const poLine = poLineById.get(l.purchaseOrderLineId!);
       if (!poLine) continue; // already validated above; unreachable in practice
-      const poRate = Number(poLine.rate);
-      const billRate = Number(l.rate);
-      const diffPct = poRate === 0 ? (billRate === 0 ? 0 : 100) : round2((Math.abs(billRate - poRate) / poRate) * 100);
+      const usePoFc = compareFc && poLine.rateFc != null && l.rateFc != null;
+      const poCompare = usePoFc ? Number(poLine.rateFc) : Number(poLine.rate);
+      const billCompare = usePoFc ? Number(l.rateFc) : Number(l.rate);
+      const unit = usePoFc ? `${currencyCode} ` : "₹";
+      const diffPct = poCompare === 0 ? (billCompare === 0 ? 0 : 100) : round2((Math.abs(billCompare - poCompare) / poCompare) * 100);
       if (diffPct > tolerancePct) {
-        varianceDescriptions.push(`${itemById.get(l.itemId)!.sku}: PO ₹${poRate.toFixed(2)} vs bill ₹${billRate.toFixed(2)} (${diffPct.toFixed(2)}%)`);
+        varianceDescriptions.push(`${itemById.get(l.itemId)!.sku}: PO ${unit}${poCompare.toFixed(2)} vs bill ${unit}${billCompare.toFixed(2)} (${diffPct.toFixed(2)}%)`);
       }
     }
     if (varianceDescriptions.length > 0) {

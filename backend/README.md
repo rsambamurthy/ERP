@@ -397,6 +397,13 @@ Null (the default) means every PO needs manual approval regardless of
 amount; once set, `POST /:id/submit` auto-approves anything strictly below
 it.
 
+**Foreign currency.** `currency`/`exchangeRate` on the order, `rateFc` per
+line — same INR-is-authoritative pattern as Purchase Bill (`rate` is
+always server-recomputed from `rateFc * exchangeRate`), so GRN needed zero
+changes. A PO-linked Purchase Bill has its currency *locked* to the PO's
+but keeps its own independent `exchangeRate`. Full writeup in
+ROADMAP.md's "Purchase/Sales Order Foreign Currency" section.
+
 **Billing a Purchase Order — now a 3-way match (PO → GRN → Bill).**
 `POST /purchase-bills` takes an optional `purchaseOrderId`. When present:
 the PO must belong to the org and be `APPROVED` (else 400);
@@ -580,6 +587,12 @@ fully invoiced.
 **New permission `sales.approve`**, deliberately excluded from
 `ACCOUNTANT`'s built-in set — same separation-of-duties reasoning as
 `purchase.approve`. `OWNER`/`ADMIN` get it automatically.
+
+**Foreign currency.** `currency`/`exchangeRate` on the order, `rateFc` per
+line — exact mirror of Purchase Order's own foreign-currency support
+above, including the currency-locked-but-exchange-rate-independent
+linkage into an SO-linked Sales Invoice. Full writeup in ROADMAP.md's
+"Purchase/Sales Order Foreign Currency" section.
 
 **Delivery Note is the real stock-out event — the exact mirror of Goods
 Receipt Note, but calling `consumeStock` instead of `receiveStock`.** Only

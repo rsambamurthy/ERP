@@ -50,10 +50,12 @@ function SalesInvoicesInner() {
   const isZeroRatedExport = isForeign && (exportType === "LUT" || exportType === "BOND");
   const hasLineTax = lines.some((l) => Number(l.taxRate || 0) > 0);
 
-  // Optional — raising this invoice against an approved Sales Order. Only
-  // ever offered for a domestic (INR) invoice: Sales Orders don't carry a
-  // currency/exchange-rate concept yet, so linking one to a foreign invoice
-  // isn't supported. See routes/salesInvoices.ts's salesOrderId handling.
+  // Optional — raising this invoice against an approved Sales Order. The
+  // invoice's currency is locked to whatever currency the SO was raised in
+  // (validated server-side too — see routes/salesInvoices.ts's salesOrderId
+  // handling); the exchange rate stays independently editable, since the
+  // invoice should use today's real market rate rather than whatever rate
+  // applied when the SO was approved.
   const [linkedSO, setLinkedSO] = useState<SalesOrder | null>(null);
   const [availableSOs, setAvailableSOs] = useState<SalesOrder[]>([]);
   const [soLoadError, setSoLoadError] = useState<string | null>(null);
@@ -157,8 +159,9 @@ function SalesInvoicesInner() {
   async function linkSO(so: SalesOrder) {
     setLinkedSO(so);
     setBusinessPartnerId(so.businessPartner.id);
-    setCurrency("INR");
+    setCurrency(so.currency);
     setSoLoadError(null);
+    const soForeign = so.currency !== "INR";
     try {
       const dnRes = await getDeliveryNotes({ salesOrderId: so.id });
       const soLineById = new Map(so.lines.map((l) => [l.id, l]));
@@ -173,8 +176,17 @@ function SalesInvoicesInner() {
       setLines(openLines.map(({ dl, remaining, soLine }) => ({
         itemId: dl.item.id,
         quantity: remaining,
+        // Delivery Note rate is always INR — a fine starting display value
+        // either way. For a foreign SO, rateFc defaults to the SO line's own
+        // agreed unit price in that currency; it self-corrects once the
+        // exchange-rate lookup below resolves, and stays freely editable if
+        // the actual invoiced price differs from the SO.
         rate: Number(dl.rate),
-        taxRate: Number(soLine!.taxRate),
+        rateFc: soForeign && soLine!.rateFc != null ? Number(soLine!.rateFc) : 0,
+        // Exports are zero-rated by default (see pickItem's note) — an SO
+        // raised in a foreign currency is an export, so default to 0% here
+        // too rather than the SO line's domestic-style tax rate.
+        taxRate: soForeign ? 0 : Number(soLine!.taxRate),
         discountType: null,
         discountValue: 0,
         deliveryNoteLineId: dl.id,
@@ -186,6 +198,7 @@ function SalesInvoicesInner() {
 
   function unlinkSO() {
     setLinkedSO(null);
+    setCurrency("INR"); setExchangeRate("1");
     setLines([emptyLine()]);
   }
 
@@ -384,7 +397,10 @@ function SalesInvoicesInner() {
                 >
                   <option value="">Not linked to a Sales Order</option>
                   {availableSOs.map((so) => (
-                    <option key={so.id} value={so.id}>{so.soNumber} — {so.businessPartner.name} (₹{Number(so.grandTotal).toFixed(2)})</option>
+                    <option key={so.id} value={so.id}>
+                      {so.soNumber} — {so.businessPartner.name} (₹{Number(so.grandTotal).toFixed(2)}
+                      {so.currency !== "INR" && so.grandTotalFc != null ? ` · ${currencySymbol(so.currency)}${Number(so.grandTotalFc).toFixed(2)}` : ""})
+                    </option>
                   ))}
                 </select>
               </div>
@@ -424,7 +440,7 @@ function SalesInvoicesInner() {
               <select className="ent-fc" value={currency} onChange={(e) => handleCurrencyChange(e.target.value)} disabled={!!linkedSO}>
                 {SUPPORTED_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.name}</option>)}
               </select>
-              {linkedSO && <span style={{ fontSize: 11, color: "var(--color-muted)" }}>Sales Orders are INR-only for now.</span>}
+              {linkedSO && <span style={{ fontSize: 11, color: "var(--color-muted)" }}>Locked to the linked Sales Order's currency.</span>}
             </div>
             {isForeign && (
               <div className="ent-fg">

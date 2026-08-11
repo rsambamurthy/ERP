@@ -15,6 +15,13 @@ export interface SalesOrderPdfData {
   subtotal: number;
   taxTotal: number;
   grandTotal: number;
+  // Foreign-currency SOs only — see the schema.prisma comment on
+  // SalesOrder.currency. currency stays "INR" / exchangeRate stays 1 /
+  // grandTotalFc stays null for every domestic SO, unchanged from before
+  // this feature existed.
+  currency: string;
+  exchangeRate: number;
+  grandTotalFc: number | null;
   organization: {
     name: string;
     registeredOfficeAddress: string | null;
@@ -87,6 +94,7 @@ export function buildSalesOrderPdf(data: SalesOrderPdfData): Promise<Buffer> {
   const pageLeft = doc.page.margins.left;
   const pageRight = doc.page.width - doc.page.margins.right;
   const pageWidth = pageRight - pageLeft;
+  const isForeign = data.currency !== "INR";
 
   // ── Header: company identity ──────────────────────────────────────────
   doc.fontSize(16).font("Helvetica-Bold").text(data.organization.name, pageLeft, doc.y);
@@ -112,9 +120,12 @@ export function buildSalesOrderPdf(data: SalesOrderPdfData): Promise<Buffer> {
   if (data.expectedDeliveryDate) {
     doc.text(`Expected Delivery:  ${data.expectedDeliveryDate.toLocaleDateString("en-IN")}`, metaX, doc.y, { width: metaWidth, align: "right" });
   }
+  if (isForeign) {
+    doc.text(`Currency:  ${data.currency} @ ${data.exchangeRate.toFixed(4)}`, metaX, doc.y, { width: metaWidth, align: "right" });
+  }
   doc.text(`Status:  ${STATUS_LABELS[data.status] ?? data.status}`, metaX, doc.y, { width: metaWidth, align: "right" });
 
-  doc.y = Math.max(doc.y, titleY + 60);
+  doc.y = Math.max(doc.y, titleY + 72);
   doc.moveDown(0.8);
 
   // ── Customer / Issuing-branch boxes, side by side ───────────────────
@@ -218,7 +229,10 @@ export function buildSalesOrderPdf(data: SalesOrderPdfData): Promise<Buffer> {
   totalLine("Tax", money(data.taxTotal));
   doc.moveTo(totalsX, doc.y + 2).lineTo(pageRight, doc.y + 2).strokeColor("#000000").stroke();
   doc.moveDown(0.4);
-  totalLine("Grand Total", money(data.grandTotal), true);
+  totalLine("Grand Total", `₹ ${money(data.grandTotal)}`, true);
+  if (isForeign && data.grandTotalFc !== null) {
+    totalLine(`Equiv. (${data.currency})`, money(data.grandTotalFc));
+  }
 
   doc.moveDown(1.5);
 

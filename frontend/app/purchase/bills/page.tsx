@@ -55,10 +55,12 @@ function PurchaseBillsInner() {
   const [exchangeRate, setExchangeRate] = useState("1");
   const isForeign = currency !== "INR";
 
-  // Optional — raising this bill against an approved Purchase Order. Only
-  // ever offered for a domestic (INR) bill: Purchase Orders don't carry a
-  // currency/exchange-rate concept yet, so linking one to a foreign bill
-  // isn't supported. See routes/purchaseBills.ts's purchaseOrderId handling.
+  // Optional — raising this bill against an approved Purchase Order. The
+  // bill's currency is locked to whatever currency the PO was raised in
+  // (validated server-side too — see routes/purchaseBills.ts's
+  // purchaseOrderId handling); the exchange rate stays independently
+  // editable, since the bill should use today's real market rate rather
+  // than whatever rate applied when the PO was approved.
   const [linkedPO, setLinkedPO] = useState<PurchaseOrder | null>(null);
   const [availablePOs, setAvailablePOs] = useState<PurchaseOrder[]>([]);
   const [poLoadError, setPoLoadError] = useState<string | null>(null);
@@ -166,8 +168,9 @@ function PurchaseBillsInner() {
   async function linkPO(po: PurchaseOrder) {
     setLinkedPO(po);
     setBusinessPartnerId(po.businessPartner.id);
-    setCurrency("INR");
+    setCurrency(po.currency);
     setPoLoadError(null);
+    const poForeign = po.currency !== "INR";
     try {
       const grnRes = await getGoodsReceiptNotes({ purchaseOrderId: po.id });
       const poLineById = new Map(po.lines.map((l) => [l.id, l]));
@@ -182,8 +185,16 @@ function PurchaseBillsInner() {
       setLines(openLines.map(({ gl, remaining, poLine }) => ({
         itemId: gl.item.id,
         quantity: remaining,
+        // GRN unitCost is always INR (received at the PO's rate on that
+        // date) — a fine starting display value either way. For a foreign
+        // PO, rateFc defaults to the PO line's own agreed unit price in
+        // that currency; it self-corrects to the bill's actual rate once
+        // the exchange-rate lookup below resolves, and stays freely
+        // editable if the vendor's invoiced price differs from the PO.
         rate: Number(gl.unitCost),
+        rateFc: poForeign && poLine!.rateFc != null ? Number(poLine!.rateFc) : 0,
         taxRate: Number(poLine!.taxRate),
+        customsDutyRate: 0,
         goodsReceiptNoteLineId: gl.id,
       })));
     } catch (err) {
@@ -193,6 +204,7 @@ function PurchaseBillsInner() {
 
   function unlinkPO() {
     setLinkedPO(null);
+    setCurrency("INR"); setExchangeRate("1");
     setLines([emptyLine()]);
   }
 
@@ -376,7 +388,10 @@ function PurchaseBillsInner() {
                 >
                   <option value="">Not linked to a Purchase Order</option>
                   {availablePOs.map((po) => (
-                    <option key={po.id} value={po.id}>{po.poNumber} — {po.businessPartner.name} (₹{Number(po.grandTotal).toFixed(2)})</option>
+                    <option key={po.id} value={po.id}>
+                      {po.poNumber} — {po.businessPartner.name} (₹{Number(po.grandTotal).toFixed(2)}
+                      {po.currency !== "INR" && po.grandTotalFc != null ? ` · ${currencySymbol(po.currency)}${Number(po.grandTotalFc).toFixed(2)}` : ""})
+                    </option>
                   ))}
                 </select>
               </div>
@@ -416,7 +431,7 @@ function PurchaseBillsInner() {
               <select className="ent-fc" value={currency} onChange={(e) => setCurrency(e.target.value)} disabled={!!linkedPO}>
                 {SUPPORTED_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.name}</option>)}
               </select>
-              {linkedPO && <span style={{ fontSize: 11, color: "var(--color-muted)" }}>Purchase Orders are INR-only for now.</span>}
+              {linkedPO && <span style={{ fontSize: 11, color: "var(--color-muted)" }}>Locked to the linked Purchase Order's currency.</span>}
             </div>
             {isForeign && (
               <div className="ent-fg">

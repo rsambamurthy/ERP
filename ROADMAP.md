@@ -606,18 +606,13 @@ every prior bill against the same PO line), so a PO can be split across
 several partial deliveries/bills without ever over-billing. Every line's
 `billedQuantity` rolls forward in the same transaction as the bill post,
 and the PO auto-closes the moment every line is fully billed. The Purchase
-Bill create form's "From Purchase Order" picker (INR bills only — see
-below) pre-fills the vendor and every still-open line, quantity capped to
-what's remaining, so raising a bill against an order is a couple of clicks
-rather than re-keying it.
+Bill create form's "From Purchase Order" picker pre-fills the vendor and
+every still-open line, quantity capped to what's remaining, so raising a
+bill against an order is a couple of clicks rather than re-keying it. See
+"Purchase/Sales Order Foreign Currency" below for how this behaves when
+the linked PO is in a foreign currency.
 
 **Scope decisions, deliberate:**
-- **PO is INR-only.** No currency/exchange-rate concept on `PurchaseOrder`
-  yet, unlike Purchase Bill's foreign-currency support — an import PO would
-  need that carried through to the eventual bill, which is real scope this
-  pass didn't take on. The "From Purchase Order" picker on Purchase Bill is
-  hidden once the bill's currency is switched to foreign, and linking a PO
-  forces the bill back to INR.
 - **No GST account split (CGST/SGST/IGST) on PurchaseOrder** — since a PO
   never posts to the journal, only an aggregate `taxTotal`/`grandTotal` is
   computed; the real CGST/SGST/IGST split happens the normal way once it
@@ -878,14 +873,13 @@ natural follow-up if/when needed, mirroring the purchase-side design
 exactly.
 
 **Scope decision, deliberate, matching Purchase Order's own simplification:**
-`SalesOrder`/`SalesOrderLine` stay INR-only with an aggregate tax rate per
-line — no discount concept, no foreign-currency/export classification, no
-GST CGST/SGST/IGST split stored on the order itself. A Sales Invoice
-raised against an SO can still carry its own discount (an invoice-time
-pricing decision, independent of the order) and computes its own full GST
-split as always; only currency is disabled when SO-linked (Sales Orders
-don't carry a currency/exchange-rate concept yet, mirroring why a Purchase
-Order can't be linked to a foreign Purchase Bill).
+`SalesOrder`/`SalesOrderLine` carry an aggregate tax rate per line — no
+discount concept, no GST CGST/SGST/IGST split stored on the order itself
+(that's still computed the normal way once it becomes a Sales Invoice). A
+Sales Invoice raised against an SO can still carry its own discount (an
+invoice-time pricing decision, independent of the order) and computes its
+own full GST split as always. See "Purchase/Sales Order Foreign Currency"
+below for currency handling, which SO/PO do now support.
 
 Requires `db/migration_025_sales_orders.sql`. No new GL accounts and no
 `prisma db seed` step — a Sales Order never posts to the journal, and a
@@ -973,6 +967,67 @@ next to Company Master): create form, an inline-editable list (rate only
 recreating), and the shared bulk-upload buttons/panel.
 
 Requires `db/migration_026_currency_master.sql`. No new GL accounts, no
+`prisma db seed` step, no new dependencies.
+
+## Purchase/Sales Order Foreign Currency (built)
+
+Extends the foreign-currency support Purchase Bill/Sales Invoice already
+had (see customs duty and LUT/Bond sections above) one step further back,
+to Purchase Order and Sales Order — closing the gap where an import/export
+deal had to start life as an INR-only PO/SO and only become foreign the
+moment it was billed/invoiced.
+
+**Same INR-is-authoritative pattern as Purchase Bill/Sales Invoice.**
+`PurchaseOrder`/`SalesOrder` gained `currency` (default `"INR"`) and
+`exchangeRate` (default `1`); each line gained `rateFc`. On a foreign
+order, `rateFc` is what the user actually enters per line — `rate` (INR)
+is always server-recomputed as `round2(rateFc * exchangeRate)` and stays
+the one figure everything downstream reads: approval-threshold
+comparisons, `GoodsReceiptNote.unitCost`, `DeliveryNote.rate`, PDF totals.
+**This is what makes the feature a pure additive slice — zero changes to
+Goods Receipt Note or Delivery Note routes were needed**, since neither
+ever reads `rateFc`, only the already-INR `rate`/`unitCost`. `grandTotalFc`
+is stored alongside `grandTotal` (INR) for display, same convention as
+Purchase Bill/Sales Invoice.
+
+**Currency-code-locked, exchange-rate-independent linkage.** When a
+Purchase Bill links to a PO (or a Sales Invoice links to an SO), the
+*currency code* is derived and enforced from the PO/SO — `POST
+/purchase-bills` and `POST /sales-invoices` both 400 if the request's
+`currency` doesn't match the linked order's. `exchangeRate`, though, is
+deliberately **not** forced from the PO/SO: the Bill/Invoice supplies its
+own current market rate at billing/invoicing time. Forcing the PO's
+(possibly weeks-stale) approval-time rate would misstate what actually
+posts to Trade Payables/Receivables today. The frontend mirrors this:
+linking a PO/SO locks the Currency dropdown to the order's currency but
+leaves Exchange Rate freely editable, pre-filled from Currency Master via
+the same lookup the ad-hoc form already used.
+
+**FX-aware price-variance comparison (Purchase Bill 3-way match only —
+Sales Invoice has no variance check, per its own earlier scope decision
+above).** When a PO-linked bill shares a currency with its PO (always true
+when linked, since currency is locked), the price-variance check compares
+`rateFc`-to-`rateFc`, not `rate`-to-`rate` in INR. Comparing INR figures
+would flag a bill for approval purely because the rupee moved between the
+PO date and the bill date, even when the vendor's actual foreign-currency
+price never changed — comparing the original foreign amounts isolates a
+genuine price change from FX drift. Falls back to the INR comparison for a
+domestic bill (nothing to isolate) or if either side is missing `rateFc`.
+
+**Frontend line pre-fill on link.** `app/purchase/bills/page.tsx`'s
+`linkPO`/`app/sales/invoices/page.tsx`'s `linkSO` still pre-fill lines from
+Goods Receipt Note/Delivery Note (the 3-way-match source of truth for
+what's billable), but now also default each line's `rateFc` to the linked
+PO/SO line's own `rateFc` — the vendor's/customer's originally agreed
+foreign-currency unit price — since GRN/DN themselves only ever carry the
+INR `unitCost`/`rate`, never `rateFc` (by the additive-slice design
+above). Freely editable if the actual bill/invoice price differs.
+
+**PDF.** `lib/purchaseOrderPdf.ts`/`lib/salesOrderPdf.ts` gained a
+`Currency: CCY @ rate` meta line and an `Equiv. (CCY)` totals line, shown
+only when foreign — same treatment `lib/salesInvoicePdf.ts` already had.
+
+Requires `db/migration_027_po_so_currency.sql`. No new GL accounts, no
 `prisma db seed` step, no new dependencies.
 
 ## From the earlier "what's next" review
