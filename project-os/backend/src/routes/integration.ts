@@ -135,6 +135,18 @@ router.get("/synced-suppliers", async (req, res) => {
   res.json({ data: suppliers });
 });
 
+// GET /integration/synced-customers — same shape as /synced-suppliers,
+// filtered to bpType=CUSTOMER. Added for the Project creation form's
+// Customer picker; there was previously no read route for customers at
+// all, only suppliers (Procurement needed suppliers first).
+router.get("/synced-customers", async (req, res) => {
+  const customers = await prisma.syncedBusinessPartner.findMany({
+    where: { organizationId: req.user!.organizationId, bpType: "CUSTOMER" },
+    orderBy: { name: "asc" },
+  });
+  res.json({ data: customers });
+});
+
 router.post("/synced-items", requireRole("SUPER_ADMIN"), async (req, res) => {
   const { sku, name, uom, hsnCode, purchaseRate } = req.body ?? {};
   if (!sku || !name || !uom) return res.status(400).json({ message: "sku, name and uom are required." });

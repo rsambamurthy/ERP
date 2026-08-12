@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Project OS's own small component-class system on top of Tailwind --
+   deliberately not a byte-for-byte copy of SmartERP frontend's ent- / sa-
+   classes (that system is large and specific to its own page inventory);
+   this is an original, smaller equivalent covering the same structural
+   roles (shell, page header, toolbar, table, form grid, badges, buttons)
+   so pages stay easy to read without repeating long Tailwind strings
+   everywhere. See project-os/frontend/README.md. */
+
+@layer components {
+  /* App shell */
+  .pos-shell {
+    @apply min-h-screen bg-slate-50;
+  }
+  .pos-header {
+    @apply fixed top-0 left-0 right-0 h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 z-20;
+  }
+  .pos-sidebar {
+    @apply fixed top-14 left-0 bottom-0 w-56 bg-white border-r border-slate-200 overflow-y-auto py-3 z-10;
+  }
+  .pos-main {
+    @apply pt-14 pl-56 min-h-screen;
+  }
+  .pos-main-inner {
+    @apply p-6 max-w-6xl;
+  }
+
+  /* Nav */
+  .pos-nav-group-label {
+    @apply px-4 pt-4 pb-1 text-xs font-semibold uppercase tracking-wide text-slate-400;
+  }
+  .pos-nav-item {
+    @apply block px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 hover:text-slate-900 rounded-none;
+  }
+  .pos-nav-item-active {
+    @apply bg-brand-50 text-brand-700 font-medium border-r-2 border-brand-600;
+  }
+
+  /* Page structure */
+  .pos-page-hdr {
+    @apply flex items-center justify-between mb-4;
+  }
+  .pos-page-title {
+    @apply text-xl font-semibold text-slate-900;
+  }
+  .pos-page-sub {
+    @apply text-sm text-slate-500 mt-0.5;
+  }
+  .pos-toolbar {
+    @apply flex items-center gap-2 flex-wrap;
+  }
+  .pos-section {
+    @apply bg-white border border-slate-200 rounded-lg p-4 mb-4;
+  }
+  .pos-section-title {
+    @apply text-sm font-semibold text-slate-700 mb-3;
+  }
+
+  /* Buttons */
+  .pos-btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .pos-btn-primary {
+    @apply pos-btn bg-brand-600 text-white hover:bg-brand-700;
+  }
+  .pos-btn-secondary {
+    @apply pos-btn bg-white text-slate-700 border border-slate-300 hover:bg-slate-50;
+  }
+  .pos-btn-danger {
+    @apply pos-btn bg-red-600 text-white hover:bg-red-700;
+  }
+  .pos-link-btn {
+    @apply text-brand-600 hover:text-brand-700 text-sm font-medium;
+  }
+
+  /* Forms */
+  .pos-form-grid {
+    @apply grid grid-cols-1 sm:grid-cols-2 gap-4;
+  }
+  .pos-field {
+    @apply flex flex-col gap-1;
+  }
+  .pos-label {
+    @apply text-xs font-medium text-slate-600;
+  }
+  .pos-input {
+    @apply border border-slate-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 disabled:bg-slate-100;
+  }
+  .pos-select {
+    @apply pos-input;
+  }
+  .pos-textarea {
+    @apply pos-input resize-y;
+  }
+
+  /* Table */
+  .pos-table-wrap {
+    @apply overflow-x-auto border border-slate-200 rounded-lg;
+  }
+  .pos-table {
+    @apply w-full text-sm border-collapse;
+  }
+  .pos-table th {
+    @apply text-left font-semibold text-slate-500 text-xs uppercase tracking-wide px-3 py-2 bg-slate-50 border-b border-slate-200;
+  }
+  .pos-table td {
+    @apply px-3 py-2 border-b border-slate-100 text-slate-700;
+  }
+  .pos-table tr:hover td {
+    @apply bg-slate-50;
+  }
+  .pos-table-clickable tr {
+    @apply cursor-pointer;
+  }
+
+  /* Feedback */
+  .pos-error {
+    @apply text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2;
+  }
+  .pos-warning {
+    @apply text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2;
+  }
+  .pos-empty {
+    @apply text-sm text-slate-400 text-center py-8;
+  }
+
+  /* Badges */
+  .pos-badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+}

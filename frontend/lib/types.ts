@@ -1119,6 +1119,19 @@ export interface CustomRole {
   updatedAt: string;
 }
 
+// ── Integration Connection (Project OS / external system API key) ──────────
+// Backed by routes/integrationConnections.ts. Only one live key per org —
+// GET never returns the raw key (only its last 4 chars), same "shown once"
+// convention as the invite-link/token pattern above.
+export interface IntegrationConnectionStatus {
+  id: string;
+  label: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  apiKeyLast4: string;
+}
+
 // ── Access control (menu visibility by role) ────────────────────────────────
 
 /** role -> itemId -> enabled. Sparse — only overrides, never the full catalogue. */

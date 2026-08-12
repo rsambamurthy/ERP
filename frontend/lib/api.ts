@@ -24,6 +24,7 @@ import type {
   DomainType,
   Gstr1Report,
   Gstr3bReport,
+  IntegrationConnectionStatus,
   Item,
   ScheduleIIIBalanceSheet,
   JournalEntry,
@@ -1080,4 +1081,24 @@ export function lookupCurrencyRate(currencyCode: string, date: string) {
   return request<{ data: { rate: string; effectiveFrom: string } | null }>(
     `/currency-rates/lookup?currencyCode=${encodeURIComponent(currencyCode)}&date=${encodeURIComponent(date)}`
   );
+}
+
+// ── Integration Connections (Project OS API key) ────────────────────────────
+// See routes/integrationConnections.ts. OWNER/ADMIN only. The raw API key is
+// only ever present in generateIntegrationConnection()'s response — copy it
+// immediately, it can't be retrieved again afterwards.
+
+export function getIntegrationConnection() {
+  return request<{ data: IntegrationConnectionStatus | null }>("/integration/connections");
+}
+
+export function generateIntegrationConnection(label?: string) {
+  return request<{ data: { id: string; apiKey: string; label: string | null; createdAt: string } }>(
+    "/integration/connections",
+    { method: "POST", body: JSON.stringify({ label }) }
+  );
+}
+
+export function revokeIntegrationConnection() {
+  return request<{ data: { revoked: true } }>("/integration/connections", { method: "DELETE" });
 }

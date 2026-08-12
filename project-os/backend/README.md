@@ -196,6 +196,35 @@ Estimate PUT, full BOQ/Budget error paths (invalid file, missing
 category, re-approval attempts), and Procurement's error paths have not
 been exercised live yet.
 
+**SmartERP integration, live end to end** against a real deployed
+SmartERP instance (Railway) and a real organization (SH Enterprises):
+generated an API key on the SmartERP side (`POST /integration/connections`),
+connected Project OS to it (`POST /integration/connection`), ran
+`POST /integration/sync` (pulled 1 real vendor + 2 real items), created a
+Project and a Purchase Order against that real synced vendor/item,
+approved it — confirmed `smartErpSyncStatus: "SYNCED"` with a real
+`smartErpExternalId`, and independently verified on SmartERP's own
+`GET /purchase-orders/:id` that the shadow PO exists with
+`source: "PROJECT_OS"`, the right branch (auto-resolved to HQ), vendor,
+item, and amount. Then created a Stock Location and a Receipt against
+that PO — confirmed the shadow GRN push (`smartErpSyncStatus: "SYNCED"`)
+and independently verified on SmartERP's `GET /goods-receipt-notes/:id`
+and `GET /items` that the GRN exists with `source: "PROJECT_OS"` and the
+item's stock-on-hand actually moved.
+
+One real bug was caught and fixed during this pass, not just theoretical
+review: SmartERP's `/integration/connections` (user-JWT, key management)
+and `/integration/*` (service-key, sync/push) routers were both mounted
+at the same `/integration` prefix. Since `integrationConnections.ts`
+applies its `authenticate` middleware via a path-less `router.use(...)`,
+it intercepted *every* request under `/integration/*` — including the
+sync job's `/integration/business-partners` calls — before Express ever
+reached the service-key router, rejecting them with a Bearer-token error
+instead of ever checking `X-Api-Key`. Fixed by mounting
+`integrationConnections.ts` at the more specific `/integration/connections`
+path instead of the shared `/integration` prefix; see the comment in
+SmartERP's `backend/src/index.ts`.
+
 ## Local setup
 
 ```

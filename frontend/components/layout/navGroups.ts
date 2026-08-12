@@ -57,6 +57,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: "branches", label: "Branches", path: "/settings/branches", dot: "#0284c7", roles: ["OWNER", "ADMIN"], permission: "branches.manage" },
       { id: "team", label: "Team", path: "/settings/team", dot: "#a855f7", roles: ["OWNER", "ADMIN"] },
       { id: "access_control", label: "Access Control", path: "/settings/access-control", dot: "#dc2626", roles: ["OWNER", "ADMIN"] },
+      { id: "integration", label: "Integration", path: "/settings/integration", dot: "#059669", roles: ["OWNER", "ADMIN"] },
     ],
   },
   {
