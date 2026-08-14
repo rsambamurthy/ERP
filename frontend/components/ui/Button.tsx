@@ -13,19 +13,10 @@ export default function Button({
   disabled,
   ...rest
 }: Props) {
-  const base =
-    "rounded-xl px-5 py-3 text-sm font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed";
-  const styles =
-    variant === "primary"
-      ? "bg-terracotta-500 text-white hover:bg-terracotta-600"
-      : "bg-white text-navy-800 border border-cream-200 hover:bg-cream-50";
+  const styles = variant === "primary" ? "auth-btn" : "auth-btn auth-btn-secondary";
 
   return (
-    <button
-      {...rest}
-      disabled={disabled || loading}
-      className={`${base} ${styles} ${className}`}
-    >
+    <button {...rest} disabled={disabled || loading} className={`${styles} ${className}`.trim()}>
       {loading ? "Working…" : children}
     </button>
   );

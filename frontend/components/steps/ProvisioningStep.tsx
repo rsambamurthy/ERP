@@ -1,6 +1,6 @@
 import type { OnboardingStep } from "@/lib/types";
 
-const LABELS: Record<OnboardingStep, string> = {
+export const PROVISION_LABELS: Record<OnboardingStep, string> = {
   SIGNUP: "Setting up your account…",
   VERIFIED: "Account verified…",
   DOMAIN_SELECTED: "Seeding your chart of accounts…",
@@ -15,15 +15,14 @@ export default function ProvisioningStep({
   error: string | null;
 }) {
   return (
-    <div className="flex flex-col items-center gap-4 text-center">
-      <h2 className="text-lg font-semibold text-navy-800">
-        Auto-provisioning workspace
-      </h2>
+    <div className="flex flex-col items-center gap-3 text-center">
       {!error && (
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-terracotta-500 border-t-transparent" />
+        <div
+          className="h-8 w-8 animate-spin rounded-full"
+          style={{ border: "2px solid var(--theme-accent)", borderTopColor: "transparent" }}
+        />
       )}
-      <p className="text-sm text-terracotta-700">{LABELS[step]}</p>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="auth-err">{error}</p>}
     </div>
   );
 }

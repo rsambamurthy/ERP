@@ -1,30 +1,45 @@
 # SmartERP Design System
 
-SmartAppt Gold actually uses **two distinct visual systems** — verified from
-its own source (`frontend/src/pages/LoginPage.tsx` and `frontend/src/index.css`
-on the `feature/accounting-v2` branch), not guessed. Match each exactly for
-its context; don't blend them.
+One visual system across the whole app — public auth pages (login/register/
+forgot-password/accept-invite) and the authenticated app (dashboard,
+accounting, everything behind login) share the same navy/blue enterprise
+tokens. The cream/terracotta identity that public pages used to have has
+been retired.
 
-## 1. Public auth pages (login/register) — cream/terracotta
+## Tokens (`app/globals.css` `:root`)
 
-Exact values from `LoginPage.tsx`'s `T` theme object:
+- Page background `--color-bg` #f1f5f9
+- Header/heading `--theme-primary` #0c2d72 (navy)
+- Accent `--theme-accent` #1a6bcc (blue), `--theme-accent-light` #e0ecff
+- Surface `--color-surface` #ffffff, border `--color-border` #e2e8f0, muted text `--color-muted` #64748b, body text `--color-text` #0f172a
 
-- `cream-50` #FDF8F5 (input bg) · `cream-100` #F5F0E5 (page bg) · `cream-200` #E8D9C0 (borders) · `cream-300` #DDD0C8 (input borders)
-- `terracotta-500` #C4572B (primary) · `terracotta-600` #9C3F1E (hover/dark) · `terracotta-700` #8A6050 (labels)
-- Card: 360px wide, 20px radius, `0 8px 32px rgba(0,0,0,0.13)` shadow, cream border, tall logo header band, white body, cream "Powered by" footer strip.
+## Public auth pages (login/register/forgot-password/accept-invite)
 
-Components: `components/ui/AuthCard.tsx`, `Input.tsx`, `Button.tsx`, `Logo.tsx`, `AccordionStep.tsx`. Used by `/register` and `/login`.
+Plain CSS classes in `globals.css` (`.auth-*`), not Tailwind utilities —
+same convention as the `sa-`/`ent-` system below.
 
-`/register` is a single accordion inside one `AuthCard`: five `AccordionStep` panels (Sign up, Verify, Domain(s), Details, Workspace) gate sequentially — only the current step is expanded/interactive, completed steps collapse with a checkmark, future steps stay locked and collapsed. `StepIndicator.tsx` is no longer used (superseded by the accordion's own step badges) but the file is still present in the repo.
+- `.auth-page` — full-height centered wrapper, `--color-bg` background.
+- `.auth-card` (+ `.auth-card-hdr`/`.auth-card-body`/`.auth-card-ftr`) — the branded card: navy header band with logo/wordmark, white body, "Secure & Private" footer strip. Width is per-page via a prop (`AuthCard`'s `width`, default 420) — Login/Forgot Password/Accept-invite stay a single-column form width; Register uses 720 for its wide accordion.
+- `.auth-h2`/`.auth-p`/`.auth-intro`/`.auth-muted` — heading/body text.
+- `.auth-fg`/`.auth-fl`/`.auth-fc`/`.auth-pin` — form field wrapper/label/control/PIN input.
+- `.auth-fieldset`/`.auth-legend` — grouped fields (Register's Trading/Manufacturing sections).
+- `.auth-check`/`.auth-check.selected` — selectable option cards (Register's domain picker).
+- `.auth-btn`/`.auth-btn-secondary`, `.auth-link` — buttons and inline links.
+- `.auth-err`/`.auth-hint` — error and dev-mode OTP callouts.
 
-## 2. Authenticated app (dashboard, accounting, everything behind login) — navy/blue enterprise
+Components: `components/ui/AuthCard.tsx`, `Input.tsx`, `Button.tsx`, `Logo.tsx`, `AccordionStep.tsx`.
+
+`/register` is a single wide accordion inside one `AuthCard`: five `AccordionStep` panels (Sign up, Verify, Select business domain(s), Details, Workspace), each with an icon chip (`components/steps/stepIcons.tsx`), title, and a one-line status subtitle. Steps gate sequentially — only the current step is expanded/interactive (`.acc-step.active`), completed steps collapse with a checkmark (`.acc-step.complete`), future steps stay locked and dimmed (`.acc-step.locked`). `StepIndicator.tsx` is unused (superseded by the accordion's own step badges) but the file is still present in the repo.
+
+The root URL (`/`) redirects straight to `/login` — there's no splash/landing page anymore.
+
+## Authenticated app (dashboard, accounting, everything behind login)
 
 This is SmartAppt's actual `sa-`/`ent-` system, ported wholesale from
 `frontend/src/index.css` into `app/globals.css` (same class names, only
 rebranded where it says "SmartAppt"). Do not reinterpret this in Tailwind —
 use the classes directly.
 
-- Page background `--color-bg` #f1f5f9, header `--theme-primary` #0c2d72 (navy), accent `--theme-accent` #1a6bcc (blue), accent-light #e0ecff.
 - Shell: `sa-shell` > `sa-header` (sticky navy bar, `sa-logo`) + `sa-body` > `sa-sidebar` (`sa-mg`/`sa-mg-h`/`sa-mi` accordion groups) + `sa-main`.
 - Page content: `ent-page-hdr` (title+subtitle), `ent-toolbar` (search/filter/add-button row), `ent-page-table` (list views), `ent-section`/`ent-form-grid`/`ent-fg`/`ent-fl`/`ent-fc` (forms), `ent-table` (dense inline tables, e.g. journal entry lines), `badge`/`badge-*` (status pills), `ent-tabs`/`ent-tab` (tab bars).
 
@@ -32,9 +47,4 @@ Component: `components/layout/AppShell.tsx` (mirrors SmartAppt's `Layout.tsx` We
 
 ## Rule going forward
 
-New public/auth screens → system 1 (Tailwind cream/terracotta classes).
-New authenticated app screens → system 2 (`sa-`/`ent-` CSS classes from
-`globals.css`, plain className strings, not Tailwind utilities). If a new
-`ent-*`/`sa-*` pattern is needed that SmartAppt has but isn't ported yet,
-pull it from the same `index.css` rather than inventing a new Tailwind
-equivalent.
+Everything — public or authenticated — pulls from the same `--theme-primary`/`--theme-accent`/`--color-bg` tokens via plain CSS classes in `globals.css` (`.auth-*` for public pages, `sa-`/`ent-` for the authenticated app), not Tailwind utility color classes. `tailwind.config.ts` still defines the old `cream`/`terracotta`/`brand` ramps but nothing should reference them going forward — they're left in place only in case something outside this doc's scope still points at them.

@@ -32,10 +32,6 @@ export default function SignUpStep({ loading, error, onSubmit }: Props) {
         onSubmit(form);
       }}
     >
-      <h2 className="text-lg font-semibold text-navy-800">Sign up</h2>
-      <p className="text-sm text-terracotta-700">
-        Email, phone, business name — the basics to get your account started.
-      </p>
       <Input
         label="Business name"
         required
@@ -70,7 +66,7 @@ export default function SignUpStep({ loading, error, onSubmit }: Props) {
         value={form.password}
         onChange={(e) => update("password", e.target.value)}
       />
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="auth-err">{error}</p>}
       <Button type="submit" loading={loading}>
         Continue
       </Button>

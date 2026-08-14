@@ -8,7 +8,8 @@ import SignUpStep from "@/components/steps/SignUpStep";
 import VerifyStep from "@/components/steps/VerifyStep";
 import DomainSelectStep from "@/components/steps/DomainSelectStep";
 import DomainDetailsStep from "@/components/steps/DomainDetailsStep";
-import ProvisioningStep from "@/components/steps/ProvisioningStep";
+import ProvisioningStep, { PROVISION_LABELS } from "@/components/steps/ProvisioningStep";
+import { SignUpIcon, VerifyIcon, DomainIcon, DetailsIcon, WorkspaceIcon } from "@/components/steps/stepIcons";
 import {
   ApiError,
   getOnboardingStatus,
@@ -35,6 +36,7 @@ export default function RegisterPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [organizationId, setOrganizationId] = useState<string | null>(null);
+  const [businessName, setBusinessName] = useState<string>("");
   const [contact, setContact] = useState<string>("");
   const [ownerName, setOwnerName] = useState<string>("");
   const [devOtp, setDevOtp] = useState<string | null>(null);
@@ -47,6 +49,7 @@ export default function RegisterPage() {
     try {
       const res = await registerUser(payload);
       setOrganizationId(res.organizationId);
+      setBusinessName(payload.businessName);
       setContact(payload.email || payload.phone);
       setOwnerName(payload.name);
       setDevOtp(res.devOtp ?? null);
@@ -122,14 +125,32 @@ export default function RegisterPage() {
     return "locked";
   }
 
+  function subtitleFor(step: WizardStep): string {
+    switch (step) {
+      case 1:
+        return wizardStep > 1 ? `${businessName} — ${contact}` : "Business name, contact, and password";
+      case 2:
+        return wizardStep > 2 ? "OTP confirmed" : `Enter the OTP sent to ${contact || "your phone or email"}`;
+      case 3:
+        return wizardStep > 3
+          ? domains.join(", ")
+          : "Pick one or both — Trading and Manufacturing";
+      case 4:
+        return wizardStep > 4 ? "Domain setup submitted" : "GSTIN and domain-specific info";
+      case 5:
+        return wizardStep === 5 ? PROVISION_LABELS[provisionStatus] : "Auto-provisioning your account";
+    }
+  }
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-6 px-4 py-12">
-      <AuthCard>
-        <div className="flex flex-col">
-          <AccordionStep index={1} title="Sign up" status={statusFor(1)}>
+    <main className="auth-page">
+      <AuthCard width={720}>
+        <p className="auth-intro">Create your workspace in a few steps.</p>
+        <div>
+          <AccordionStep icon={<SignUpIcon />} title="Sign up" subtitle={subtitleFor(1)} status={statusFor(1)}>
             <SignUpStep loading={loading} error={error} onSubmit={handleSignUp} />
           </AccordionStep>
-          <AccordionStep index={2} title="Verify" status={statusFor(2)}>
+          <AccordionStep icon={<VerifyIcon />} title="Verify" subtitle={subtitleFor(2)} status={statusFor(2)}>
             <VerifyStep
               destination={contact}
               devOtp={devOtp}
@@ -138,7 +159,7 @@ export default function RegisterPage() {
               onSubmit={handleVerify}
             />
           </AccordionStep>
-          <AccordionStep index={3} title="Domain(s)" status={statusFor(3)}>
+          <AccordionStep icon={<DomainIcon />} title="Select business domain(s)" subtitle={subtitleFor(3)} status={statusFor(3)}>
             <DomainSelectStep
               selected={domains}
               onToggle={toggleDomain}
@@ -146,7 +167,7 @@ export default function RegisterPage() {
               error={error}
             />
           </AccordionStep>
-          <AccordionStep index={4} title="Details" status={statusFor(4)}>
+          <AccordionStep icon={<DetailsIcon />} title="Details" subtitle={subtitleFor(4)} status={statusFor(4)}>
             <DomainDetailsStep
               domains={domains}
               loading={loading}
@@ -154,7 +175,7 @@ export default function RegisterPage() {
               onSubmit={handleDomainDetails}
             />
           </AccordionStep>
-          <AccordionStep index={5} title="Workspace" status={statusFor(5)}>
+          <AccordionStep icon={<WorkspaceIcon />} title="Workspace" subtitle={subtitleFor(5)} status={statusFor(5)}>
             <ProvisioningStep step={provisionStatus} error={error} />
           </AccordionStep>
         </div>

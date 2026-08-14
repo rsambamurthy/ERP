@@ -41,7 +41,7 @@ function AcceptInviteForm() {
   if (!token) {
     return (
       <AuthCard>
-        <p className="text-sm text-red-600">This invite link is missing its token.</p>
+        <p className="auth-err">This invite link is missing its token.</p>
       </AuthCard>
     );
   }
@@ -49,12 +49,12 @@ function AcceptInviteForm() {
   return (
     <AuthCard>
       <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
-        <h2 className="text-lg font-semibold text-navy-800">Set your password</h2>
-        <p className="text-sm text-gray-500">You&apos;ve been invited to join a SmartERP workspace.</p>
+        <h2 className="auth-h2">Set your password</h2>
+        <p className="auth-p">You&apos;ve been invited to join a SmartERP workspace.</p>
         <Input label="Your name" value={name} onChange={(e) => setName(e.target.value)} required />
         <Input label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
         <Input label="Confirm password" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="auth-err">{error}</p>}
         <Button type="submit" loading={loading}>Join workspace</Button>
       </form>
     </AuthCard>
@@ -63,7 +63,7 @@ function AcceptInviteForm() {
 
 export default function AcceptInvitePage() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-6 px-4 py-12">
+    <main className="auth-page">
       <Suspense fallback={null}>
         <AcceptInviteForm />
       </Suspense>

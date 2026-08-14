@@ -8,44 +8,12 @@ import { ApiError, getMpinStatus, requestMpinOtp, setMpin, verifyMpin, type Mpin
 import { setSession } from "@/lib/auth";
 
 // SmartAppt Gold-style login: identifier -> (M-PIN, if already set) or
-// (OTP -> set a new M-PIN) -> in. Same theme (cream/terracotta, AuthCard)
-// SmartERP's public pages already use; this page just brings over the
-// multi-step flow itself. Email/phone + password (POST /auth/login) still
-// works on the backend for anyone who hasn't set an M-PIN yet — this screen
-// just doesn't surface that path anymore, matching the reference screen.
+// (OTP -> set a new M-PIN) -> in. Same navy/blue enterprise theme as the
+// rest of the app (see .auth-* classes in globals.css). Email/phone +
+// password (POST /auth/login) still works on the backend for anyone who
+// hasn't set an M-PIN yet — this screen just doesn't surface that path
+// anymore, matching the reference screen.
 type Step = "identifier" | "mpin" | "otp" | "set_mpin";
-
-const T = { primary: "#C4572B", muted: "#A08070", label: "#8A6050", pinBg: "#FDF8F5", border: "#DDD0C8" };
-
-const inputStyle: React.CSSProperties = {
-  width: "100%", padding: "0.65rem 0.9rem", border: `1px solid ${T.border}`, borderRadius: 8,
-  fontSize: "1rem", outline: "none", boxSizing: "border-box", background: "#fff",
-};
-
-const pinStyle: React.CSSProperties = {
-  ...inputStyle, letterSpacing: "0.5em", textAlign: "center", background: T.pinBg,
-};
-
-const labelStyle: React.CSSProperties = {
-  display: "block", fontWeight: 600, marginBottom: 6, fontSize: "0.8rem",
-  textTransform: "uppercase", letterSpacing: "0.05em", color: T.label,
-};
-
-const btn = (primary = true): React.CSSProperties => ({
-  width: "100%", padding: "0.75rem", borderRadius: 10, border: "none",
-  background: primary ? T.primary : "#f3f4f6", color: primary ? "white" : "#374151",
-  fontWeight: 600, fontSize: "0.95rem", cursor: "pointer", marginTop: "0.5rem",
-});
-
-const errBox: React.CSSProperties = {
-  background: "#fee2e2", color: "#991b1b", padding: "0.75rem", borderRadius: 8,
-  marginBottom: "1rem", fontSize: "0.875rem",
-};
-
-const otpHint: React.CSSProperties = {
-  background: "#fefce8", border: "1px solid #fde047", color: "#854d0e", borderRadius: 6,
-  padding: "0.5rem 0.9rem", marginBottom: "0.75rem", fontSize: "0.8rem",
-};
 
 function PinInput({ value, onChange, autoFocus }: { value: string; onChange: (v: string) => void; autoFocus?: boolean }) {
   return (
@@ -56,7 +24,7 @@ function PinInput({ value, onChange, autoFocus }: { value: string; onChange: (v:
       placeholder="● ● ● ●"
       value={value}
       onChange={(e) => onChange(e.target.value.replace(/\D/g, "").slice(0, 4))}
-      style={pinStyle}
+      className="auth-fc auth-pin"
       autoFocus={autoFocus}
     />
   );
@@ -157,29 +125,29 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-6 px-4 py-12">
+    <main className="auth-page">
       <AuthCard>
-        {error && <div style={errBox}>{error}</div>}
+        {error && <div className="auth-err" style={{ marginBottom: "1rem" }}>{error}</div>}
 
         {step === "identifier" && (
           <form onSubmit={handleIdentifierSubmit}>
-            <div style={{ marginBottom: "1rem" }}>
-              <label style={labelStyle}>Email or mobile number</label>
+            <div className="auth-fg" style={{ marginBottom: "1rem" }}>
+              <label className="auth-fl">Email or mobile number</label>
               <input
                 type="text"
                 placeholder="you@company.com or +91 98765 43210"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
                 required
-                style={inputStyle}
+                className="auth-fc"
                 autoFocus
               />
             </div>
-            <button type="submit" style={btn()} disabled={loading}>
+            <button type="submit" className="auth-btn" disabled={loading}>
               {loading ? "Checking…" : "Continue"}
             </button>
             <div style={{ textAlign: "center", marginTop: "1rem" }}>
-              <Link href="/register" style={{ fontSize: "0.875rem", color: T.primary, fontWeight: 600 }}>
+              <Link href="/register" className="auth-link">
                 Register Company
               </Link>
             </div>
@@ -188,42 +156,43 @@ export default function LoginPage() {
 
         {step === "mpin" && (
           <form onSubmit={handleMpinSubmit}>
-            <p style={{ color: T.muted, fontSize: "0.875rem", marginBottom: "1rem" }}>
+            <p className="auth-p" style={{ marginBottom: "1rem" }}>
               Enter your 4-digit M-PIN for {identifier}
             </p>
-            <div style={{ marginBottom: "1rem" }}>
-              <label style={labelStyle}>M-PIN</label>
+            <div className="auth-fg" style={{ marginBottom: "1rem" }}>
+              <label className="auth-fl">M-PIN</label>
               <PinInput value={mpin} onChange={setMpinValue} autoFocus />
             </div>
-            <button type="submit" style={btn()} disabled={loading || mpin.length < 4}>
+            <button type="submit" className="auth-btn" disabled={loading || mpin.length < 4}>
               {loading ? "Verifying…" : "Log in"}
             </button>
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 14 }}>
-              <span style={{ fontSize: 13, color: T.primary, cursor: "pointer", fontWeight: 600 }} onClick={handleForgotMpin}>
+              <button type="button" className="auth-link" onClick={handleForgotMpin}>
                 Forgot M-PIN?
-              </span>
-              <span
-                style={{ fontSize: 13, color: T.primary, cursor: "pointer", fontWeight: 600 }}
+              </button>
+              <button
+                type="button"
+                className="auth-link"
                 onClick={() => { setMpinValue(""); setStep("identifier"); }}
               >
                 Change
-              </span>
+              </button>
             </div>
           </form>
         )}
 
         {step === "otp" && (
           <form onSubmit={handleOtpSubmit}>
-            <p style={{ color: T.muted, fontSize: "0.875rem", marginBottom: "0.75rem" }}>
+            <p className="auth-p" style={{ marginBottom: "0.75rem" }}>
               Enter the OTP sent to {identifier}
             </p>
             {devOtp && (
-              <div style={otpHint}>
+              <div className="auth-hint" style={{ marginBottom: "0.75rem" }}>
                 OTP: <strong>{devOtp}</strong> (shown here until a real SMS/email provider is wired up)
               </div>
             )}
-            <div style={{ marginBottom: "1rem" }}>
-              <label style={labelStyle}>OTP</label>
+            <div className="auth-fg" style={{ marginBottom: "1rem" }}>
+              <label className="auth-fl">OTP</label>
               <input
                 type="text"
                 inputMode="numeric"
@@ -232,14 +201,14 @@ export default function LoginPage() {
                 value={otp}
                 onChange={(e) => setOtp(e.target.value)}
                 required
-                style={inputStyle}
+                className="auth-fc"
                 autoFocus
               />
             </div>
-            <button type="submit" style={btn()}>Continue</button>
+            <button type="submit" className="auth-btn">Continue</button>
             <button
               type="button"
-              style={btn(false)}
+              className="auth-btn auth-btn-secondary"
               onClick={() => { setOtp(""); setDevOtp(null); setStep("identifier"); }}
             >
               Change number
@@ -249,18 +218,18 @@ export default function LoginPage() {
 
         {step === "set_mpin" && (
           <form onSubmit={handleSetMpin}>
-            <p style={{ color: T.muted, fontSize: "0.875rem", marginBottom: "1rem" }}>
+            <p className="auth-p" style={{ marginBottom: "1rem" }}>
               Set a 4-digit M-PIN for faster logins next time.
             </p>
-            <div style={{ marginBottom: "0.75rem" }}>
-              <label style={labelStyle}>New M-PIN</label>
+            <div className="auth-fg" style={{ marginBottom: "0.75rem" }}>
+              <label className="auth-fl">New M-PIN</label>
               <PinInput value={newMpin} onChange={setNewMpin} autoFocus />
             </div>
-            <div style={{ marginBottom: "1rem" }}>
-              <label style={labelStyle}>Confirm M-PIN</label>
+            <div className="auth-fg" style={{ marginBottom: "1rem" }}>
+              <label className="auth-fl">Confirm M-PIN</label>
               <PinInput value={confirmMpin} onChange={setConfirmMpin} />
             </div>
-            <button type="submit" style={btn()} disabled={loading || newMpin.length < 4 || confirmMpin.length < 4}>
+            <button type="submit" className="auth-btn" disabled={loading || newMpin.length < 4 || confirmMpin.length < 4}>
               {loading ? "Setting M-PIN…" : "Set M-PIN & Log in"}
             </button>
           </form>

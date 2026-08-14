@@ -45,11 +45,9 @@ export default function DomainDetailsStep({ domains, loading, error, onSubmit }:
 
   return (
     <form className="flex flex-col gap-6" onSubmit={handleSubmit}>
-      <h2 className="text-lg font-semibold text-navy-800">Domain setup</h2>
-
       {domains.includes("TRADING") && (
-        <fieldset className="flex flex-col gap-3 rounded-lg border border-cream-200 p-4">
-          <legend className="px-1 text-sm font-medium text-terracotta-700">Trading</legend>
+        <fieldset className="auth-fieldset flex flex-col gap-3">
+          <legend className="auth-legend">Trading</legend>
           <Input
             label="GSTIN"
             required
@@ -57,10 +55,10 @@ export default function DomainDetailsStep({ domains, loading, error, onSubmit }:
             value={trading.gstin}
             onChange={(e) => setTrading((t) => ({ ...t, gstin: e.target.value }))}
           />
-          <div className="flex flex-col gap-1 text-left">
-            <label className="text-sm font-medium text-terracotta-700">Business type</label>
+          <div className="auth-fg">
+            <label className="auth-fl">Business type</label>
             <select
-              className="rounded-md border border-cream-300 px-3 py-2 text-sm"
+              className="auth-fc"
               value={trading.businessType}
               onChange={(e) =>
                 setTrading((t) => ({
@@ -85,10 +83,8 @@ export default function DomainDetailsStep({ domains, loading, error, onSubmit }:
       )}
 
       {domains.includes("MANUFACTURING") && (
-        <fieldset className="flex flex-col gap-3 rounded-lg border border-cream-200 p-4">
-          <legend className="px-1 text-sm font-medium text-terracotta-700">
-            Manufacturing
-          </legend>
+        <fieldset className="auth-fieldset flex flex-col gap-3">
+          <legend className="auth-legend">Manufacturing</legend>
           <Input
             label="GSTIN"
             required
@@ -106,7 +102,7 @@ export default function DomainDetailsStep({ domains, loading, error, onSubmit }:
               setManufacturing((m) => ({ ...m, industryType: e.target.value }))
             }
           />
-          <label className="flex items-center gap-2 text-sm text-terracotta-700">
+          <label className="flex items-center gap-2 text-sm" style={{ color: "var(--color-muted)" }}>
             <input
               type="checkbox"
               checked={manufacturing.hasBom}
@@ -119,7 +115,7 @@ export default function DomainDetailsStep({ domains, loading, error, onSubmit }:
         </fieldset>
       )}
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="auth-err">{error}</p>}
       <Button type="submit" loading={loading}>
         Create workspace
       </Button>

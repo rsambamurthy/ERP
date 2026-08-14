@@ -1,25 +1,26 @@
 import Logo from "./Logo";
 
-// Matches SmartAppt Gold's actual login card (src/pages/LoginPage.tsx):
-// 360px wide, 20px radius, cream border, a tall logo header band, white
-// body, and a "Powered by" cream footer strip.
-export default function AuthCard({ children }: { children: React.ReactNode }) {
+// Shared shell for every public auth page (login/register/forgot-password/
+// accept-invite). Uses the same navy/blue enterprise tokens as the
+// authenticated app (see .auth-* classes in globals.css) — width is
+// per-page since Login is a single form and Register is a wide accordion.
+export default function AuthCard({
+  children,
+  width = 420,
+}: {
+  children: React.ReactNode;
+  width?: number;
+}) {
   return (
-    <div
-      className="w-full overflow-hidden border border-cream-200"
-      style={{ maxWidth: 360, borderRadius: 20, boxShadow: "0 8px 32px rgba(0,0,0,0.13)" }}
-    >
-      <div className="flex flex-col items-center justify-center gap-2 border-b border-cream-200 bg-gradient-to-b from-cream-100 to-cream-50 py-10">
-        <Logo size={56} />
-        <div className="mt-1 text-xl font-bold">
-          <span className="text-navy-800">Smart</span>
-          <span className="text-terracotta-500">ERP</span>
+    <div className="auth-card" style={{ maxWidth: width }}>
+      <div className="auth-card-hdr">
+        <Logo size={30} />
+        <div className="auth-card-brand">
+          Smart<span className="auth-card-brand-b">ERP</span>
         </div>
       </div>
-      <div className="bg-white px-6 py-5">{children}</div>
-      <div className="border-t border-cream-200 bg-cream-100 py-2.5 text-center text-[10px] text-terracotta-700">
-        Secure &amp; Private
-      </div>
+      <div className="auth-card-body">{children}</div>
+      <div className="auth-card-ftr">Secure &amp; Private</div>
     </div>
   );
 }

@@ -25,38 +25,25 @@ interface Props {
 
 export default function DomainSelectStep({ selected, onToggle, onNext, error }: Props) {
   return (
-    <div className="flex flex-col gap-4">
-      <h2 className="text-lg font-semibold text-navy-800">
-        Select business domain(s)
-      </h2>
-      <p className="text-sm text-terracotta-700">
-        Pick one or both — an org can run Trading and Manufacturing together.
-      </p>
-      <div className="flex flex-col gap-3">
-        {OPTIONS.map((opt) => {
-          const checked = selected.includes(opt.code);
-          return (
-            <label
-              key={opt.code}
-              className={`flex cursor-pointer items-start gap-3 rounded-lg border p-4 text-left ${
-                checked ? "border-terracotta-500 bg-terracotta-50" : "border-cream-300"
-              }`}
-            >
-              <input
-                type="checkbox"
-                checked={checked}
-                onChange={() => onToggle(opt.code)}
-                className="mt-1"
-              />
-              <span>
-                <span className="block font-medium text-navy-800">{opt.label}</span>
-                <span className="block text-sm text-terracotta-700">{opt.blurb}</span>
-              </span>
-            </label>
-          );
-        })}
-      </div>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+    <div className="flex flex-col gap-3">
+      {OPTIONS.map((opt) => {
+        const checked = selected.includes(opt.code);
+        return (
+          <label key={opt.code} className={`auth-check ${checked ? "selected" : ""}`}>
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={() => onToggle(opt.code)}
+              className="mt-1"
+            />
+            <span>
+              <span className="auth-check-title">{opt.label}</span>
+              <span className="auth-check-sub">{opt.blurb}</span>
+            </span>
+          </label>
+        );
+      })}
+      {error && <p className="auth-err">{error}</p>}
       <Button type="button" onClick={onNext} disabled={selected.length === 0}>
         Continue
       </Button>

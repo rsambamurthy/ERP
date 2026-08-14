@@ -23,12 +23,8 @@ export default function VerifyStep({ destination, devOtp, loading, error, onSubm
         onSubmit(otp);
       }}
     >
-      <h2 className="text-lg font-semibold text-navy-800">Verify identity</h2>
-      <p className="text-sm text-terracotta-700">
-        Enter the OTP sent to {destination || "your phone or email"}.
-      </p>
       {devOtp && (
-        <div className="rounded-lg border border-terracotta-100 bg-terracotta-50 px-3 py-2 text-sm text-terracotta-700">
+        <div className="auth-hint">
           Dev mode — no email/SMS provider yet. Your OTP is{" "}
           <span className="font-mono font-semibold tracking-wider">{devOtp}</span>.
         </div>
@@ -41,7 +37,7 @@ export default function VerifyStep({ destination, devOtp, loading, error, onSubm
         value={otp}
         onChange={(e) => setOtp(e.target.value)}
       />
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="auth-err">{error}</p>}
       <Button type="submit" loading={loading}>
         Verify
       </Button>
