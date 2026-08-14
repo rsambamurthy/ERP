@@ -29,6 +29,21 @@ const emptyManufacturing: ManufacturingDetails = {
   hasBom: true,
 };
 
+const INDUSTRY_TYPES = [
+  "Textiles & Apparel",
+  "Food & Beverage Processing",
+  "Chemicals & Pharmaceuticals",
+  "Metal & Engineering",
+  "Plastics & Rubber",
+  "Electronics & Electrical",
+  "Automotive & Auto Components",
+  "Furniture & Wood Products",
+  "Paper & Packaging",
+  "Leather & Footwear",
+  "Construction Materials",
+  "Other",
+];
+
 export default function DomainDetailsStep({ domains, loading, error, onSubmit }: Props) {
   const [trading, setTrading] = useState<TradingDetails>(emptyTrading);
   const [manufacturing, setManufacturing] = useState<ManufacturingDetails>(
@@ -94,14 +109,26 @@ export default function DomainDetailsStep({ domains, loading, error, onSubmit }:
               setManufacturing((m) => ({ ...m, gstin: e.target.value }))
             }
           />
-          <Input
-            label="Industry type"
-            required
-            value={manufacturing.industryType}
-            onChange={(e) =>
-              setManufacturing((m) => ({ ...m, industryType: e.target.value }))
-            }
-          />
+          <div className="auth-fg">
+            <label className="auth-fl">Industry type</label>
+            <select
+              className="auth-fc"
+              required
+              value={manufacturing.industryType}
+              onChange={(e) =>
+                setManufacturing((m) => ({ ...m, industryType: e.target.value }))
+              }
+            >
+              <option value="" disabled>
+                Select industry type
+              </option>
+              {INDUSTRY_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
           <label className="flex items-center gap-2 text-sm" style={{ color: "var(--color-muted)" }}>
             <input
               type="checkbox"
