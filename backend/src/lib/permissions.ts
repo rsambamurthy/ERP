@@ -16,6 +16,7 @@ export const PERMISSIONS = [
   "journal.post",
   "company.manage",
   "currency.manage",
+  "chatbot.access",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -35,6 +36,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "journal.post": "Post Journal Entries",
   "company.manage": "Manage Company Master Data (CIN, directors, auditors)",
   "currency.manage": "Manage Currency Master (effective-dated exchange rates)",
+  "chatbot.access": "Use the data assistant (ask questions about the company's accounts, sales, purchases, and stock)",
 };
 
 export function isPermission(value: string): value is Permission {

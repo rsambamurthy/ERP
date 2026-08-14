@@ -28,6 +28,7 @@ import type {
   IntegrationConnectionStatus,
   Item,
   ScheduleIIIBalanceSheet,
+  ChatMessage,
   JournalEntry,
   JournalLineInput,
   LedgerResponse,
@@ -938,6 +939,16 @@ export function updateOrgRole(id: string, body: { name?: string; permissions?: P
 
 export function deleteOrgRole(id: string) {
   return request<{ data: { deleted: true } }>(`/org-roles/${id}`, { method: "DELETE" });
+}
+
+// ── Data assistant (chatbot) ─────────────────────────────────────────────
+// history is the running transcript so far (not including this message) —
+// ChatWidget.tsx holds it in memory only, nothing is persisted server-side.
+export function askChatbot(message: string, history: ChatMessage[]) {
+  return request<{ answer: string }>("/chatbot/ask", {
+    method: "POST",
+    body: JSON.stringify({ message, history }),
+  });
 }
 
 // ── Access control (menu visibility by role) ────────────────────────────────

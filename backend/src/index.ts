@@ -39,6 +39,7 @@ import companyMasterRoutes from "./routes/companyMaster";
 import currencyRatesRoutes from "./routes/currencyRates";
 import integrationConnectionsRoutes from "./routes/integrationConnections";
 import integrationApiRoutes from "./routes/integrationApi";
+import chatbotRoutes from "./routes/chatbot";
 
 // Last-resort net for anything outside Express's request cycle entirely
 // (a rejected promise with no .catch anywhere, a timer callback that
@@ -85,6 +86,7 @@ app.use("/me", meRoutes);
 app.use("/gst", gstRoutes);
 app.use("/company-master", companyMasterRoutes);
 app.use("/currency-rates", currencyRatesRoutes);
+app.use("/chatbot", chatbotRoutes);
 // Mounted at two different paths, most-specific first — both routers
 // apply their auth middleware via a path-less `router.use(...)`, so if
 // the broader /integration prefix were checked first, its router would

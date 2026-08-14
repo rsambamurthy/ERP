@@ -130,6 +130,16 @@ export function canDeliverGoods(): boolean {
   return ["OWNER", "ADMIN", "ACCOUNTANT"].includes(role);
 }
 
+// Data assistant (chatbot) — Owner/Admin by default (see
+// BUILT_IN_PERMISSIONS.OWNER/ADMIN in backend/src/lib/permissions.ts, which
+// both spread the full PERMISSIONS list). A CUSTOM role needs it explicitly
+// granted; ACCOUNTANT/VIEWER don't get it by default.
+export function canUseChatbot(): boolean {
+  const role = getRole() ?? "";
+  if (role === "CUSTOM") return getPermissions().includes("chatbot.access");
+  return ["OWNER", "ADMIN"].includes(role);
+}
+
 export function clearSession() {
   if (typeof window === "undefined") return;
   localStorage.removeItem(TOKEN_KEY);

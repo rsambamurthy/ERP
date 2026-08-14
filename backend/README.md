@@ -802,6 +802,50 @@ maintaining a separate parallel "admin view" of the data.
 this code writes to `journal_entries` yet, so domains stay editable until
 real transactional endpoints are built later.
 
+### Data Assistant / Chatbot (`/chatbot`)
+
+A tool-calling AI agent that answers plain-English questions about the
+org's own accounting/sales/purchase/stock data — "what's our profit this
+month", "who owes us money", "how much stock do we have". Gated by the new
+`chatbot.access` permission (`lib/permissions.ts`) — Owner/Admin get it
+automatically (both spread the full `PERMISSIONS` array); grant it to a
+custom role via Access Control for anyone else who should have it.
+
+| Route | Notes |
+| --- | --- |
+| `POST /chatbot/ask` | `{ message, history? }` → `{ answer }`. `history` is the running transcript so far (`{ role: "user"\|"assistant", content }[]`) — the client resends it every call; nothing is persisted server-side (session-only, per the frontend's `ChatWidget.tsx`). `chatbot.access`. |
+
+**How it works.** `routes/chatbot.ts` sends the conversation plus a fixed
+set of Anthropic Messages API tool definitions (`lib/chatbotTools.ts`) to
+Claude. When the model responds with `tool_use`, the route executes the
+matching server-side function — always scoped to the caller's own
+`organizationId` from the authenticated request, never anything the model
+or client supplies — appends the result as a `tool_result`, and loops
+(capped at 6 tool-call rounds) until Claude returns a final text answer.
+
+**Never a second source of truth for the numbers.** Every financial tool
+(`get_trial_balance`, `get_profit_and_loss`, `get_balance_sheet`,
+`get_cash_book`, `get_receipts_and_payments`, `get_gstr1_summary`,
+`get_gstr3b_summary`) calls the exact same functions the report
+pages/endpoints use (`lib/reports.ts`, extracted verbatim from
+`routes/journal.ts`'s GET handlers this pass so both share one
+implementation; `lib/gstReports.ts`, already shared with `/gst`) — the
+chatbot's numbers can never drift from what a user sees on the Trial
+Balance/P&L/Balance Sheet/GSTR-1/GSTR-3B screens. `get_stock_summary` is
+the one approximate figure: it reads `ItemStock.quantityOnHand *
+averageCost`, which is exact for weighted-average orgs and a close blend
+for FIFO orgs (not necessarily identical to the FIFO-lot-exact figure
+`GET /inventory/valuation` computes). `list_recent_sales_invoices`,
+`list_recent_purchase_bills`, and `list_outstanding_balances` (customers/
+vendors ranked by net control-account balance — a new computation, since
+no existing report page shows this per-partner cut across every partner at
+once; the Ledger page covers one partner at a time) round out the tool set.
+
+Requires `ANTHROPIC_API_KEY` (see step 4a below — same key already used
+for invoice extraction, reused here with no additional setup). Without it,
+`POST /chatbot/ask` returns a 503 with a clear message; every other
+endpoint is unaffected.
+
 ## Deploying to Railway
 
 1. In the Railway project already connected to the `ERP` GitHub repo, open
@@ -815,10 +859,11 @@ real transactional endpoints are built later.
 4. Add a `JWT_SECRET` env var (any long random string) — required for
    `/auth/login` and every accounting endpoint.
 4a. Add an `ANTHROPIC_API_KEY` env var to enable AI invoice extraction
-   (`POST /purchase-bills/extract-invoice` — see Endpoints below). Optional:
-   without it, that one endpoint returns a 502 with a clear message, and
-   everything else on Purchase Bills still works — the "Extract data"
-   button in the frontend just won't succeed.
+   (`POST /purchase-bills/extract-invoice`) and the Data Assistant chatbot
+   (`POST /chatbot/ask` — see Endpoints below). Optional, and shared by
+   both features: without it, invoice extraction returns a 502 and the
+   chatbot returns a 503, each with a clear message — everything else in
+   the app is unaffected.
 5. Once deployed, run the schema, migration, and seed against the Railway
    Postgres instance (from your machine, using the same `DATABASE_URL`):
    ```bash

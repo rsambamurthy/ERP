@@ -1110,6 +1110,7 @@ export const PERMISSIONS = [
   "journal.post",
   "company.manage",
   "currency.manage",
+  "chatbot.access",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -1129,6 +1130,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "journal.post": "Post Journal Entries",
   "company.manage": "Manage Company Master Data (CIN, directors, auditors)",
   "currency.manage": "Manage Currency Master (effective-dated exchange rates)",
+  "chatbot.access": "Use the data assistant (ask questions about the company's accounts, sales, purchases, and stock)",
 };
 
 export interface CustomRole {
@@ -1215,6 +1217,15 @@ export interface AdminOrgDetailBranch {
   name: string;
   isHeadOffice: boolean;
   status: string;
+}
+
+// ── Data assistant (chatbot) ────────────────────────────────────────────
+// Session-only — the client holds the running transcript in memory
+// (ChatWidget.tsx) and resends it on every POST /chatbot/ask; the backend
+// never persists it. See routes/chatbot.ts.
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
 }
 
 export interface AdminOrganizationDetail {

@@ -4,9 +4,10 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { NAV_GROUPS, NavItem } from "./navGroups";
-import { clearSession, getCustomRoleId, getName, getPermissions, getRole, isLoggedIn, isPlatformAdmin } from "@/lib/auth";
+import { canUseChatbot, clearSession, getCustomRoleId, getName, getPermissions, getRole, isLoggedIn, isPlatformAdmin } from "@/lib/auth";
 import { getMenuConfig } from "@/lib/api";
 import type { MenuConfigMap } from "@/lib/types";
+import ChatWidget from "@/components/chatbot/ChatWidget";
 
 // Structure ported from SmartAppt Gold's authenticated app shell
 // (frontend/src/components/organisms/Layout.tsx — WebLayout) — sa-shell /
@@ -168,6 +169,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
         <main className="sa-main">{children}</main>
       </div>
+
+      {canUseChatbot() && <ChatWidget />}
     </div>
   );
 }
