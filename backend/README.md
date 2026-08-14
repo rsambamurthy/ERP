@@ -835,11 +835,21 @@ Balance/P&L/Balance Sheet/GSTR-1/GSTR-3B screens. `get_stock_summary` is
 the one approximate figure: it reads `ItemStock.quantityOnHand *
 averageCost`, which is exact for weighted-average orgs and a close blend
 for FIFO orgs (not necessarily identical to the FIFO-lot-exact figure
-`GET /inventory/valuation` computes). `list_recent_sales_invoices`,
-`list_recent_purchase_bills`, and `list_outstanding_balances` (customers/
-vendors ranked by net control-account balance — a new computation, since
-no existing report page shows this per-partner cut across every partner at
-once; the Ledger page covers one partner at a time) round out the tool set.
+`GET /inventory/valuation` computes).
+
+**Full breadth — every document type, not just invoices/bills.** Beyond
+the financial reports above, the tool set covers every transactional
+document in the app so "how many X" and "list X" questions always have
+somewhere to go: `list_recent_sales_invoices`, `list_recent_purchase_bills`,
+`list_sales_orders`/`list_purchase_orders` (counts grouped by status, plus
+the most recent), `list_goods_receipt_notes`/`list_delivery_notes`,
+`list_sales_returns`/`list_purchase_returns`, `list_items` (the product
+catalog), `list_business_partners` (the customer/vendor directory), and
+`list_journal_entries` (date-range/narration search over every posted
+entry, manual or auto-posted). `list_outstanding_balances` (customers/
+vendors ranked by net control-account balance) is the one new computation
+in the set — no existing report page shows this per-partner cut across
+every partner at once; the Ledger page covers one partner at a time.
 
 Requires `ANTHROPIC_API_KEY` (see step 4a below — same key already used
 for invoice extraction, reused here with no additional setup). Without it,

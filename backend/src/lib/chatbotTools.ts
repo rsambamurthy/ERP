@@ -121,6 +121,116 @@ export const CHATBOT_TOOLS = [
       },
     },
   },
+  {
+    name: "list_sales_orders",
+    description:
+      "Sales Orders — count by status (DRAFT/PENDING_APPROVAL/APPROVED/REJECTED/CANCELLED/CLOSED) plus the most recent orders. Use for 'how many sales orders', 'open sales orders', 'sales orders for <customer>'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        status: { type: "string", description: "Optional exact status filter" },
+        customerName: { type: "string", description: "Optional partial customer name filter" },
+        limit: { type: "number", description: "Max rows in the recent-orders list, default 20, max 50" },
+      },
+    },
+  },
+  {
+    name: "list_purchase_orders",
+    description:
+      "Purchase Orders — count by status (DRAFT/PENDING_APPROVAL/APPROVED/REJECTED/CANCELLED/CLOSED) plus the most recent orders. Use for 'how many purchase orders', 'open purchase orders', 'purchase orders for <vendor>'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        status: { type: "string", description: "Optional exact status filter" },
+        vendorName: { type: "string", description: "Optional partial vendor name filter" },
+        limit: { type: "number", description: "Max rows in the recent-orders list, default 20, max 50" },
+      },
+    },
+  },
+  {
+    name: "list_goods_receipt_notes",
+    description: "Goods Receipt Notes (physical stock-in against an approved Purchase Order) — total count plus the most recent ones.",
+    input_schema: {
+      type: "object",
+      properties: {
+        vendorName: { type: "string", description: "Optional partial vendor name filter" },
+        limit: { type: "number", description: "Max rows to return, default 20, max 50" },
+      },
+    },
+  },
+  {
+    name: "list_delivery_notes",
+    description: "Delivery Notes (physical stock-out against an approved Sales Order) — total count plus the most recent ones.",
+    input_schema: {
+      type: "object",
+      properties: {
+        customerName: { type: "string", description: "Optional partial customer name filter" },
+        limit: { type: "number", description: "Max rows to return, default 20, max 50" },
+      },
+    },
+  },
+  {
+    name: "list_sales_returns",
+    description: "Sales Returns (credit notes against a Sales Invoice) — total count/value plus the most recent ones.",
+    input_schema: {
+      type: "object",
+      properties: {
+        customerName: { type: "string", description: "Optional partial customer name filter" },
+        limit: { type: "number", description: "Max rows to return, default 20, max 50" },
+      },
+    },
+  },
+  {
+    name: "list_purchase_returns",
+    description: "Purchase Returns (debit notes against a Purchase Bill) — total count/value plus the most recent ones.",
+    input_schema: {
+      type: "object",
+      properties: {
+        vendorName: { type: "string", description: "Optional partial vendor name filter" },
+        limit: { type: "number", description: "Max rows to return, default 20, max 50" },
+      },
+    },
+  },
+  {
+    name: "list_items",
+    description: "The item/product catalog — count plus a list, optionally searched by name or SKU. Use for 'how many items/products do we have' or 'do we sell/stock X'. For quantity/value on hand, use get_stock_summary instead.",
+    input_schema: {
+      type: "object",
+      properties: {
+        search: { type: "string", description: "Optional partial name or SKU filter" },
+        includeInactive: { type: "boolean", description: "Include inactive items too, default false" },
+        limit: { type: "number", description: "Max rows to return, default 30, max 100" },
+      },
+    },
+  },
+  {
+    name: "list_business_partners",
+    description:
+      "The customer/vendor directory — counts by type plus a list, optionally searched by name. Use for 'how many customers/vendors do we have' or 'do we have a customer/vendor called X'. For who owes/is owed money, use list_outstanding_balances instead.",
+    input_schema: {
+      type: "object",
+      properties: {
+        bpType: { type: "string", enum: ["CUSTOMER", "VENDOR"], description: "Optional — omit for both" },
+        search: { type: "string", description: "Optional partial name filter" },
+        includeInactive: { type: "boolean", description: "Include inactive partners too, default false" },
+        limit: { type: "number", description: "Max rows to return, default 30, max 100" },
+      },
+    },
+  },
+  {
+    name: "list_journal_entries",
+    description:
+      "Manual and auto-posted journal/accounting entries for a date range, most recent first — each entry's date, narration, voucher number, and total amount. Use for 'how many journal entries', 'entries this month', or to find a specific transaction by narration.",
+    input_schema: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "Optional ISO date, start of period" },
+        to: { type: "string", description: "Optional ISO date, end of period" },
+        narrationContains: { type: "string", description: "Optional partial-text filter on the narration" },
+        limit: { type: "number", description: "Max rows to return, default 20, max 50" },
+      },
+    },
+  },
 ] as const;
 
 function clampLimit(n: unknown, def: number, max: number): number {
@@ -267,6 +377,151 @@ export async function executeChatbotTool(organizationId: string, name: string, i
     case "list_outstanding_balances": {
       const limit = clampLimit(input?.limit, 20, 50);
       return listOutstandingBalances(organizationId, input?.bpType, limit);
+    }
+    case "list_sales_orders": {
+      const limit = clampLimit(input?.limit, 20, 50);
+      const where: any = { organizationId };
+      if (input?.status) where.status = String(input.status);
+      if (input?.customerName) where.businessPartner = { name: { contains: String(input.customerName), mode: "insensitive" } };
+      const [statusCounts, orders] = await Promise.all([
+        prisma.salesOrder.groupBy({ by: ["status"], where: { organizationId }, _count: { _all: true } }),
+        prisma.salesOrder.findMany({ where, include: { businessPartner: { select: { name: true } } }, orderBy: { soDate: "desc" }, take: limit }),
+      ]);
+      return {
+        totalCount: statusCounts.reduce((s, c) => s + c._count._all, 0),
+        countsByStatus: Object.fromEntries(statusCounts.map((c) => [c.status, c._count._all])),
+        orders: orders.map((o) => ({ soNumber: o.soNumber, date: o.soDate, customer: o.businessPartner.name, status: o.status, grandTotal: Number(o.grandTotal) })),
+      };
+    }
+    case "list_purchase_orders": {
+      const limit = clampLimit(input?.limit, 20, 50);
+      const where: any = { organizationId };
+      if (input?.status) where.status = String(input.status);
+      if (input?.vendorName) where.businessPartner = { name: { contains: String(input.vendorName), mode: "insensitive" } };
+      const [statusCounts, orders] = await Promise.all([
+        prisma.purchaseOrder.groupBy({ by: ["status"], where: { organizationId }, _count: { _all: true } }),
+        prisma.purchaseOrder.findMany({ where, include: { businessPartner: { select: { name: true } } }, orderBy: { poDate: "desc" }, take: limit }),
+      ]);
+      return {
+        totalCount: statusCounts.reduce((s, c) => s + c._count._all, 0),
+        countsByStatus: Object.fromEntries(statusCounts.map((c) => [c.status, c._count._all])),
+        orders: orders.map((o) => ({ poNumber: o.poNumber, date: o.poDate, vendor: o.businessPartner.name, status: o.status, grandTotal: Number(o.grandTotal) })),
+      };
+    }
+    case "list_goods_receipt_notes": {
+      const limit = clampLimit(input?.limit, 20, 50);
+      const where: any = { organizationId };
+      if (input?.vendorName) where.businessPartner = { name: { contains: String(input.vendorName), mode: "insensitive" } };
+      const [totalCount, grns] = await Promise.all([
+        prisma.goodsReceiptNote.count({ where: { organizationId } }),
+        prisma.goodsReceiptNote.findMany({ where, include: { businessPartner: { select: { name: true } } }, orderBy: { grnDate: "desc" }, take: limit }),
+      ]);
+      return { totalCount, goodsReceiptNotes: grns.map((g) => ({ grnNumber: g.grnNumber, date: g.grnDate, vendor: g.businessPartner.name })) };
+    }
+    case "list_delivery_notes": {
+      const limit = clampLimit(input?.limit, 20, 50);
+      const where: any = { organizationId };
+      if (input?.customerName) where.businessPartner = { name: { contains: String(input.customerName), mode: "insensitive" } };
+      const [totalCount, dns] = await Promise.all([
+        prisma.deliveryNote.count({ where: { organizationId } }),
+        prisma.deliveryNote.findMany({ where, include: { businessPartner: { select: { name: true } } }, orderBy: { dnDate: "desc" }, take: limit }),
+      ]);
+      return { totalCount, deliveryNotes: dns.map((d) => ({ dnNumber: d.dnNumber, date: d.dnDate, customer: d.businessPartner.name })) };
+    }
+    case "list_sales_returns": {
+      const limit = clampLimit(input?.limit, 20, 50);
+      const where: any = { organizationId };
+      if (input?.customerName) where.businessPartner = { name: { contains: String(input.customerName), mode: "insensitive" } };
+      const [agg, returns] = await Promise.all([
+        prisma.salesReturn.aggregate({ where: { organizationId }, _count: { _all: true }, _sum: { grandTotal: true } }),
+        prisma.salesReturn.findMany({ where, include: { businessPartner: { select: { name: true } } }, orderBy: { returnDate: "desc" }, take: limit }),
+      ]);
+      return {
+        totalCount: agg._count._all,
+        totalValue: Number(agg._sum.grandTotal ?? 0),
+        returns: returns.map((r) => ({ returnNumber: r.returnNumber, date: r.returnDate, customer: r.businessPartner.name, grandTotal: Number(r.grandTotal) })),
+      };
+    }
+    case "list_purchase_returns": {
+      const limit = clampLimit(input?.limit, 20, 50);
+      const where: any = { organizationId };
+      if (input?.vendorName) where.businessPartner = { name: { contains: String(input.vendorName), mode: "insensitive" } };
+      const [agg, returns] = await Promise.all([
+        prisma.purchaseReturn.aggregate({ where: { organizationId }, _count: { _all: true }, _sum: { grandTotal: true } }),
+        prisma.purchaseReturn.findMany({ where, include: { businessPartner: { select: { name: true } } }, orderBy: { returnDate: "desc" }, take: limit }),
+      ]);
+      return {
+        totalCount: agg._count._all,
+        totalValue: Number(agg._sum.grandTotal ?? 0),
+        returns: returns.map((r) => ({ returnNumber: r.returnNumber, date: r.returnDate, vendor: r.businessPartner.name, grandTotal: Number(r.grandTotal) })),
+      };
+    }
+    case "list_items": {
+      const limit = clampLimit(input?.limit, 30, 100);
+      const where: any = { organizationId, deletedAt: null };
+      if (!input?.includeInactive) where.isActive = true;
+      if (input?.search) {
+        where.OR = [
+          { name: { contains: String(input.search), mode: "insensitive" } },
+          { sku: { contains: String(input.search), mode: "insensitive" } },
+        ];
+      }
+      const [totalCount, items] = await Promise.all([
+        prisma.item.count({ where }),
+        prisma.item.findMany({ where, orderBy: { name: "asc" }, take: limit }),
+      ]);
+      return {
+        totalCount,
+        items: items.map((it) => ({
+          sku: it.sku,
+          name: it.name,
+          uom: it.uom,
+          isActive: it.isActive,
+          salesRate: it.salesRate != null ? Number(it.salesRate) : null,
+          purchaseRate: it.purchaseRate != null ? Number(it.purchaseRate) : null,
+        })),
+      };
+    }
+    case "list_business_partners": {
+      const limit = clampLimit(input?.limit, 30, 100);
+      const where: any = { organizationId, deletedAt: null };
+      if (input?.bpType === "CUSTOMER" || input?.bpType === "VENDOR") where.bpType = input.bpType;
+      else where.bpType = { in: ["CUSTOMER", "VENDOR"] }; // exclude the internal "ITEM" bpType rows (see Item.businessPartnerId)
+      if (!input?.includeInactive) where.isActive = true;
+      if (input?.search) where.name = { contains: String(input.search), mode: "insensitive" };
+
+      const [countsByType, partners] = await Promise.all([
+        prisma.businessPartner.groupBy({ by: ["bpType"], where: { organizationId, deletedAt: null, bpType: { in: ["CUSTOMER", "VENDOR"] } }, _count: { _all: true } }),
+        prisma.businessPartner.findMany({ where, orderBy: { name: "asc" }, take: limit }),
+      ]);
+      return {
+        totalCount: countsByType.reduce((s, c) => s + c._count._all, 0),
+        countsByType: Object.fromEntries(countsByType.map((c) => [c.bpType, c._count._all])),
+        partners: partners.map((p) => ({ name: p.name, bpType: p.bpType, gstin: p.gstin, phone: p.phone, isActive: p.isActive })),
+      };
+    }
+    case "list_journal_entries": {
+      const limit = clampLimit(input?.limit, 20, 50);
+      const where: any = { organizationId };
+      if (input?.from || input?.to) {
+        where.entryDate = { ...(input?.from ? { gte: new Date(input.from) } : {}), ...(input?.to ? { lte: new Date(input.to) } : {}) };
+      }
+      if (input?.narrationContains) where.narration = { contains: String(input.narrationContains), mode: "insensitive" };
+
+      const [totalCount, entries] = await Promise.all([
+        prisma.journalEntry.count({ where }),
+        prisma.journalEntry.findMany({ where, include: { journalLines: { select: { debit: true } } }, orderBy: { entryDate: "desc" }, take: limit }),
+      ]);
+      return {
+        totalCount,
+        entries: entries.map((e) => ({
+          date: e.entryDate,
+          narration: e.narration,
+          voucherNumber: e.voucherNumber,
+          referenceType: e.referenceType,
+          amount: e.journalLines.reduce((s, l) => s + Number(l.debit), 0),
+        })),
+      };
     }
     default:
       throw new Error(`Unknown tool: ${name}`);
