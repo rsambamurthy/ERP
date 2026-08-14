@@ -23,8 +23,8 @@ export default function VerifyStep({ destination, devOtp, loading, error, onSubm
         onSubmit(otp);
       }}
     >
-      <h2 className="text-lg font-semibold text-gray-900">Verify identity</h2>
-      <p className="text-sm text-gray-500">
+      <h2 className="text-lg font-semibold text-navy-800">Verify identity</h2>
+      <p className="text-sm text-terracotta-700">
         Enter the OTP sent to {destination || "your phone or email"}.
       </p>
       {devOtp && (

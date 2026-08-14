@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import AuthCard from "@/components/ui/AuthCard";
-import StepIndicator from "@/components/ui/StepIndicator";
+import AccordionStep from "@/components/ui/AccordionStep";
 import SignUpStep from "@/components/steps/SignUpStep";
 import VerifyStep from "@/components/steps/VerifyStep";
 import DomainSelectStep from "@/components/steps/DomainSelectStep";
@@ -116,39 +116,48 @@ export default function RegisterPage() {
     [organizationId, domains, router]
   );
 
+  function statusFor(step: WizardStep): "locked" | "active" | "complete" {
+    if (step < wizardStep) return "complete";
+    if (step === wizardStep) return "active";
+    return "locked";
+  }
+
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 px-4 py-12">
-      <StepIndicator current={wizardStep} />
       <AuthCard>
-        {wizardStep === 1 && (
-          <SignUpStep loading={loading} error={error} onSubmit={handleSignUp} />
-        )}
-        {wizardStep === 2 && (
-          <VerifyStep
-            destination={contact}
-            devOtp={devOtp}
-            loading={loading}
-            error={error}
-            onSubmit={handleVerify}
-          />
-        )}
-        {wizardStep === 3 && (
-          <DomainSelectStep
-            selected={domains}
-            onToggle={toggleDomain}
-            onNext={() => setWizardStep(4)}
-            error={error}
-          />
-        )}
-        {wizardStep === 4 && (
-          <DomainDetailsStep
-            domains={domains}
-            loading={loading}
-            error={error}
-            onSubmit={handleDomainDetails}
-          />
-        )}
-        {wizardStep === 5 && <ProvisioningStep step={provisionStatus} error={error} />}
+        <div className="flex flex-col">
+          <AccordionStep index={1} title="Sign up" status={statusFor(1)}>
+            <SignUpStep loading={loading} error={error} onSubmit={handleSignUp} />
+          </AccordionStep>
+          <AccordionStep index={2} title="Verify" status={statusFor(2)}>
+            <VerifyStep
+              destination={contact}
+              devOtp={devOtp}
+              loading={loading}
+              error={error}
+              onSubmit={handleVerify}
+            />
+          </AccordionStep>
+          <AccordionStep index={3} title="Domain(s)" status={statusFor(3)}>
+            <DomainSelectStep
+              selected={domains}
+              onToggle={toggleDomain}
+              onNext={() => setWizardStep(4)}
+              error={error}
+            />
+          </AccordionStep>
+          <AccordionStep index={4} title="Details" status={statusFor(4)}>
+            <DomainDetailsStep
+              domains={domains}
+              loading={loading}
+              error={error}
+              onSubmit={handleDomainDetails}
+            />
+          </AccordionStep>
+          <AccordionStep index={5} title="Workspace" status={statusFor(5)}>
+            <ProvisioningStep step={provisionStatus} error={error} />
+          </AccordionStep>
+        </div>
       </AuthCard>
     </main>
   );

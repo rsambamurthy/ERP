@@ -26,10 +26,10 @@ interface Props {
 export default function DomainSelectStep({ selected, onToggle, onNext, error }: Props) {
   return (
     <div className="flex flex-col gap-4">
-      <h2 className="text-lg font-semibold text-gray-900">
+      <h2 className="text-lg font-semibold text-navy-800">
         Select business domain(s)
       </h2>
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-terracotta-700">
         Pick one or both — an org can run Trading and Manufacturing together.
       </p>
       <div className="flex flex-col gap-3">
@@ -39,7 +39,7 @@ export default function DomainSelectStep({ selected, onToggle, onNext, error }: 
             <label
               key={opt.code}
               className={`flex cursor-pointer items-start gap-3 rounded-lg border p-4 text-left ${
-                checked ? "border-brand-600 bg-brand-50" : "border-gray-300"
+                checked ? "border-terracotta-500 bg-terracotta-50" : "border-cream-300"
               }`}
             >
               <input
@@ -49,8 +49,8 @@ export default function DomainSelectStep({ selected, onToggle, onNext, error }: 
                 className="mt-1"
               />
               <span>
-                <span className="block font-medium text-gray-900">{opt.label}</span>
-                <span className="block text-sm text-gray-500">{opt.blurb}</span>
+                <span className="block font-medium text-navy-800">{opt.label}</span>
+                <span className="block text-sm text-terracotta-700">{opt.blurb}</span>
               </span>
             </label>
           );

@@ -13,7 +13,9 @@ Exact values from `LoginPage.tsx`'s `T` theme object:
 - `terracotta-500` #C4572B (primary) · `terracotta-600` #9C3F1E (hover/dark) · `terracotta-700` #8A6050 (labels)
 - Card: 360px wide, 20px radius, `0 8px 32px rgba(0,0,0,0.13)` shadow, cream border, tall logo header band, white body, cream "Powered by" footer strip.
 
-Components: `components/ui/AuthCard.tsx`, `Input.tsx`, `Button.tsx`, `Logo.tsx`, `StepIndicator.tsx`. Used by `/register` and `/login`.
+Components: `components/ui/AuthCard.tsx`, `Input.tsx`, `Button.tsx`, `Logo.tsx`, `AccordionStep.tsx`. Used by `/register` and `/login`.
+
+`/register` is a single accordion inside one `AuthCard`: five `AccordionStep` panels (Sign up, Verify, Domain(s), Details, Workspace) gate sequentially — only the current step is expanded/interactive, completed steps collapse with a checkmark, future steps stay locked and collapsed. `StepIndicator.tsx` is no longer used (superseded by the accordion's own step badges) but the file is still present in the repo.
 
 ## 2. Authenticated app (dashboard, accounting, everything behind login) — navy/blue enterprise
 

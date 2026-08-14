@@ -32,8 +32,8 @@ export default function SignUpStep({ loading, error, onSubmit }: Props) {
         onSubmit(form);
       }}
     >
-      <h2 className="text-lg font-semibold text-gray-900">Sign up</h2>
-      <p className="text-sm text-gray-500">
+      <h2 className="text-lg font-semibold text-navy-800">Sign up</h2>
+      <p className="text-sm text-terracotta-700">
         Email, phone, business name — the basics to get your account started.
       </p>
       <Input

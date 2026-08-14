@@ -46,7 +46,7 @@ app/
   dashboard/              post-provisioning screen, scoped to active domains
 components/
   steps/                  one component per wizard step
-  ui/                     Button, Input, Card, StepIndicator
+  ui/                     Button, Input, Card, AccordionStep
 lib/
   api.ts                  fetch wrapper for the backend endpoints
   types.ts                shared TypeScript types
