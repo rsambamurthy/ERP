@@ -474,6 +474,27 @@ export interface DocumentLineInput {
   deliveryNoteLineId?: string;
 }
 
+// Read-only result of POST /purchase-bills/extract-invoice — a vendor
+// invoice (PDF/image) read by AI. Never posted directly: the frontend
+// either auto-fills header fields (manual-entry bills) or matches these
+// lines against GRN-derived lines for a comparison (PO-linked bills). See
+// app/purchase/bills/page.tsx.
+export interface ExtractedInvoiceLine {
+  description: string;
+  quantity: number;
+  rate: number;
+  amount: number;
+}
+
+export interface ExtractedInvoice {
+  vendorName: string | null;
+  invoiceNumber: string | null;
+  invoiceDate: string | null;
+  currency: string;
+  grandTotal: number | null;
+  lines: ExtractedInvoiceLine[];
+}
+
 // ── Foreign currency (exports/imports) ───────────────────────────────────
 // Fixed list — mirrors backend/src/lib/currencies.ts by hand (same
 // duplication convention as SCHEDULE_III_HEADS; no shared package between

@@ -814,6 +814,11 @@ real transactional endpoints are built later.
    `npm start`.
 4. Add a `JWT_SECRET` env var (any long random string) — required for
    `/auth/login` and every accounting endpoint.
+4a. Add an `ANTHROPIC_API_KEY` env var to enable AI invoice extraction
+   (`POST /purchase-bills/extract-invoice` — see Endpoints below). Optional:
+   without it, that one endpoint returns a 502 with a clear message, and
+   everything else on Purchase Bills still works — the "Extract data"
+   button in the frontend just won't succeed.
 5. Once deployed, run the schema, migration, and seed against the Railway
    Postgres instance (from your machine, using the same `DATABASE_URL`):
    ```bash
@@ -839,6 +844,15 @@ real transactional endpoints are built later.
 
 ## Known gaps (MVP)
 
+- `POST /purchase-bills/extract-invoice` reads an uploaded vendor invoice
+  (PDF/image, `multer` memoryStorage — never written to disk) via Claude's
+  Messages API (`lib/invoiceExtraction.ts`) and returns structured JSON
+  (vendor, date, currency, grand total, line items). Read-only — it never
+  creates or modifies a bill. The frontend either auto-fills header fields
+  (manual-entry bills) or shows a read-only comparison against GRN-derived
+  lines (PO-linked bills, to catch a vendor invoicing for quantity that was
+  actually returned). Requires `ANTHROPIC_API_KEY`; line-item matching is
+  best-effort text matching, not exact.
 - OTP delivery surfaces in the API response (`devOtp`), not real SMS/email.
 - JWT auth is a shared-secret HS256 token, 30-day expiry, no refresh/revoke
   flow — fine for MVP, not a production auth system.

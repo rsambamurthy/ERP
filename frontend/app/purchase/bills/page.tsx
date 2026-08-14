@@ -6,13 +6,98 @@ import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import {
-  ApiError, approvePurchaseBill, createPurchaseBill, getBranches, getBusinessPartners, getGoodsReceiptNotes, getItems,
+  ApiError, approvePurchaseBill, createPurchaseBill, extractInvoice, getBranches, getBusinessPartners, getGoodsReceiptNotes, getItems,
   getPurchaseBill, getPurchaseBills, getPurchaseOrder, getPurchaseOrders, lookupCurrencyRate, rejectPurchaseBill, updatePurchaseBillReference,
 } from "@/lib/api";
 import { canApprovePurchaseOrders } from "@/lib/auth";
 import { isInterState, round2, splitGst } from "@/lib/discountGst";
-import type { Branch, BusinessPartner, DocumentLineInput, Item, PurchaseBill, PurchaseBillStatus, PurchaseOrder } from "@/lib/types";
+import type { Branch, BusinessPartner, DocumentLineInput, ExtractedInvoice, ExtractedInvoiceLine, Item, PurchaseBill, PurchaseBillStatus, PurchaseOrder } from "@/lib/types";
 import { PURCHASE_BILL_STATUS_LABELS, SUPPORTED_CURRENCIES, currencySymbol } from "@/lib/types";
+
+// Best-effort word-overlap match between an extracted invoice line's free-
+// text description and an item's name/SKU — used only to build the
+// read-only comparison table below, never to auto-post a line.
+function normalizeWords(s: string): string[] {
+  return s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+}
+function matchScore(a: string, b: string): number {
+  const wa = new Set(normalizeWords(a));
+  const wb = new Set(normalizeWords(b));
+  if (wa.size === 0 || wb.size === 0) return 0;
+  let overlap = 0;
+  wa.forEach((w) => { if (wb.has(w)) overlap++; });
+  return overlap / Math.max(wa.size, wb.size);
+}
+
+interface LineComparisonRow {
+  key: string;
+  itemLabel: string;
+  invoiceQty: number | null;
+  invoiceRate: number | null;
+  invoiceAmount: number | null;
+  billableQty: number | null;
+  billableRate: number | null;
+  billableAmount: number | null;
+  diff: number | null;
+  note: string;
+}
+
+function buildComparison(
+  billLines: DocumentLineInput[],
+  extractedLines: ExtractedInvoiceLine[],
+  itemById: Map<string, Item>
+): LineComparisonRow[] {
+  const used = new Set<number>();
+  const rows: LineComparisonRow[] = [];
+
+  billLines.forEach((l, i) => {
+    if (!l.itemId) return;
+    const item = itemById.get(l.itemId);
+    const label = item ? `${item.name} (${item.sku})` : "Item";
+    let bestIdx = -1, bestScore = 0;
+    extractedLines.forEach((el, ei) => {
+      if (used.has(ei)) return;
+      const score = matchScore(el.description, item ? `${item.name} ${item.sku}` : "");
+      if (score > bestScore) { bestScore = score; bestIdx = ei; }
+    });
+    const matched = bestScore >= 0.25 ? extractedLines[bestIdx] : null;
+    if (matched) used.add(bestIdx);
+
+    const billableAmount = round2(Number(l.quantity) * Number(l.rate));
+    const invoiceAmount = matched ? round2(matched.quantity * matched.rate) : null;
+    rows.push({
+      key: `bill-${i}`,
+      itemLabel: label,
+      invoiceQty: matched ? matched.quantity : null,
+      invoiceRate: matched ? matched.rate : null,
+      invoiceAmount,
+      billableQty: Number(l.quantity),
+      billableRate: Number(l.rate),
+      billableAmount,
+      diff: invoiceAmount != null ? round2(invoiceAmount - billableAmount) : null,
+      note: matched ? "" : "Not found on the invoice",
+    });
+  });
+
+  extractedLines.forEach((el, ei) => {
+    if (used.has(ei)) return;
+    const amount = round2(el.amount || el.quantity * el.rate || 0);
+    rows.push({
+      key: `extra-${ei}`,
+      itemLabel: el.description || "Unmatched line",
+      invoiceQty: el.quantity,
+      invoiceRate: el.rate,
+      invoiceAmount: amount,
+      billableQty: null,
+      billableRate: null,
+      billableAmount: null,
+      diff: amount,
+      note: "Not on this Goods Receipt",
+    });
+  });
+
+  return rows;
+}
 
 const emptyLine = (): DocumentLineInput => ({ itemId: "", quantity: 0, rate: 0, rateFc: 0, taxRate: 0, customsDutyRate: 0 });
 
@@ -72,6 +157,15 @@ function PurchaseBillsInner() {
   const [newBoeDate, setNewBoeDate] = useState("");
   const [newPortCode, setNewPortCode] = useState("");
 
+  // AI invoice read — attaching a file does nothing on its own; extraction
+  // only fires when "Extract data" is clicked. Manual-entry bills get
+  // header fields auto-filled; PO-linked bills instead get a read-only
+  // comparison against the GRN-derived lines (see comparisonRows below).
+  const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
+  const [extracted, setExtracted] = useState<ExtractedInvoice | null>(null);
+
   const [detail, setDetail] = useState<PurchaseBill | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -94,6 +188,19 @@ function PurchaseBillsInner() {
   const canApprove = canApprovePurchaseOrders();
 
   const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
+
+  // Extracted-vs-GRN comparison — PO-linked bills only. Manual-entry bills
+  // use the extraction to auto-fill fields instead (see handleExtract).
+  const comparisonRows = useMemo(
+    () => (linkedPO && extracted ? buildComparison(lines, extracted.lines, itemById) : null),
+    [linkedPO, extracted, lines, itemById]
+  );
+  const comparisonTotalDiff = useMemo(
+    () => (comparisonRows ? round2(comparisonRows.reduce((s, r) => s + (r.diff ?? 0), 0)) : 0),
+    [comparisonRows]
+  );
+  const comparisonHasMismatch = comparisonRows != null && Math.abs(comparisonTotalDiff) > 0.5;
+
   const selectedVendor = useMemo(() => vendors.find((v) => v.id === businessPartnerId), [vendors, businessPartnerId]);
   // No branch selector on this form yet — the server defaults to head
   // office when branchId isn't given, so the preview mirrors that here too.
@@ -206,6 +313,45 @@ function PurchaseBillsInner() {
     setLinkedPO(null);
     setCurrency("INR"); setExchangeRate("1");
     setLines([emptyLine()]);
+  }
+
+  function clearInvoiceFile() {
+    setInvoiceFile(null);
+    setExtracted(null);
+    setExtractError(null);
+  }
+
+  // Fires only on the "Extract data" click, never on file attach — the
+  // extraction call has a real cost, so it's opt-in per invoice. On a
+  // manual-entry bill this auto-fills header fields (never line items —
+  // see buildComparison's note on why item-matching stays read-only). On a
+  // PO-linked bill it changes nothing; comparisonRows above does the work.
+  async function handleExtract() {
+    if (!invoiceFile) return;
+    setExtracting(true);
+    setExtractError(null);
+    try {
+      const res = await extractInvoice(invoiceFile);
+      const data = res.data;
+      setExtracted(data);
+      if (!linkedPO) {
+        if (data.invoiceDate) setBillDate(data.invoiceDate);
+        if (data.invoiceNumber && !narration) setNarration(`Invoice ${data.invoiceNumber}`);
+        if (data.currency && SUPPORTED_CURRENCIES.some((c) => c.code === data.currency)) setCurrency(data.currency);
+        if (data.vendorName) {
+          const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").trim();
+          const target = norm(data.vendorName);
+          const match =
+            vendors.find((v) => norm(v.name) === target) ??
+            vendors.find((v) => norm(v.name).includes(target) || target.includes(norm(v.name)));
+          if (match) setBusinessPartnerId(match.id);
+        }
+      }
+    } catch (err) {
+      setExtractError(err instanceof ApiError ? err.message : "Could not extract the invoice.");
+    } finally {
+      setExtracting(false);
+    }
   }
 
   async function openDetail(id: string) {
@@ -348,6 +494,7 @@ function PurchaseBillsInner() {
       setCurrency("INR"); setExchangeRate("1");
       setNewBoeNumber(""); setNewBoeDate(""); setNewPortCode("");
       setLinkedPO(null);
+      clearInvoiceFile();
       await loadAll();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not post bill.");
@@ -403,6 +550,130 @@ function PurchaseBillsInner() {
               }}>
                 <span>Linked to <strong>{linkedPO.poNumber}</strong> — {linkedPO.businessPartner.name}. Lines pre-filled from what's been received (via Goods Receipt Note) but not yet billed.</span>
                 <button type="button" className="ent-ia ent-ia-edit" onClick={unlinkPO}>Unlink</button>
+              </div>
+            )}
+          </div>
+
+          <div style={{ padding: "0 14px 10px" }}>
+            <div style={{
+              display: "flex", alignItems: "center", gap: 10, background: "#fff",
+              border: "1px solid var(--color-border)", borderRadius: 6, padding: "10px 14px",
+            }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--color-muted)", cursor: "pointer" }}>
+                📎
+                <input
+                  type="file"
+                  accept="application/pdf,image/jpeg,image/png,image/webp"
+                  style={{ display: "none" }}
+                  onChange={(e) => { setInvoiceFile(e.target.files?.[0] ?? null); setExtracted(null); setExtractError(null); }}
+                />
+                {invoiceFile ? invoiceFile.name : "Attach vendor invoice (optional)"}
+              </label>
+              <div style={{ flex: 1 }} />
+              {invoiceFile && (
+                <>
+                  <button type="button" className="ent-btn-add" disabled={extracting} onClick={handleExtract}>
+                    {extracting ? "Extracting…" : "✨ Extract data"}
+                  </button>
+                  <button type="button" className="ent-ia ent-ia-edit" onClick={clearInvoiceFile}>Remove</button>
+                </>
+              )}
+            </div>
+            {extractError && <p style={{ color: "#dc2626", fontSize: 13, marginTop: 8 }}>{extractError}</p>}
+
+            {extracted && !linkedPO && (
+              <div style={{ marginTop: 8 }}>
+                <p style={{ fontSize: 12.5, color: "var(--color-muted)", marginBottom: extracted.lines.length > 0 ? 6 : 0 }}>
+                  Extracted{extracted.vendorName ? ` — ${extracted.vendorName}` : ""}.
+                  {extracted.vendorName && !businessPartnerId && " Couldn't match a vendor — please select one below."}
+                  {extracted.lines.length > 0 && " Line items below are for reference — add matching lines to the table yourself."}
+                </p>
+                {extracted.lines.length > 0 && (
+                  <div style={{ border: "1px solid var(--color-border)", borderRadius: 6, overflow: "hidden" }}>
+                    <table className="ent-table">
+                      <thead>
+                        <tr><th>Extracted line (reference only)</th><th>Qty</th><th>Rate</th><th style={{ textAlign: "right" }}>Amount</th></tr>
+                      </thead>
+                      <tbody>
+                        {extracted.lines.map((l, i) => (
+                          <tr key={i}>
+                            <td>{l.description}</td>
+                            <td>{l.quantity}</td>
+                            <td>{l.rate.toFixed(2)}</td>
+                            <td style={{ textAlign: "right" }}>{l.amount.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      {extracted.grandTotal != null && (
+                        <tfoot>
+                          <tr>
+                            <td colSpan={3} style={{ fontWeight: 700 }}>Extracted grand total</td>
+                            <td style={{ textAlign: "right", fontWeight: 700 }}>{extracted.grandTotal.toFixed(2)}</td>
+                          </tr>
+                        </tfoot>
+                      )}
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {linkedPO && comparisonRows && (
+              <div className="ent-section" style={{ marginTop: 8, marginBottom: 0 }}>
+                <div className="ent-section-hdr"><span className="ent-section-title">Invoice vs. Goods Receipt</span></div>
+                <table className="ent-table">
+                  <thead>
+                    <tr>
+                      <th>Item</th><th>Invoice Qty × Rate</th><th style={{ textAlign: "right" }}>Invoice Amt</th>
+                      <th>Billable Qty × Rate</th><th style={{ textAlign: "right" }}>Billable Amt</th><th style={{ textAlign: "right" }}>Diff</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comparisonRows.map((r) => {
+                      const flagged = r.diff != null && Math.abs(r.diff) > 0.5;
+                      return (
+                        <tr key={r.key} style={flagged ? { background: r.billableAmount == null ? "#fef2f2" : "#fff7ed" } : undefined}>
+                          <td>
+                            {r.itemLabel}
+                            {r.note && <div style={{ fontSize: 10.5, color: "#dc2626" }}>{r.note}</div>}
+                          </td>
+                          <td>{r.invoiceQty != null ? `${r.invoiceQty} × ${(r.invoiceRate ?? 0).toFixed(2)}` : "—"}</td>
+                          <td style={{ textAlign: "right" }}>{r.invoiceAmount != null ? r.invoiceAmount.toFixed(2) : "—"}</td>
+                          <td>{r.billableQty != null ? `${r.billableQty} × ${(r.billableRate ?? 0).toFixed(2)}` : "—"}</td>
+                          <td style={{ textAlign: "right" }}>{r.billableAmount != null ? r.billableAmount.toFixed(2) : "—"}</td>
+                          <td style={{ textAlign: "right", color: flagged ? "#c2410c" : "#16a34a", fontWeight: flagged ? 600 : 400 }}>
+                            {flagged ? `+${r.diff!.toFixed(2)}` : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td style={{ fontWeight: 700 }}>Totals</td>
+                      <td />
+                      <td style={{ textAlign: "right", fontWeight: 700 }}>
+                        {comparisonRows.reduce((s, r) => s + (r.invoiceAmount ?? 0), 0).toFixed(2)}
+                      </td>
+                      <td />
+                      <td style={{ textAlign: "right", fontWeight: 700 }}>
+                        {comparisonRows.reduce((s, r) => s + (r.billableAmount ?? 0), 0).toFixed(2)}
+                      </td>
+                      <td style={{ textAlign: "right", fontWeight: 700, color: comparisonHasMismatch ? "#c2410c" : "#16a34a" }}>
+                        {comparisonTotalDiff.toFixed(2)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+                {comparisonHasMismatch && (
+                  <div style={{
+                    display: "flex", gap: 10, padding: "10px 14px", background: "#fffbeb",
+                    borderTop: "1px solid #fde68a", fontSize: 12.5, color: "#92400e",
+                  }}>
+                    ⚠ Invoice total is {currencySymbol(currency)}{comparisonTotalDiff.toFixed(2)} higher than what's billable per this
+                    Goods Receipt. Check whether returned or short-received quantity is still being billed before posting.
+                  </div>
+                )}
               </div>
             )}
           </div>

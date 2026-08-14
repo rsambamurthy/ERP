@@ -5,6 +5,8 @@ import { logAudit } from "../lib/audit";
 import { receiveStock } from "../lib/costing";
 import { isInterState, round2, splitGst } from "../lib/discountGst";
 import { isSupportedCurrency } from "../lib/currencies";
+import { upload } from "../lib/upload";
+import { extractInvoiceData } from "../lib/invoiceExtraction";
 
 // Every org's core COA (seed.ts) always includes these — same convention
 // journal.ts uses for CASH_BANK_CODES.
@@ -88,6 +90,26 @@ function buildBillJournalLineRows(args: {
     { journalEntryId, accountId: tradePayables.id, businessPartnerId: vendor.id, debit: 0, credit: tradePayablesCredit, narration: `Payable to ${vendor.name}` },
   ];
 }
+
+// POST /purchase-bills/extract-invoice — reads an uploaded vendor invoice
+// (PDF or image) and returns structured data (vendor, date, currency,
+// grand total, line items). Read-only: never creates or modifies anything.
+// The frontend decides what to do with the result — auto-fill on a manual
+// bill, or a comparison against GRN-derived lines on a PO-linked one.
+// Fires only when the user explicitly clicks "Extract data", not on upload.
+router.post("/extract-invoice", canPost, upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: "No file uploaded." });
+  const allowed = ["application/pdf", "image/jpeg", "image/jpg", "image/png", "image/webp"];
+  if (!allowed.includes(req.file.mimetype)) {
+    return res.status(400).json({ message: "Upload a PDF, JPEG, PNG, or WEBP file." });
+  }
+  try {
+    const data = await extractInvoiceData(req.file.buffer, req.file.mimetype);
+    res.json({ data });
+  } catch (err) {
+    res.status(502).json({ message: err instanceof Error ? err.message : "Invoice extraction failed." });
+  }
+});
 
 router.get("/", async (req, res) => {
   const organizationId = orgIdOr400(req, res);

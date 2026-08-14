@@ -21,6 +21,7 @@ import type {
   Permission,
   DocumentLineInput,
   DomainDetailsMap,
+  ExtractedInvoice,
   DomainType,
   Gstr1Report,
   Gstr3bReport,
@@ -510,6 +511,29 @@ export function getPurchaseBills() {
 
 export function getPurchaseBill(id: string) {
   return request<{ data: PurchaseBill }>(`/purchase-bills/${id}`);
+}
+
+// Multipart upload — same reasoning as uploadJournalAttachment above.
+// Read-only: never creates or changes a bill, just reads the file.
+export async function extractInvoice(file: File) {
+  const token = getToken();
+  const fd = new FormData();
+  fd.append("file", file);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/purchase-bills/extract-invoice`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: fd,
+    });
+  } catch {
+    throw new ApiError("Could not reach the backend to extract the invoice.");
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(body.message ?? `Could not extract the invoice (${res.status}).`, res.status);
+  }
+  return res.json() as Promise<{ data: ExtractedInvoice }>;
 }
 
 export function createPurchaseBill(body: {
