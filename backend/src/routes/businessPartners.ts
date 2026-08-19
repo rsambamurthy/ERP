@@ -44,11 +44,31 @@ router.get("/", async (req, res) => {
   res.json({ data: partners });
 });
 
+// GET /business-partners/:id — full detail including Vendor Management
+// (Phase 1) child records. Contacts/addresses/bank accounts are returned
+// regardless of bpType (harmless if empty for a CUSTOMER) rather than
+// gating the route itself on bpType — same "present but unused" convention
+// as openingBalance/address already follow.
+router.get("/:id", async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const partner = await prisma.businessPartner.findFirst({
+    where: { id: req.params.id, organizationId },
+    include: {
+      vendorContacts: { orderBy: { isPrimary: "desc" } },
+      vendorAddresses: { orderBy: { isPrimary: "desc" } },
+      vendorBankAccounts: { orderBy: { isPrimary: "desc" } },
+    },
+  });
+  if (!partner) return res.status(404).json({ message: "Business partner not found." });
+  res.json({ data: partner });
+});
+
 // POST /business-partners — creates a customer or vendor master record.
 router.post("/", canManageBp, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
-  const { bpType, name, gstin, stateCode, phone, email, address, openingBalance, openingBalanceType } = req.body ?? {};
+  const { bpType, name, gstin, stateCode, phone, email, address, openingBalance, openingBalanceType, vendorCategory, taxIdType, taxId, submitForApproval } = req.body ?? {};
   if (!bpType || !["CUSTOMER", "VENDOR"].includes(bpType) || !name) {
     return res.status(400).json({ message: "bpType (CUSTOMER or VENDOR) and name are required." });
   }
@@ -64,6 +84,17 @@ router.post("/", canManageBp, async (req, res) => {
       address: address ?? null,
       openingBalance: openingBalance ?? 0,
       openingBalanceType: openingBalanceType ?? null,
+      // Only meaningful for bpType VENDOR — harmless/unused on CUSTOMER.
+      vendorCategory: vendorCategory ?? null,
+      // International tax registration (EIN/GST-HST/VAT/...) — separate
+      // from gstin, see the schema comment on BusinessPartner.taxIdType.
+      taxIdType: taxIdType ?? null,
+      taxId: taxId ?? null,
+      // Optional — Prisma's schema default (APPROVED) applies unless the
+      // caller deliberately routes a new vendor through the approval
+      // placeholder at creation time (see the Vendor Management routes
+      // below for submit-for-approval/approve/reject).
+      ...(submitForApproval ? { approvalStatus: "PENDING_APPROVAL" } : {}),
     },
   });
   logAudit({
@@ -87,6 +118,15 @@ router.patch("/:id", canManageBp, async (req, res) => {
     const derived = resolveStateCode(undefined, body.gstin);
     if (derived !== undefined) body.stateCode = derived;
   }
+  // Approval-workflow fields only ever move through submit-for-approval/
+  // approve/reject below — never a raw PATCH, so the PENDING_APPROVAL-only
+  // gate and audit trail on those routes can't be bypassed.
+  delete body.approvalStatus;
+  delete body.approvedBy;
+  delete body.approvedAt;
+  delete body.rejectedBy;
+  delete body.rejectedAt;
+  delete body.rejectionReason;
 
   const updated = await prisma.businessPartner.update({
     where: { id: partner.id },
@@ -140,6 +180,201 @@ router.delete("/:id", canManageBp, async (req, res) => {
     summary: `Deleted ${partner.name}`,
   });
   res.json({ data: { deleted: true } });
+});
+
+// ── Vendor Management (Phase 1) ─────────────────────────────────────────
+// Multiple contacts / labeled addresses / bank accounts, plus a minimal
+// single-step approval workflow on the partner itself. Everything here
+// rides on the existing businessPartners.manage permission — no new
+// permission, no vendor-specific access control. See migration_028's
+// header comment for why the approval workflow is deliberately this thin.
+
+async function findPartnerOr404(organizationId: string, id: string, res: import("express").Response) {
+  const partner = await prisma.businessPartner.findFirst({ where: { id, organizationId } });
+  if (!partner) res.status(404).json({ message: "Business partner not found." });
+  return partner;
+}
+
+// Contacts
+router.post("/:id/contacts", canManageBp, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const partner = await findPartnerOr404(organizationId, req.params.id, res);
+  if (!partner) return;
+  const { name, designation, phone, email, isPrimary } = req.body ?? {};
+  if (!name) return res.status(400).json({ message: "name is required." });
+  const contact = await prisma.vendorContact.create({
+    data: { businessPartnerId: partner.id, name, designation: designation ?? null, phone: phone ?? null, email: email ?? null, isPrimary: !!isPrimary },
+  });
+  res.status(201).json({ data: contact });
+});
+
+router.patch("/:id/contacts/:contactId", canManageBp, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const partner = await findPartnerOr404(organizationId, req.params.id, res);
+  if (!partner) return;
+  const contact = await prisma.vendorContact.findFirst({ where: { id: req.params.contactId, businessPartnerId: partner.id } });
+  if (!contact) return res.status(404).json({ message: "Contact not found." });
+  const updated = await prisma.vendorContact.update({ where: { id: contact.id }, data: req.body ?? {} });
+  res.json({ data: updated });
+});
+
+router.delete("/:id/contacts/:contactId", canManageBp, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const partner = await findPartnerOr404(organizationId, req.params.id, res);
+  if (!partner) return;
+  const contact = await prisma.vendorContact.findFirst({ where: { id: req.params.contactId, businessPartnerId: partner.id } });
+  if (!contact) return res.status(404).json({ message: "Contact not found." });
+  await prisma.vendorContact.delete({ where: { id: contact.id } });
+  res.json({ data: { deleted: true } });
+});
+
+// Addresses
+router.post("/:id/addresses", canManageBp, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const partner = await findPartnerOr404(organizationId, req.params.id, res);
+  if (!partner) return;
+  const { label, line1, line2, city, state, stateCode, pincode, country, isPrimary } = req.body ?? {};
+  const address = await prisma.vendorAddress.create({
+    data: {
+      businessPartnerId: partner.id,
+      label: label || "Registered",
+      line1: line1 ?? null, line2: line2 ?? null, city: city ?? null, state: state ?? null,
+      stateCode: stateCode ?? null, pincode: pincode ?? null, country: country || "India",
+      isPrimary: !!isPrimary,
+    },
+  });
+  res.status(201).json({ data: address });
+});
+
+router.patch("/:id/addresses/:addressId", canManageBp, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const partner = await findPartnerOr404(organizationId, req.params.id, res);
+  if (!partner) return;
+  const address = await prisma.vendorAddress.findFirst({ where: { id: req.params.addressId, businessPartnerId: partner.id } });
+  if (!address) return res.status(404).json({ message: "Address not found." });
+  const updated = await prisma.vendorAddress.update({ where: { id: address.id }, data: req.body ?? {} });
+  res.json({ data: updated });
+});
+
+router.delete("/:id/addresses/:addressId", canManageBp, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const partner = await findPartnerOr404(organizationId, req.params.id, res);
+  if (!partner) return;
+  const address = await prisma.vendorAddress.findFirst({ where: { id: req.params.addressId, businessPartnerId: partner.id } });
+  if (!address) return res.status(404).json({ message: "Address not found." });
+  await prisma.vendorAddress.delete({ where: { id: address.id } });
+  res.json({ data: { deleted: true } });
+});
+
+// Bank accounts
+router.post("/:id/bank-accounts", canManageBp, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const partner = await findPartnerOr404(organizationId, req.params.id, res);
+  if (!partner) return;
+  const { accountHolderName, bankName, accountNumber, ifscCode, swiftCode, routingNumber, branchName, isPrimary } = req.body ?? {};
+  const bankAccount = await prisma.vendorBankAccount.create({
+    data: {
+      businessPartnerId: partner.id,
+      accountHolderName: accountHolderName ?? null, bankName: bankName ?? null,
+      accountNumber: accountNumber ?? null, ifscCode: ifscCode ?? null,
+      swiftCode: swiftCode ?? null, routingNumber: routingNumber ?? null,
+      branchName: branchName ?? null,
+      isPrimary: !!isPrimary,
+    },
+  });
+  res.status(201).json({ data: bankAccount });
+});
+
+router.patch("/:id/bank-accounts/:bankAccountId", canManageBp, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const partner = await findPartnerOr404(organizationId, req.params.id, res);
+  if (!partner) return;
+  const bankAccount = await prisma.vendorBankAccount.findFirst({ where: { id: req.params.bankAccountId, businessPartnerId: partner.id } });
+  if (!bankAccount) return res.status(404).json({ message: "Bank account not found." });
+  const updated = await prisma.vendorBankAccount.update({ where: { id: bankAccount.id }, data: req.body ?? {} });
+  res.json({ data: updated });
+});
+
+router.delete("/:id/bank-accounts/:bankAccountId", canManageBp, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const partner = await findPartnerOr404(organizationId, req.params.id, res);
+  if (!partner) return;
+  const bankAccount = await prisma.vendorBankAccount.findFirst({ where: { id: req.params.bankAccountId, businessPartnerId: partner.id } });
+  if (!bankAccount) return res.status(404).json({ message: "Bank account not found." });
+  await prisma.vendorBankAccount.delete({ where: { id: bankAccount.id } });
+  res.json({ data: { deleted: true } });
+});
+
+// Approval workflow — single-step placeholder (see migration_028's header
+// comment). Any status -> PENDING_APPROVAL is allowed (an org may want to
+// re-review an already-APPROVED vendor); APPROVED/REJECTED only reachable
+// from PENDING_APPROVAL, same gating shape as Purchase Order/Bill approval.
+router.post("/:id/submit-for-approval", canManageBp, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const partner = await findPartnerOr404(organizationId, req.params.id, res);
+  if (!partner) return;
+  const updated = await prisma.businessPartner.update({
+    where: { id: partner.id },
+    data: { approvalStatus: "PENDING_APPROVAL", approvedBy: null, approvedAt: null, rejectedBy: null, rejectedAt: null, rejectionReason: null },
+  });
+  logAudit({
+    organizationId, actorUserId: req.user!.userId,
+    action: "SUBMIT_FOR_APPROVAL", entityType: "business_partner", entityId: partner.id,
+    summary: `Submitted ${partner.name} for approval`,
+  });
+  res.json({ data: updated });
+});
+
+router.post("/:id/approve", canManageBp, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const partner = await findPartnerOr404(organizationId, req.params.id, res);
+  if (!partner) return;
+  if (partner.approvalStatus !== "PENDING_APPROVAL") {
+    return res.status(400).json({ message: `Cannot approve a partner in ${partner.approvalStatus} status — only Pending Approval can be approved.` });
+  }
+  const updated = await prisma.businessPartner.update({
+    where: { id: partner.id },
+    data: { approvalStatus: "APPROVED", approvedBy: req.user!.userId, approvedAt: new Date(), rejectedBy: null, rejectedAt: null, rejectionReason: null },
+  });
+  logAudit({
+    organizationId, actorUserId: req.user!.userId,
+    action: "APPROVE", entityType: "business_partner", entityId: partner.id,
+    summary: `Approved ${partner.name}`,
+  });
+  res.json({ data: updated });
+});
+
+router.post("/:id/reject", canManageBp, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const partner = await findPartnerOr404(organizationId, req.params.id, res);
+  if (!partner) return;
+  if (partner.approvalStatus !== "PENDING_APPROVAL") {
+    return res.status(400).json({ message: `Cannot reject a partner in ${partner.approvalStatus} status — only Pending Approval can be rejected.` });
+  }
+  const { reason } = req.body ?? {};
+  if (!reason) return res.status(400).json({ message: "reason is required." });
+  const updated = await prisma.businessPartner.update({
+    where: { id: partner.id },
+    data: { approvalStatus: "REJECTED", rejectedBy: req.user!.userId, rejectedAt: new Date(), rejectionReason: reason },
+  });
+  logAudit({
+    organizationId, actorUserId: req.user!.userId,
+    action: "REJECT", entityType: "business_partner", entityId: partner.id,
+    summary: `Rejected ${partner.name}: ${reason}`,
+  });
+  res.json({ data: updated });
 });
 
 // ── Bulk upload (Template Download + Bulk Upload) ─────────────────────────

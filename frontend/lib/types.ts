@@ -195,6 +195,73 @@ export interface CompanyMaster {
   auditors: Auditor[];
 }
 
+// ── Vendor Management (Phase 1) ──────────────────────────────────────────
+// Multiple contacts / labeled addresses / bank accounts, plus a minimal
+// single-step approval workflow — all on the existing BusinessPartner
+// (bp_type = 'VENDOR') record. See backend/db/migration_028.
+export type ApprovalStatus = "PENDING_APPROVAL" | "APPROVED" | "REJECTED";
+
+// Suggestions only (datalist, not a select) — vendorCategory/taxIdType are
+// unconstrained VARCHAR columns (see migration_028's comment on
+// tax_id_type), same "app-layer dropdown, no DB CHECK" convention as
+// openingBalanceType. Free text always wins, so a vendor from any country
+// or with any category not listed here still works.
+export const VENDOR_CATEGORIES = [
+  "Raw Material", "Packaging", "Services", "Contractor", "Logistics & Freight",
+  "IT / Software", "Capital Goods / Equipment", "Consumables", "Other",
+];
+
+export const TAX_ID_TYPE_SUGGESTIONS = [
+  "PAN", "EIN (US)", "GST/HST No. (Canada)", "VAT No.", "ABN (Australia)", "Tax Registration No.", "Other",
+];
+
+// Address.country suggestions — a free-text field, not a fixed catalogue
+// like SUPPORTED_CURRENCIES; new countries need no code change here.
+export const COMMON_COUNTRIES = [
+  "India", "United States", "Canada", "United Kingdom", "Germany", "UAE",
+  "Singapore", "Australia", "China", "Japan", "France", "Netherlands",
+];
+
+export interface VendorContact {
+  id: string;
+  businessPartnerId: string;
+  name: string;
+  designation: string | null;
+  phone: string | null;
+  email: string | null;
+  isPrimary: boolean;
+  createdAt: string;
+}
+
+export interface VendorAddress {
+  id: string;
+  businessPartnerId: string;
+  label: string;
+  line1: string | null;
+  line2: string | null;
+  city: string | null;
+  state: string | null;
+  stateCode: string | null;
+  pincode: string | null;
+  country: string;
+  isPrimary: boolean;
+  createdAt: string;
+}
+
+export interface VendorBankAccount {
+  id: string;
+  businessPartnerId: string;
+  accountHolderName: string | null;
+  bankName: string | null;
+  accountNumber: string | null;
+  ifscCode: string | null;
+  swiftCode: string | null;
+  routingNumber: string | null;
+  branchName: string | null;
+  isPrimary: boolean;
+  createdAt: string;
+}
+
 export interface BusinessPartner {
   id: string;
   bpType: "CUSTOMER" | "VENDOR" | "ITEM";
@@ -208,6 +275,24 @@ export interface BusinessPartner {
   openingBalance: string;
   openingBalanceType: BalanceType | null;
   isActive: boolean;
+  // Only meaningful for bpType VENDOR — harmless/unused on CUSTOMER.
+  vendorCategory: string | null;
+  approvalStatus: ApprovalStatus;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  rejectedBy: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
+  // International tax registration (EIN / GST-HST / VAT / ...) — separate
+  // from gstin, never fed into the India GST engine. Display-only.
+  taxIdType: string | null;
+  taxId: string | null;
+  createdAt: string;
+  // Present on GET /business-partners/:id (detail), absent on the list
+  // endpoint's rows.
+  vendorContacts?: VendorContact[];
+  vendorAddresses?: VendorAddress[];
+  vendorBankAccounts?: VendorBankAccount[];
 }
 
 export interface JournalLineInput {

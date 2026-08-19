@@ -686,7 +686,7 @@ Always tied to an existing Sales Invoice / Purchase Bill — `GET .../invoice/:i
 | `PATCH /org/users/:userId/employee-details` | `{ address?, pan?, aadhar? }` — interim employee fields, editable for any member including the OWNER (not a security control, so none of the role/status self-lock protections apply). PAN is validated against the standard 10-character format; Aadhar against 12 digits. `GET /org/users` and this endpoint's response both return `aadharMasked` ("XXXX XXXX 1234") only — the full Aadhar number is never echoed back by any endpoint once stored. See migration_012's note: this is plaintext-at-rest, not a substitute for real encryption if Aadhar capture becomes a genuine compliance requirement. |
 | `PATCH /org/users/:userId/status` | `{ status: "ACTIVE" \| "SUSPENDED" }` — suspend/reactivate without removing membership. Can't touch the OWNER or yourself. A suspended member is refused at `/auth/login`, and `requireActiveSubscription()` re-checks it on every request against an already-issued token (a token issued before suspension is otherwise valid for 30 days). |
 | `DELETE /org/users/:userId` | Revoke access — removes the `org_users` row entirely (distinct from suspend, which keeps it). Can't remove the OWNER or yourself. |
-| `POST /auth/accept-invite` | `{ token, password }` → creates the login, joins the org, returns a session token + resolved `permissions`. |
+| `POST /auth/accept-invite` | `{ token, name, password, mpin? }` → creates the login, joins the org, returns a session token + resolved `permissions`. `mpin` is optional and, when given, sets it immediately — no separate OTP step, since the invite token itself is the proof of identity (SmartERP is invite-only; there's no open self-registration path this could leak into). Only applies "first time": an account that already has an `mpinHash` keeps it. |
 
 Roles: **OWNER** (one per org, set at registration, full access) · **ADMIN** (same minus touching the OWNER) · **ACCOUNTANT** (post transactions, manage business partners) · **VIEWER** (read-only) · **CUSTOM** (org-defined, see below). Module-level write access is enforced server-side via `requirePermission()` in `middleware/auth.ts` — not just hidden UI. Team/role management and Access Control config stay on `requireRole("OWNER", "ADMIN")` specifically, never `requirePermission()` — see Custom Roles below for why.
 
@@ -856,6 +856,53 @@ for invoice extraction, reused here with no additional setup). Without it,
 `POST /chatbot/ask` returns a 503 with a clear message; every other
 endpoint is unaffected.
 
+### Vendor Management — Phase 1 (`/business-partners`)
+
+Profile depth and a minimal approval workflow layered onto the existing
+`BusinessPartner` (`bpType = 'VENDOR'`) record — no new entity, no new
+permission (rides on `businessPartners.manage`, same as the rest of this
+route file). See `db/migration_028_vendor_management.sql` for the schema.
+Deliberately built as a thin, swappable placeholder: the single-step
+`approvalStatus` field plus dedicated `submit-for-approval`/`approve`/
+`reject` routes are designed to be taken over by a future generic Workflow
+Management System with no data migration, and every route here is gated
+by the same permission a future User Management module would also own.
+
+| Route | Notes |
+| --- | --- |
+| `GET /business-partners/:id` | Full detail — includes `vendorContacts`/`vendorAddresses`/`vendorBankAccounts`, absent on the list endpoint's rows. |
+| `POST /business-partners/:id/submit-for-approval` | Sets `approvalStatus: PENDING_APPROVAL`. `businessPartners.manage`. |
+| `POST /business-partners/:id/approve` | `businessPartners.manage`. |
+| `POST /business-partners/:id/reject` | `{ reason }` required. `businessPartners.manage`. |
+| `POST/PATCH/DELETE /business-partners/:id/contacts(/:contactId)` | Multiple named contacts per vendor. |
+| `POST/PATCH/DELETE /business-partners/:id/addresses(/:addressId)` | Multiple labeled addresses (Registered/Billing/Shipping/...), each with its own `country` — not constrained to India. |
+| `POST/PATCH/DELETE /business-partners/:id/bank-accounts(/:bankAccountId)` | Master data only (no payment-execution feature exists). `ifscCode`, `swiftCode`, `routingNumber` all coexist as optional fields. |
+
+`PATCH /business-partners/:id` explicitly strips `approvalStatus` and its
+audit fields (`approvedBy/approvedAt/rejectedBy/rejectedAt/rejectionReason`)
+from the request body before applying the update, so the generic edit route
+can never bypass the dedicated approve/reject endpoints.
+
+**International vendors.** `taxIdType`/`taxId` are a generic label+value
+pair, separate from `gstin` and never read by the India GST engine
+(`lib/discountGst.ts`'s `isInterState()`/`splitGst()` key off `gstin`/
+`stateCode` only) — a US EIN, Canadian GST/HST No., or VAT No. can be
+recorded without touching tax computation. `vendor_addresses.country`
+defaults to `'India'` but is freely overridable, with `state`/`pincode` as
+plain text (no 2-digit code constraint outside the existing GST fields).
+`vendor_bank_accounts` carries `ifscCode` (India), `swiftCode`
+(international wire), and `routingNumber` (US ABA / Canada) side by side —
+which ones a vendor's own record uses depends on their country, never
+enforced by the schema. Together this means Phase 1's vendor *record*
+already supports onboarding a vendor from any country; the org/tenant
+itself (tax engine, Chart of Accounts templates, statutory reports) is a
+separate, larger question tracked outside this feature.
+
+`purchaseOrders.ts` and `purchaseBills.ts` both reject creating/editing a
+document against a vendor whose `approvalStatus` isn't `APPROVED`.
+Existing business partners are backfilled to `APPROVED` by the migration,
+so nothing that worked before this feature existed is newly blocked.
+
 ## Deploying to Railway
 
 1. In the Railway project already connected to the `ERP` GitHub repo, open
@@ -874,6 +921,12 @@ endpoint is unaffected.
    both features: without it, invoice extraction returns a 502 and the
    chatbot returns a 503, each with a clear message — everything else in
    the app is unaffected.
+4b. Add `SMTP_USER`/`SMTP_PASS` (and `SMTP_HOST`/`SMTP_PORT`/`SMTP_SECURE`
+   if your domain's mail isn't GoDaddy Workspace Email — see
+   `.env.example`) to send real email OTPs for registration and M-PIN,
+   through a mailbox on your own domain (e.g. `otp@yourdomain.com`).
+   Optional: without it, `lib/otp.ts` falls back to the same console-log +
+   `devOtp` stub used for phone.
 5. Once deployed, run the schema, migration, and seed against the Railway
    Postgres instance (from your machine, using the same `DATABASE_URL`):
    ```bash
@@ -908,7 +961,10 @@ endpoint is unaffected.
   lines (PO-linked bills, to catch a vendor invoicing for quantity that was
   actually returned). Requires `ANTHROPIC_API_KEY`; line-item matching is
   best-effort text matching, not exact.
-- OTP delivery surfaces in the API response (`devOtp`), not real SMS/email.
+- OTP delivery: email sends for real via SMTP (`lib/email.ts`) once
+  `SMTP_USER`/`SMTP_PASS` are set — otherwise, and always for phone (no SMS
+  gateway wired up), it falls back to a console-log + `devOtp` in the API
+  response.
 - JWT auth is a shared-secret HS256 token, 30-day expiry, no refresh/revoke
   flow — fine for MVP, not a production auth system.
 - Journal entries don't carry a branch selector in the UI yet — they post

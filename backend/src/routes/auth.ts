@@ -294,11 +294,21 @@ router.post("/mpin/set", async (req, res) => {
 });
 
 // POST /auth/accept-invite — the link an invited teammate gets. Creates
-// their login and org membership in one step.
+// their login and org membership in one step. `mpin` is optional — when
+// given, it's set straight away with no separate OTP round-trip: the
+// invite token itself (unguessable, sent by an OWNER/ADMIN who already
+// knows this person) is the proof of identity that the M-PIN OTP step
+// exists to establish elsewhere (see /mpin/set above) — SmartERP is
+// invite-only today, there's no open self-registration path this could
+// leak into. Only takes effect "first time" — an existingUser who already
+// has an mpinHash keeps it; accept-invite never overwrites one.
 router.post("/accept-invite", async (req, res) => {
-  const { token, name, password } = req.body ?? {};
+  const { token, name, password, mpin } = req.body ?? {};
   if (!token || !name || !password) {
     return res.status(400).json({ message: "token, name, and password are required." });
+  }
+  if (mpin && !/^\d{4}$/.test(mpin)) {
+    return res.status(400).json({ message: "M-PIN must be exactly 4 digits." });
   }
 
   const invite = await prisma.orgInvite.findUnique({ where: { token } });
@@ -322,13 +332,25 @@ router.post("/accept-invite", async (req, res) => {
   }
 
   const passwordHash = await hashPassword(password);
+  const mpinHash = mpin ? await hashPassword(mpin) : null;
 
   const user = await prisma.$transaction(async (tx) => {
-    const u = existingUser
-      ? (existingUser.name ? existingUser : await tx.user.update({ where: { id: existingUser.id }, data: { name } }))
-      : await tx.user.create({
-          data: { name, email: invite.email, phone: invite.phone, passwordHash, isVerified: true },
-        });
+    let u;
+    if (existingUser) {
+      const patch: { name?: string; mpinHash?: string } = {};
+      if (!existingUser.name) patch.name = name;
+      if (mpinHash && !existingUser.mpinHash) patch.mpinHash = mpinHash;
+      u = Object.keys(patch).length > 0
+        ? await tx.user.update({ where: { id: existingUser.id }, data: patch })
+        : existingUser;
+    } else {
+      u = await tx.user.create({
+        data: {
+          name, email: invite.email, phone: invite.phone, passwordHash, isVerified: true,
+          ...(mpinHash ? { mpinHash } : {}),
+        },
+      });
+    }
     await tx.orgUser.create({
       data: {
         organizationId: invite.organizationId, userId: u.id,

@@ -1388,6 +1388,28 @@ model BusinessPartner {
   openingBalance     Decimal   @default(0) @map("opening_balance") @db.Decimal(14, 2)
   openingBalanceType String?   @map("opening_balance_type") @db.VarChar(6)
   isActive           Boolean   @default(true) @map("is_active")
+  // ── Vendor Management (Phase 1) — see migration_028. Only meaningful for
+  // bp_type = 'VENDOR', but not DB-enforced to that (same convention as
+  // openingBalance/address being present-but-unused on the other bpType).
+  vendorCategory     String?   @map("vendor_category") @db.VarChar(30)
+  // Single-step placeholder workflow — DEFAULT 'APPROVED' so every
+  // existing partner (and anything not deliberately using this feature)
+  // is unaffected. See migration_028's header comment: designed to be
+  // swapped for a real Workflow Management System later without a data
+  // migration — same shape as PurchaseBill.status.
+  approvalStatus     String    @default("APPROVED") @map("approval_status") @db.VarChar(20)
+  approvedBy         String?   @map("approved_by") @db.Uuid
+  approvedAt         DateTime? @map("approved_at")
+  rejectedBy         String?   @map("rejected_by") @db.Uuid
+  rejectedAt         DateTime? @map("rejected_at")
+  rejectionReason    String?   @map("rejection_reason") @db.VarChar(500)
+  // International tax registration — separate from gstin (never read by
+  // the India GST engine's isInterState/splitGst). Display-only: a
+  // foreign vendor's own tax reference for the org's records. taxIdType
+  // is a free-standing label ("EIN", "GST/HST No.", "VAT No.", ...), not
+  // a DB-enforced enum — same convention as openingBalanceType.
+  taxIdType          String?   @map("tax_id_type") @db.VarChar(20)
+  taxId              String?   @map("tax_id") @db.VarChar(50)
   createdAt          DateTime  @default(now()) @map("created_at")
   deletedAt          DateTime? @map("deleted_at")
 
@@ -1402,8 +1424,67 @@ model BusinessPartner {
   goodsReceiptNotes GoodsReceiptNote[]
   salesOrders     SalesOrder[]
   deliveryNotes   DeliveryNote[]
+  vendorContacts     VendorContact[]
+  vendorAddresses    VendorAddress[]
+  vendorBankAccounts VendorBankAccount[]
 
   @@map("business_partners")
+}
+
+// ── Vendor Management (Phase 1) — child tables, see migration_028 ─────────
+model VendorContact {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessPartnerId String   @map("business_partner_id") @db.Uuid
+  name              String   @db.VarChar(200)
+  designation       String?  @db.VarChar(100)
+  phone             String?  @db.VarChar(20)
+  email             String?  @db.VarChar(255)
+  isPrimary         Boolean  @default(false) @map("is_primary")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  businessPartner BusinessPartner @relation(fields: [businessPartnerId], references: [id])
+
+  @@map("vendor_contacts")
+}
+
+model VendorAddress {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessPartnerId String   @map("business_partner_id") @db.Uuid
+  label             String   @default("Registered") @db.VarChar(30)
+  line1             String?  @db.VarChar(200)
+  line2             String?  @db.VarChar(200)
+  city              String?  @db.VarChar(100)
+  state             String?  @db.VarChar(100)
+  stateCode         String?  @map("state_code") @db.VarChar(2)
+  pincode           String?  @db.VarChar(10)
+  country           String   @default("India") @db.VarChar(100)
+  isPrimary         Boolean  @default(false) @map("is_primary")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  businessPartner BusinessPartner @relation(fields: [businessPartnerId], references: [id])
+
+  @@map("vendor_addresses")
+}
+
+model VendorBankAccount {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessPartnerId  String   @map("business_partner_id") @db.Uuid
+  accountHolderName  String?  @map("account_holder_name") @db.VarChar(200)
+  bankName           String?  @map("bank_name") @db.VarChar(150)
+  accountNumber      String?  @map("account_number") @db.VarChar(40)
+  // ifscCode (India), swiftCode (international wire), routingNumber (US
+  // ABA / Canada institution+transit) all coexist, all optional — which
+  // ones are filled depends on the vendor's own country.
+  ifscCode           String?  @map("ifsc_code") @db.VarChar(11)
+  swiftCode          String?  @map("swift_code") @db.VarChar(11)
+  routingNumber      String?  @map("routing_number") @db.VarChar(20)
+  branchName         String?  @map("branch_name") @db.VarChar(150)
+  isPrimary          Boolean  @default(false) @map("is_primary")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  businessPartner BusinessPartner @relation(fields: [businessPartnerId], references: [id])
+
+  @@map("vendor_bank_accounts")
 }
 
 model JournalEntry {

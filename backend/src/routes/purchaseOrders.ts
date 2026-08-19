@@ -204,6 +204,9 @@ router.post("/", canPost, async (req, res) => {
 
   const vendor = await prisma.businessPartner.findFirst({ where: { id: businessPartnerId, organizationId, bpType: "VENDOR" } });
   if (!vendor) return res.status(400).json({ message: "businessPartnerId must be an existing vendor." });
+  if (vendor.approvalStatus !== "APPROVED") {
+    return res.status(400).json({ message: `This vendor is ${vendor.approvalStatus === "PENDING_APPROVAL" ? "pending approval" : "rejected"} — approve it under Business Partners before raising a Purchase Order.` });
+  }
 
   let resolvedBranchId: string | null = branchId ?? null;
   if (!resolvedBranchId) {
@@ -269,6 +272,9 @@ router.patch("/:id", canPost, async (req, res) => {
   if (businessPartnerId && businessPartnerId !== existing.businessPartnerId) {
     const vendor = await prisma.businessPartner.findFirst({ where: { id: businessPartnerId, organizationId, bpType: "VENDOR" } });
     if (!vendor) return res.status(400).json({ message: "businessPartnerId must be an existing vendor." });
+    if (vendor.approvalStatus !== "APPROVED") {
+      return res.status(400).json({ message: `This vendor is ${vendor.approvalStatus === "PENDING_APPROVAL" ? "pending approval" : "rejected"} — approve it under Business Partners before raising a Purchase Order.` });
+    }
     vendorId = businessPartnerId;
   }
 

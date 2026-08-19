@@ -16,6 +16,8 @@ function AcceptInviteForm() {
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [mpin, setMpin] = useState("");
+  const [confirmMpin, setConfirmMpin] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,10 +27,18 @@ function AcceptInviteForm() {
       setError("Passwords don't match.");
       return;
     }
+    if (mpin && !/^\d{4}$/.test(mpin)) {
+      setError("M-PIN must be exactly 4 digits.");
+      return;
+    }
+    if (mpin && mpin !== confirmMpin) {
+      setError("M-PINs don't match.");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const res = await acceptInvite(token, name, password);
+      const res = await acceptInvite(token, name, password, mpin || undefined);
       setSession(res.token, res.organizationId, res.role, false, res.name, res.permissions, res.customRoleId);
       router.push("/dashboard");
     } catch (err) {
@@ -54,6 +64,19 @@ function AcceptInviteForm() {
         <Input label="Your name" value={name} onChange={(e) => setName(e.target.value)} required />
         <Input label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
         <Input label="Confirm password" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
+        <p className="auth-p" style={{ marginTop: 4 }}>
+          Optional: set a 4-digit M-PIN now for quick sign-in next time — no separate code needed, this invite already proves it&apos;s you.
+        </p>
+        <Input
+          label="M-PIN (optional)" type="password" inputMode="numeric" maxLength={4} pattern="\d{4}"
+          value={mpin} onChange={(e) => setMpin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+        />
+        {mpin && (
+          <Input
+            label="Confirm M-PIN" type="password" inputMode="numeric" maxLength={4} pattern="\d{4}"
+            value={confirmMpin} onChange={(e) => setConfirmMpin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+          />
+        )}
         {error && <p className="auth-err">{error}</p>}
         <Button type="submit" loading={loading}>Join workspace</Button>
       </form>

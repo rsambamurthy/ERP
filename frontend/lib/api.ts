@@ -62,6 +62,9 @@ import type {
   StockAdjustmentLineInput,
   StockLedgerResponse,
   TrialBalanceResponse,
+  VendorContact,
+  VendorAddress,
+  VendorBankAccount,
   ValuationResponse,
 } from "./types";
 import { getToken } from "./auth";
@@ -156,12 +159,13 @@ export function setMpin(identifier: string, otp: string, mpin: string) {
   });
 }
 
-// POST /auth/accept-invite
-export function acceptInvite(token: string, name: string, password: string) {
+// POST /auth/accept-invite — mpin is optional: set straight away, no OTP
+// (the invite token itself is the proof — see the backend route's comment).
+export function acceptInvite(token: string, name: string, password: string, mpin?: string) {
   return request<{
     token: string; organizationId: string; role: string; name: string | null;
     permissions: Permission[]; customRoleId: string | null;
-  }>("/auth/accept-invite", { method: "POST", body: JSON.stringify({ token, name, password }) });
+  }>("/auth/accept-invite", { method: "POST", body: JSON.stringify({ token, name, password, mpin: mpin || undefined }) });
 }
 
 // GET /domain-types
@@ -289,6 +293,75 @@ export function toggleBusinessPartner(id: string) {
 
 export function deleteBusinessPartner(id: string) {
   return request<{ data: { deleted: true } }>(`/business-partners/${id}`, { method: "DELETE" });
+}
+
+// Full detail — includes vendorContacts/vendorAddresses/vendorBankAccounts,
+// which the list endpoint above doesn't return.
+export function getBusinessPartner(id: string) {
+  return request<{ data: BusinessPartner }>(`/business-partners/${id}`);
+}
+
+// ── Vendor Management (Phase 1) ──────────────────────────────────────────
+
+export function submitBusinessPartnerForApproval(id: string) {
+  return request<{ data: BusinessPartner }>(`/business-partners/${id}/submit-for-approval`, { method: "POST" });
+}
+export function approveBusinessPartner(id: string) {
+  return request<{ data: BusinessPartner }>(`/business-partners/${id}/approve`, { method: "POST" });
+}
+export function rejectBusinessPartner(id: string, reason: string) {
+  return request<{ data: BusinessPartner }>(`/business-partners/${id}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function createVendorContact(businessPartnerId: string, body: Partial<VendorContact>) {
+  return request<{ data: VendorContact }>(`/business-partners/${businessPartnerId}/contacts`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+export function updateVendorContact(businessPartnerId: string, contactId: string, body: Partial<VendorContact>) {
+  return request<{ data: VendorContact }>(`/business-partners/${businessPartnerId}/contacts/${contactId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+export function deleteVendorContact(businessPartnerId: string, contactId: string) {
+  return request<{ data: { deleted: true } }>(`/business-partners/${businessPartnerId}/contacts/${contactId}`, { method: "DELETE" });
+}
+
+export function createVendorAddress(businessPartnerId: string, body: Partial<VendorAddress>) {
+  return request<{ data: VendorAddress }>(`/business-partners/${businessPartnerId}/addresses`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+export function updateVendorAddress(businessPartnerId: string, addressId: string, body: Partial<VendorAddress>) {
+  return request<{ data: VendorAddress }>(`/business-partners/${businessPartnerId}/addresses/${addressId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+export function deleteVendorAddress(businessPartnerId: string, addressId: string) {
+  return request<{ data: { deleted: true } }>(`/business-partners/${businessPartnerId}/addresses/${addressId}`, { method: "DELETE" });
+}
+
+export function createVendorBankAccount(businessPartnerId: string, body: Partial<VendorBankAccount>) {
+  return request<{ data: VendorBankAccount }>(`/business-partners/${businessPartnerId}/bank-accounts`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+export function updateVendorBankAccount(businessPartnerId: string, bankAccountId: string, body: Partial<VendorBankAccount>) {
+  return request<{ data: VendorBankAccount }>(`/business-partners/${businessPartnerId}/bank-accounts/${bankAccountId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+export function deleteVendorBankAccount(businessPartnerId: string, bankAccountId: string) {
+  return request<{ data: { deleted: true } }>(`/business-partners/${businessPartnerId}/bank-accounts/${bankAccountId}`, { method: "DELETE" });
 }
 
 // ── Journal Entries / Ledger / Trial Balance ────────────────────────────────

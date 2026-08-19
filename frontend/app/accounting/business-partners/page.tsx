@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
 import { ApiError, createBusinessPartner, getBusinessPartners, toggleBusinessPartner } from "@/lib/api";
 import { useBulkUpload } from "@/components/shared/BulkUpload";
 import { GST_STATE_CODES } from "@/lib/gstStates";
+import { VENDOR_CATEGORIES, TAX_ID_TYPE_SUGGESTIONS } from "@/lib/types";
 import type { BpUploadRow, BusinessPartner } from "@/lib/types";
 
 const BP_UPLOAD_COLUMNS: { key: keyof BpUploadRow; label: string }[] = [
@@ -23,7 +25,10 @@ export default function BusinessPartnersPage() {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const [form, setForm] = useState({ name: "", gstin: "", stateCode: "", phone: "", email: "" });
+  const [form, setForm] = useState({
+    name: "", gstin: "", stateCode: "", phone: "", email: "",
+    vendorCategory: "", taxIdType: "", taxId: "",
+  });
 
   async function load() {
     setLoading(true);
@@ -53,9 +58,14 @@ export default function BusinessPartnersPage() {
         bpType, name: form.name,
         gstin: form.gstin || null, stateCode: form.stateCode || null,
         phone: form.phone || null, email: form.email || null,
+        ...(bpType === "VENDOR" ? {
+          vendorCategory: form.vendorCategory || null,
+          taxIdType: form.taxIdType || null,
+          taxId: form.taxId || null,
+        } : {}),
       });
       setShowForm(false);
-      setForm({ name: "", gstin: "", stateCode: "", phone: "", email: "" });
+      setForm({ name: "", gstin: "", stateCode: "", phone: "", email: "", vendorCategory: "", taxIdType: "", taxId: "" });
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not create business partner.");
@@ -109,7 +119,25 @@ export default function BusinessPartnersPage() {
             </div>
             <div className="ent-fg"><label className="ent-fl">Phone (optional)</label><input className="ent-fc" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} /></div>
             <div className="ent-fg"><label className="ent-fl">Email (optional)</label><input className="ent-fc" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} /></div>
+            {bpType === "VENDOR" && (
+              <>
+                <div className="ent-fg">
+                  <label className="ent-fl">Vendor Category (optional)</label>
+                  <input className="ent-fc" list="vendor-category-list" value={form.vendorCategory} onChange={(e) => setForm((f) => ({ ...f, vendorCategory: e.target.value }))} />
+                  <datalist id="vendor-category-list">{VENDOR_CATEGORIES.map((c) => <option key={c} value={c} />)}</datalist>
+                </div>
+                <div className="ent-fg">
+                  <label className="ent-fl">Tax ID Type (optional, non-India)</label>
+                  <input className="ent-fc" list="tax-id-type-list" placeholder="e.g. EIN, VAT No." value={form.taxIdType} onChange={(e) => setForm((f) => ({ ...f, taxIdType: e.target.value }))} />
+                  <datalist id="tax-id-type-list">{TAX_ID_TYPE_SUGGESTIONS.map((t) => <option key={t} value={t} />)}</datalist>
+                </div>
+                <div className="ent-fg"><label className="ent-fl">Tax ID (optional)</label><input className="ent-fc" value={form.taxId} onChange={(e) => setForm((f) => ({ ...f, taxId: e.target.value }))} /></div>
+              </>
+            )}
           </div>
+          <p style={{ fontSize: 12, color: "var(--color-muted)", padding: "0 14px 6px" }}>
+            Contacts, addresses, and bank accounts can be added after saving, from the vendor&apos;s detail page.
+          </p>
           {error && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 10px" }}>{error}</p>}
           <div style={{ padding: "0 14px 14px" }}>
             <button type="submit" className="ent-btn-save" disabled={saving}>{saving ? "Saving…" : "Save"}</button>
@@ -121,17 +149,37 @@ export default function BusinessPartnersPage() {
 
       <div className="ent-page-table">
         <table>
-          <thead><tr><th>Name</th><th>GSTIN</th><th>Contact</th><th>Status</th><th /></tr></thead>
+          <thead>
+            <tr>
+              <th>Name</th><th>GSTIN</th><th>Contact</th>
+              {bpType === "VENDOR" && <th>Approval</th>}
+              <th>Status</th><th /></tr>
+          </thead>
           <tbody>
-            {loading && <tr><td colSpan={5} className="ent-empty">Loading…</td></tr>}
-            {!loading && partners.length === 0 && <tr><td colSpan={5} className="ent-empty">None yet.</td></tr>}
+            {loading && <tr><td colSpan={bpType === "VENDOR" ? 6 : 5} className="ent-empty">Loading…</td></tr>}
+            {!loading && partners.length === 0 && <tr><td colSpan={bpType === "VENDOR" ? 6 : 5} className="ent-empty">None yet.</td></tr>}
             {partners.map((p) => (
               <tr key={p.id}>
-                <td style={{ fontWeight: 500 }}>{p.name}</td>
+                <td style={{ fontWeight: 500 }}>
+                  <Link href={`/accounting/business-partners/${p.id}`} style={{ color: "inherit", textDecoration: "none" }}>
+                    {p.name}
+                  </Link>
+                </td>
                 <td style={{ color: "var(--color-muted)" }}>{p.gstin || "—"}</td>
                 <td style={{ color: "var(--color-muted)" }}>{p.phone || p.email || "—"}</td>
+                {bpType === "VENDOR" && (
+                  <td>
+                    <span className={
+                      p.approvalStatus === "APPROVED" ? "badge badge-green"
+                        : p.approvalStatus === "REJECTED" ? "badge badge-red" : "badge badge-yellow"
+                    }>
+                      {p.approvalStatus === "PENDING_APPROVAL" ? "Pending" : p.approvalStatus === "APPROVED" ? "Approved" : "Rejected"}
+                    </span>
+                  </td>
+                )}
                 <td><span className={p.isActive ? "badge badge-green" : "badge badge-gray"}>{p.isActive ? "Active" : "Inactive"}</span></td>
                 <td style={{ textAlign: "right" }}>
+                  <Link href={`/accounting/business-partners/${p.id}`} className="ent-ia ent-ia-edit" style={{ marginRight: 6 }}>View</Link>
                   <button className="ent-ia ent-ia-edit" onClick={() => handleToggle(p.id)}>{p.isActive ? "Deactivate" : "Activate"}</button>
                 </td>
               </tr>

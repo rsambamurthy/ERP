@@ -247,6 +247,9 @@ router.post("/", canPost, async (req, res) => {
 
   const vendor = await prisma.businessPartner.findFirst({ where: { id: effectiveBusinessPartnerId, organizationId, bpType: "VENDOR" } });
   if (!vendor) return res.status(400).json({ message: "businessPartnerId must be an existing vendor." });
+  if (vendor.approvalStatus !== "APPROVED") {
+    return res.status(400).json({ message: `This vendor is ${vendor.approvalStatus === "PENDING_APPROVAL" ? "pending approval" : "rejected"} — approve it under Business Partners before posting a Purchase Bill.` });
+  }
 
   let resolvedBranchId: string | null = branchId ?? null;
   if (!resolvedBranchId) {

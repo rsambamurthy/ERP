@@ -140,6 +140,17 @@ export function canUseChatbot(): boolean {
   return ["OWNER", "ADMIN"].includes(role);
 }
 
+// Vendor Management (Phase 1) reuses businessPartners.manage — same gate as
+// the underlying create/edit/toggle Business Partner routes. Owner/Admin/
+// Accountant get it by default (see BUILT_IN_PERMISSIONS.ACCOUNTANT); a
+// CUSTOM role needs it explicitly granted. This is the placeholder a future
+// generic Workflow/User Management module would take over.
+export function canManageBusinessPartners(): boolean {
+  const role = getRole() ?? "";
+  if (role === "CUSTOM") return getPermissions().includes("businessPartners.manage");
+  return ["OWNER", "ADMIN", "ACCOUNTANT"].includes(role);
+}
+
 export function clearSession() {
   if (typeof window === "undefined") return;
   localStorage.removeItem(TOKEN_KEY);
