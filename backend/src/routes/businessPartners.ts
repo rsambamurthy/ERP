@@ -489,35 +489,81 @@ router.post("/bulk-upload/apply", canManageBp, async (req, res) => {
 
   const existing = await prisma.businessPartner.findMany({
     where: { organizationId, deletedAt: null, code: { not: null } },
+    select: { id: true, code: true },
   });
-  const byCode = new Map(existing.map((p) => [p.code!.trim(), p]));
+  const byCode = new Map<string, string>(existing.map((p) => [p.code!.trim(), p.id]));
+
+  // Resolve every row to either an update against an existing id, or a new
+  // create — *before* touching the database. This replaces what used to be one
+  // awaited prisma call per row: a 9,625-row import meant 9,625 sequential
+  // round trips, which took minutes and, with no transaction around it, left
+  // half the file imported if anything failed partway.
+  //
+  // The pass below preserves the old sequential semantics exactly, including
+  // the subtle one: if the same Code appears twice in a single file, the first
+  // occurrence used to create and the second used to update what the first had
+  // just made. There is a partial unique index on (organization_id, code)
+  // where code is not null (migration_007), so a naive createMany over both
+  // rows would blow up with a unique violation instead. Here the second
+  // occurrence overwrites the pending create's data — last write wins, same
+  // net row, same created/updated tallies as before.
+  const rowData = (row: BpPreviewRow) => ({
+    bpType: row.bpType!,
+    name: row.name,
+    gstin: row.gstin,
+    phone: row.phone,
+    email: row.email,
+    address: row.address ? { full: row.address } : undefined,
+    openingBalance: row.openingBalance ?? 0,
+    openingBalanceType: row.openingBalanceType,
+  });
+
+  type CreateInput = ReturnType<typeof rowData> & { organizationId: string; code: string | null };
+  const creates: CreateInput[] = [];
+  const updates: { id: string; data: ReturnType<typeof rowData> }[] = [];
+  const pendingCreateIdx = new Map<string, number>();
 
   let created = 0, updated = 0;
   for (const row of workRows) {
-    const data = {
-      bpType: row.bpType!,
-      name: row.name,
-      gstin: row.gstin,
-      phone: row.phone,
-      email: row.email,
-      address: row.address ? { full: row.address } : undefined,
-      openingBalance: row.openingBalance ?? 0,
-      openingBalanceType: row.openingBalanceType,
-    };
+    const code = row.code ? row.code.trim() : null;
+    const existingId = code ? byCode.get(code) : undefined;
 
-    const found = row.code ? byCode.get(row.code) : null;
-    if (found) {
-      await prisma.businessPartner.update({ where: { id: found.id }, data });
+    if (existingId) {
+      updates.push({ id: existingId, data: rowData(row) });
       updated++;
-    } else {
-      const partner = await prisma.businessPartner.create({
-        data: { organizationId, code: row.code, ...data },
-      });
-      if (row.code) byCode.set(row.code.trim(), partner);
-      created++;
+      continue;
     }
+
+    const pending = code != null ? pendingCreateIdx.get(code) : undefined;
+    if (pending !== undefined) {
+      creates[pending] = { ...creates[pending], ...rowData(row) };
+      updated++;
+      continue;
+    }
+
+    if (code != null) pendingCreateIdx.set(code, creates.length);
+    creates.push({ organizationId, code: row.code, ...rowData(row) });
+    created++;
   }
 
+  // One transaction so a failure anywhere leaves the org's data untouched
+  // rather than partially imported. createMany batches the inserts into a
+  // handful of multi-row INSERTs instead of one statement per row; updates
+  // still cost a statement each, but in practice a re-import updates far
+  // fewer rows than it creates. The timeout is generous because this is an
+  // explicitly bulk operation, not a user-facing read path.
+  const CHUNK = 1000;
+  await prisma.$transaction(
+    async (tx) => {
+      for (let i = 0; i < creates.length; i += CHUNK) {
+        await tx.businessPartner.createMany({ data: creates.slice(i, i + CHUNK) });
+      }
+      for (const u of updates) {
+        await tx.businessPartner.update({ where: { id: u.id }, data: u.data });
+      }
+    },
+    { timeout: 120_000, maxWait: 15_000 }
+  );
   logAudit({
     organizationId, actorUserId: req.user!.userId,
     action: "BULK_UPLOAD", entityType: "business_partner", entityId: organizationId,

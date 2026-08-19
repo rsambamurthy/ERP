@@ -56,7 +56,6 @@ process.on("uncaughtException", (err) => {
 
 const app = express();
 app.use(cors());
-// app.use(express.json());
 app.use(express.json({ limit: "25mb" }));
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
@@ -101,6 +100,31 @@ app.use("/integration", integrationApiRoutes);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
+
+  // Body-parser and multer raise errors that are the *caller's* fault, not
+  // ours. Collapsing them into a blanket 500 "Unexpected server error." is
+  // what made the oversized bulk-upload failure so hard to diagnose from the
+  // UI — the browser showed a server crash for what was really "your payload
+  // is too big". Surface the real status and a message the user can act on.
+  const e = err as { type?: string; status?: number; statusCode?: number; limit?: number; length?: number };
+
+  if (e?.type === "entity.too.large") {
+    const mb = (n?: number) => (n ? `${(n / 1024 / 1024).toFixed(1)}MB` : "unknown");
+    return res.status(413).json({
+      message:
+        `Upload is too large (${mb(e.length)}; limit ${mb(e.limit)}). ` +
+        `Split the file into smaller batches and upload them one at a time.`,
+    });
+  }
+  if (e?.type === "entity.parse.failed") {
+    return res.status(400).json({ message: "Request body was not valid JSON." });
+  }
+
+  const status = e?.status ?? e?.statusCode;
+  if (typeof status === "number" && status >= 400 && status < 500) {
+    return res.status(status).json({ message: "Request could not be processed." });
+  }
+
   res.status(500).json({ message: "Unexpected server error." });
 });
 
