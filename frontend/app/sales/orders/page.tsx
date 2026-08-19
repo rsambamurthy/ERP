@@ -3,14 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
+import PartnerPicker from "@/components/shared/PartnerPicker";
 import {
   ApiError, approveSalesOrder, cancelSalesOrder, createSalesOrder, downloadSalesOrderPdf, getBranches,
-  getBusinessPartners, getItems, getSalesOrder, getSalesOrders, lookupCurrencyRate, rejectSalesOrder, reopenSalesOrder,
+  getBusinessPartnerLookup, getItems, getSalesOrder, getSalesOrders, lookupCurrencyRate, rejectSalesOrder, reopenSalesOrder,
   submitSalesOrder, updateSalesOrder,
 } from "@/lib/api";
 import { round2 } from "@/lib/discountGst";
 import { canApproveSalesOrders, canDeliverGoods } from "@/lib/auth";
-import type { Branch, BusinessPartner, Item, SalesOrder, SalesOrderLineInput, SalesOrderStatus } from "@/lib/types";
+import type { Branch, BusinessPartnerLookup, Item, SalesOrder, SalesOrderLineInput, SalesOrderStatus } from "@/lib/types";
 import { SALES_ORDER_STATUS_LABELS, SUPPORTED_CURRENCIES } from "@/lib/types";
 
 const emptyLine = (): SalesOrderLineInput => ({ itemId: "", quantity: 0, rate: 0, rateFc: 0, taxRate: 0 });
@@ -39,7 +40,7 @@ function StatusBadge({ status }: { status: SalesOrderStatus }) {
 function SalesOrdersInner() {
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [items, setItems] = useState<Item[]>([]);
-  const [customers, setCustomers] = useState<BusinessPartner[]>([]);
+  const [customers, setCustomers] = useState<BusinessPartnerLookup[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +85,7 @@ function SalesOrdersInner() {
     setLoading(true);
     try {
       const [ordersRes, itemsRes, customersRes, branchRes] = await Promise.all([
-        getSalesOrders(), getItems(), getBusinessPartners("CUSTOMER"), getBranches(),
+        getSalesOrders(), getItems(), getBusinessPartnerLookup("CUSTOMER"), getBranches(),
       ]);
       setOrders(ordersRes.data);
       setItems(itemsRes.data);
@@ -282,10 +283,12 @@ function SalesOrdersInner() {
           <div className="ent-form-grid" style={{ gridTemplateColumns: "1fr 1fr 1fr 2fr" }}>
             <div className="ent-fg">
               <label className="ent-fl">Customer</label>
-              <select className="ent-fc" value={businessPartnerId} onChange={(e) => setBusinessPartnerId(e.target.value)} required>
-                <option value="">Select…</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <PartnerPicker
+                partners={customers}
+                value={businessPartnerId || null}
+                onChange={(id) => setBusinessPartnerId(id ?? "")}
+                required
+              />
             </div>
             <div className="ent-fg">
               <label className="ent-fl">SO Date</label>

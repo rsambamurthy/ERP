@@ -262,6 +262,22 @@ export interface VendorBankAccount {
   createdAt: string;
 }
 
+// Narrow projection from GET /business-partners/lookup — enough to render
+// and filter a partner picker, and nothing else. Kept separate from
+// BusinessPartner so a screen can't accidentally read a field the lookup
+// endpoint doesn't send.
+export interface BusinessPartnerLookup {
+  id: string;
+  code: string | null;
+  name: string;
+  phone: string | null;
+  bpType: "CUSTOMER" | "VENDOR" | "ITEM";
+  // Not displayed by the picker — carried because Sales Invoice and Purchase
+  // Bill compute CGST+SGST vs IGST from it (isInterState). See the matching
+  // comment on the lookup route's select.
+  stateCode: string | null;
+}
+
 export interface BusinessPartner {
   id: string;
   bpType: "CUSTOMER" | "VENDOR" | "ITEM";

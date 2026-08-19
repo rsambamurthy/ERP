@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
 import { ApiError, createBusinessPartner, getBusinessPartners, toggleBusinessPartner } from "@/lib/api";
@@ -24,6 +24,7 @@ export default function BusinessPartnersPage() {
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
 
   const [form, setForm] = useState({
     name: "", gstin: "", stateCode: "", phone: "", email: "",
@@ -48,6 +49,22 @@ export default function BusinessPartnersPage() {
   }, [bpType]);
 
   const bulk = useBulkUpload<BpUploadRow>("business-partners", "SmartERP_BusinessPartners_Template.xlsx", BP_UPLOAD_COLUMNS, load);
+
+  // Filtering happens here rather than server-side because the rows are
+  // already in memory — this list endpoint has no pagination, so an org with
+  // ~10k partners has all of them client-side either way. One pass over an
+  // array of that size per keystroke is imperceptible; the round trip
+  // wouldn't be.
+  const visiblePartners = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return partners;
+    return partners.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        (p.code ?? "").toLowerCase().includes(q) ||
+        (p.phone ?? "").toLowerCase().includes(q)
+    );
+  }, [partners, search]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -95,6 +112,26 @@ export default function BusinessPartnersPage() {
       </div>
 
       <div className="ent-toolbar">
+        <input
+          className="ent-fc"
+          style={{ flex: "1 1 320px", maxWidth: 420, height: 34 }}
+          placeholder="Search by name, phone or code…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        {search && (
+          <span style={{ fontSize: 12.5, color: "var(--color-muted)", whiteSpace: "nowrap" }}>
+            {visiblePartners.length} of {partners.length}
+            <button
+              type="button"
+              className="ent-ia ent-ia-edit"
+              style={{ marginLeft: 8 }}
+              onClick={() => setSearch("")}
+            >
+              Clear
+            </button>
+          </span>
+        )}
         <div style={{ flex: 1 }} />
         {bulk.buttons}
         <button className="ent-btn-add" onClick={() => setShowForm((s) => !s)}>
@@ -151,15 +188,19 @@ export default function BusinessPartnersPage() {
         <table>
           <thead>
             <tr>
-              <th>Name</th><th>GSTIN</th><th>Contact</th>
+              <th>Code</th><th>Name</th><th>GSTIN</th><th>Contact</th>
               {bpType === "VENDOR" && <th>Approval</th>}
               <th>Status</th><th /></tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={bpType === "VENDOR" ? 6 : 5} className="ent-empty">Loading…</td></tr>}
-            {!loading && partners.length === 0 && <tr><td colSpan={bpType === "VENDOR" ? 6 : 5} className="ent-empty">None yet.</td></tr>}
-            {partners.map((p) => (
+            {loading && <tr><td colSpan={bpType === "VENDOR" ? 7 : 6} className="ent-empty">Loading…</td></tr>}
+            {!loading && partners.length === 0 && <tr><td colSpan={bpType === "VENDOR" ? 7 : 6} className="ent-empty">None yet.</td></tr>}
+            {!loading && partners.length > 0 && visiblePartners.length === 0 && (
+              <tr><td colSpan={bpType === "VENDOR" ? 7 : 6} className="ent-empty">No match for “{search}”.</td></tr>
+            )}
+            {visiblePartners.map((p) => (
               <tr key={p.id}>
+                <td style={{ color: "var(--color-muted)", fontVariantNumeric: "tabular-nums" }}>{p.code || "—"}</td>
                 <td style={{ fontWeight: 500 }}>
                   <Link href={`/accounting/business-partners/${p.id}`} style={{ color: "inherit", textDecoration: "none" }}>
                     {p.name}

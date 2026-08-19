@@ -4,13 +4,14 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
+import PartnerPicker from "@/components/shared/PartnerPicker";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import {
-  ApiError, createSalesInvoice, downloadSalesInvoicePdf, getBranches, getBusinessPartners, getDeliveryNotes, getItems, getSalesInvoice,
+  ApiError, createSalesInvoice, downloadSalesInvoicePdf, getBranches, getBusinessPartnerLookup, getDeliveryNotes, getItems, getSalesInvoice,
   getSalesInvoices, getSalesOrder, getSalesOrders, lookupCurrencyRate, updateSalesInvoiceReference,
 } from "@/lib/api";
 import { computeDiscountedLines, isInterState, round2 } from "@/lib/discountGst";
-import type { Branch, BusinessPartner, DiscountType, ExportType, Item, SalesInvoice, SalesLineInput, SalesOrder } from "@/lib/types";
+import type { Branch, BusinessPartnerLookup, DiscountType, ExportType, Item, SalesInvoice, SalesLineInput, SalesOrder } from "@/lib/types";
 import { SUPPORTED_CURRENCIES, currencySymbol, EXPORT_TYPE_LABELS } from "@/lib/types";
 
 const emptyLine = (): SalesLineInput => ({ itemId: "", quantity: 0, rate: 0, rateFc: 0, taxRate: 0, discountType: null, discountValue: 0 });
@@ -21,7 +22,7 @@ function SalesInvoicesInner() {
 
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
   const [items, setItems] = useState<Item[]>([]);
-  const [customers, setCustomers] = useState<BusinessPartner[]>([]);
+  const [customers, setCustomers] = useState<BusinessPartnerLookup[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -114,7 +115,7 @@ function SalesInvoicesInner() {
     setLoading(true);
     try {
       const [invRes, itemsRes, custRes, branchRes, soRes] = await Promise.all([
-        getSalesInvoices(), getItems(), getBusinessPartners("CUSTOMER"), getBranches(), getSalesOrders({ status: "APPROVED" }),
+        getSalesInvoices(), getItems(), getBusinessPartnerLookup("CUSTOMER"), getBranches(), getSalesOrders({ status: "APPROVED" }),
       ]);
       setInvoices(invRes.data);
       setItems(itemsRes.data);
@@ -419,10 +420,13 @@ function SalesInvoicesInner() {
           <div className="ent-form-grid" style={{ gridTemplateColumns: "1fr 1fr 2fr" }}>
             <div className="ent-fg">
               <label className="ent-fl">Customer</label>
-              <select className="ent-fc" value={businessPartnerId} onChange={(e) => setBusinessPartnerId(e.target.value)} required disabled={!!linkedSO}>
-                <option value="">Select…</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <PartnerPicker
+                partners={customers}
+                value={businessPartnerId || null}
+                onChange={(id) => setBusinessPartnerId(id ?? "")}
+                required
+                disabled={!!linkedSO}
+              />
             </div>
             <div className="ent-fg">
               <label className="ent-fl">Invoice Date</label>

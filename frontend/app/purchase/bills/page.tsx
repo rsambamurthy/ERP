@@ -4,14 +4,15 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
+import PartnerPicker from "@/components/shared/PartnerPicker";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import {
-  ApiError, approvePurchaseBill, createPurchaseBill, extractInvoice, getBranches, getBusinessPartners, getGoodsReceiptNotes, getItems,
+  ApiError, approvePurchaseBill, createPurchaseBill, extractInvoice, getBranches, getBusinessPartnerLookup, getGoodsReceiptNotes, getItems,
   getPurchaseBill, getPurchaseBills, getPurchaseOrder, getPurchaseOrders, lookupCurrencyRate, rejectPurchaseBill, updatePurchaseBillReference,
 } from "@/lib/api";
 import { canApprovePurchaseOrders } from "@/lib/auth";
 import { isInterState, round2, splitGst } from "@/lib/discountGst";
-import type { Branch, BusinessPartner, DocumentLineInput, ExtractedInvoice, ExtractedInvoiceLine, Item, PurchaseBill, PurchaseBillStatus, PurchaseOrder } from "@/lib/types";
+import type { Branch, BusinessPartnerLookup, DocumentLineInput, ExtractedInvoice, ExtractedInvoiceLine, Item, PurchaseBill, PurchaseBillStatus, PurchaseOrder } from "@/lib/types";
 import { PURCHASE_BILL_STATUS_LABELS, SUPPORTED_CURRENCIES, currencySymbol } from "@/lib/types";
 
 // Best-effort word-overlap match between an extracted invoice line's free-
@@ -125,7 +126,7 @@ function PurchaseBillsInner() {
 
   const [bills, setBills] = useState<PurchaseBill[]>([]);
   const [items, setItems] = useState<Item[]>([]);
-  const [vendors, setVendors] = useState<BusinessPartner[]>([]);
+  const [vendors, setVendors] = useState<BusinessPartnerLookup[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -230,7 +231,7 @@ function PurchaseBillsInner() {
     setLoading(true);
     try {
       const [billsRes, itemsRes, vendorsRes, branchRes, poRes] = await Promise.all([
-        getPurchaseBills(), getItems(), getBusinessPartners("VENDOR"), getBranches(), getPurchaseOrders({ status: "APPROVED" }),
+        getPurchaseBills(), getItems(), getBusinessPartnerLookup("VENDOR"), getBranches(), getPurchaseOrders({ status: "APPROVED" }),
       ]);
       setBills(billsRes.data);
       setItems(itemsRes.data);
@@ -681,10 +682,13 @@ function PurchaseBillsInner() {
           <div className="ent-form-grid" style={{ gridTemplateColumns: "1fr 1fr 2fr" }}>
             <div className="ent-fg">
               <label className="ent-fl">Vendor</label>
-              <select className="ent-fc" value={businessPartnerId} onChange={(e) => setBusinessPartnerId(e.target.value)} required disabled={!!linkedPO}>
-                <option value="">Select…</option>
-                {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-              </select>
+              <PartnerPicker
+                partners={vendors}
+                value={businessPartnerId || null}
+                onChange={(id) => setBusinessPartnerId(id ?? "")}
+                required
+                disabled={!!linkedPO}
+              />
             </div>
             <div className="ent-fg">
               <label className="ent-fl">Bill Date</label>

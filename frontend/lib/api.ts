@@ -9,6 +9,7 @@ import type {
   Branch,
   BranchSummary,
   BusinessPartner,
+  BusinessPartnerLookup,
   CashBookResponse,
   CompanyMaster,
   CostingMethod,
@@ -270,6 +271,16 @@ export function deleteAccount(id: string) {
 export function getBusinessPartners(bpType?: "CUSTOMER" | "VENDOR") {
   return request<{ data: BusinessPartner[] }>(
     `/business-partners${bpType ? `?bpType=${bpType}` : ""}`
+  );
+}
+
+// Use this, not getBusinessPartners, for anything that only needs to *pick* a
+// partner. It returns four fields per row instead of twenty-odd, which is the
+// difference between a few hundred KB and several MB on an org with ~10k
+// partners — paid on every load of every screen that has a partner dropdown.
+export function getBusinessPartnerLookup(bpType?: "CUSTOMER" | "VENDOR") {
+  return request<{ data: BusinessPartnerLookup[] }>(
+    `/business-partners/lookup${bpType ? `?bpType=${bpType}` : ""}`
   );
 }
 

@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
-import { ApiError, getAccounts, getBusinessPartners, getLedger } from "@/lib/api";
-import type { Account, BusinessPartner, LedgerResponse } from "@/lib/types";
+import PartnerPicker from "@/components/shared/PartnerPicker";
+import { ApiError, getAccounts, getBusinessPartnerLookup, getLedger } from "@/lib/api";
+import type { Account, BusinessPartnerLookup, LedgerResponse } from "@/lib/types";
 
 export default function LedgerPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [partners, setPartners] = useState<BusinessPartner[]>([]);
+  const [partners, setPartners] = useState<BusinessPartnerLookup[]>([]);
   const [accountId, setAccountId] = useState("");
   const [businessPartnerId, setBusinessPartnerId] = useState("");
   const [from, setFrom] = useState("");
@@ -19,7 +20,7 @@ export default function LedgerPage() {
   const account = useMemo(() => accounts.find((a) => a.id === accountId), [accounts, accountId]);
 
   useEffect(() => {
-    Promise.all([getAccounts(), getBusinessPartners()]).then(([a, p]) => {
+    Promise.all([getAccounts(), getBusinessPartnerLookup()]).then(([a, p]) => {
       setAccounts(a.data);
       setPartners(p.data);
     });
@@ -48,10 +49,14 @@ export default function LedgerPage() {
           <option value="">Select account…</option>
           {accounts.map((a) => <option key={a.id} value={a.id}>{a.accountCode} — {a.accountName}</option>)}
         </select>
-        <select className="ent-fc" style={{ flex: "1 1 180px", height: 34 }} value={businessPartnerId} disabled={!account?.isControlAccount} onChange={(e) => setBusinessPartnerId(e.target.value)}>
-          <option value="">All partners</option>
-          {partners.filter((p) => p.bpType === account?.defaultBpType).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        <PartnerPicker
+          style={{ flex: "1 1 180px" }}
+          partners={partners.filter((p) => p.bpType === account?.defaultBpType)}
+          value={businessPartnerId || null}
+          onChange={(id) => setBusinessPartnerId(id ?? "")}
+          disabled={!account?.isControlAccount}
+          emptyLabel="All partners"
+        />
         <input type="date" className="ent-fc" style={{ width: 150, height: 34 }} value={from} onChange={(e) => setFrom(e.target.value)} />
         <input type="date" className="ent-fc" style={{ width: 150, height: 34 }} value={to} onChange={(e) => setTo(e.target.value)} />
       </div>

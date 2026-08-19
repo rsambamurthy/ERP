@@ -3,14 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
+import PartnerPicker from "@/components/shared/PartnerPicker";
 import {
   ApiError, approvePurchaseOrder, cancelPurchaseOrder, createPurchaseOrder, downloadPurchaseOrderPdf, getBranches,
-  getBusinessPartners, getItems, getPurchaseOrder, getPurchaseOrders, lookupCurrencyRate, rejectPurchaseOrder, reopenPurchaseOrder,
+  getBusinessPartnerLookup, getItems, getPurchaseOrder, getPurchaseOrders, lookupCurrencyRate, rejectPurchaseOrder, reopenPurchaseOrder,
   submitPurchaseOrder, updatePurchaseOrder,
 } from "@/lib/api";
 import { round2 } from "@/lib/discountGst";
 import { canApprovePurchaseOrders, canReceiveGoods } from "@/lib/auth";
-import type { Branch, BusinessPartner, Item, PurchaseOrder, PurchaseOrderLineInput, PurchaseOrderStatus } from "@/lib/types";
+import type { Branch, BusinessPartnerLookup, Item, PurchaseOrder, PurchaseOrderLineInput, PurchaseOrderStatus } from "@/lib/types";
 import { PURCHASE_ORDER_STATUS_LABELS, SUPPORTED_CURRENCIES } from "@/lib/types";
 
 const emptyLine = (): PurchaseOrderLineInput => ({ itemId: "", quantity: 0, rate: 0, rateFc: 0, taxRate: 0 });
@@ -39,7 +40,7 @@ function StatusBadge({ status }: { status: PurchaseOrderStatus }) {
 function PurchaseOrdersInner() {
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [items, setItems] = useState<Item[]>([]);
-  const [vendors, setVendors] = useState<BusinessPartner[]>([]);
+  const [vendors, setVendors] = useState<BusinessPartnerLookup[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +85,7 @@ function PurchaseOrdersInner() {
     setLoading(true);
     try {
       const [ordersRes, itemsRes, vendorsRes, branchRes] = await Promise.all([
-        getPurchaseOrders(), getItems(), getBusinessPartners("VENDOR"), getBranches(),
+        getPurchaseOrders(), getItems(), getBusinessPartnerLookup("VENDOR"), getBranches(),
       ]);
       setOrders(ordersRes.data);
       setItems(itemsRes.data);
@@ -282,10 +283,12 @@ function PurchaseOrdersInner() {
           <div className="ent-form-grid" style={{ gridTemplateColumns: "1fr 1fr 1fr 2fr" }}>
             <div className="ent-fg">
               <label className="ent-fl">Vendor</label>
-              <select className="ent-fc" value={businessPartnerId} onChange={(e) => setBusinessPartnerId(e.target.value)} required>
-                <option value="">Select…</option>
-                {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-              </select>
+              <PartnerPicker
+                partners={vendors}
+                value={businessPartnerId || null}
+                onChange={(id) => setBusinessPartnerId(id ?? "")}
+                required
+              />
             </div>
             <div className="ent-fg">
               <label className="ent-fl">PO Date</label>

@@ -44,6 +44,38 @@ router.get("/", async (req, res) => {
   res.json({ data: partners });
 });
 
+// GET /business-partners/lookup?bpType=CUSTOMER|VENDOR — narrow projection
+// for the searchable partner pickers: just what the picker renders and
+// filters on. The full list endpoint above returns every column of every
+// row, which at ~10k partners is several MB re-fetched by every screen with
+// a customer/vendor dropdown (Sales Invoice, Sales Order, Purchase Bill,
+// Purchase Order, Journal, Ledger).
+//
+// MUST stay above `router.get("/:id")` below. Express matches routes in
+// declaration order and "/lookup" is a single path segment, so /:id would
+// otherwise swallow it and try to load a partner whose id is "lookup" —
+// the same class of shadowing bug as the /integration mount order in
+// index.ts.
+router.get("/lookup", async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const bpType = req.query.bpType ? String(req.query.bpType) : undefined;
+  // Deliberately NOT filtered on isActive: the plain <select>s this replaces
+  // showed inactive partners too, and silently dropping them here would
+  // quietly change which records an existing document can be edited against.
+  const partners = await prisma.businessPartner.findMany({
+    where: { organizationId, deletedAt: null, ...(bpType ? { bpType } : {}) },
+    // stateCode is not shown by the picker, but it must travel with the row:
+    // Sales Invoice and Purchase Bill derive CGST+SGST vs IGST from the
+    // selected partner's stateCode against the head office's (see
+    // isInterState). Dropping it from this projection would silently switch
+    // every invoice to intra-state GST — wrong tax, quietly.
+    select: { id: true, code: true, name: true, phone: true, bpType: true, stateCode: true },
+    orderBy: { name: "asc" },
+  });
+  res.json({ data: partners });
+});
+
 // GET /business-partners/:id — full detail including Vendor Management
 // (Phase 1) child records. Contacts/addresses/bank accounts are returned
 // regardless of bpType (harmless if empty for a CUSTOMER) rather than

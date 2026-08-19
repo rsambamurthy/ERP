@@ -2,19 +2,20 @@
 
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
+import PartnerPicker from "@/components/shared/PartnerPicker";
 import {
   ApiError,
   createJournalEntry,
   downloadJournalAttachment,
   getAccounts,
-  getBusinessPartners,
+  getBusinessPartnerLookup,
   getJournalEntries,
   removeJournalAttachment,
   updateJournalEntry,
   uploadJournalAttachment,
 } from "@/lib/api";
 import { useBulkUpload } from "@/components/shared/BulkUpload";
-import type { Account, BusinessPartner, JournalEntry, JournalLineInput, JournalUploadRow } from "@/lib/types";
+import type { Account, BusinessPartnerLookup, JournalEntry, JournalLineInput, JournalUploadRow } from "@/lib/types";
 
 // One row per LINE, not per entry — see routes/journal.ts's bulk-upload
 // section. voucherRef is the only column worth showing beyond the usual
@@ -81,7 +82,7 @@ function formatSize(bytes: number): string {
 export default function JournalEntriesPage() {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [partners, setPartners] = useState<BusinessPartner[]>([]);
+  const [partners, setPartners] = useState<BusinessPartnerLookup[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
 
@@ -115,7 +116,7 @@ export default function JournalEntriesPage() {
       const [entriesRes, accountsRes, partnersRes] = await Promise.all([
         getJournalEntries(),
         getAccounts(),
-        getBusinessPartners(),
+        getBusinessPartnerLookup(),
       ]);
       setEntries(entriesRes.data);
       setAccounts(accountsRes.data);
@@ -610,21 +611,12 @@ export default function JournalEntriesPage() {
                               </select>
                             </td>
                             <td>
-                              <select
-                                className="ent-fc"
-                                value={line.businessPartnerId ?? ""}
+                              <PartnerPicker
+                                partners={partners.filter((p) => p.bpType === account?.defaultBpType)}
+                                value={line.businessPartnerId ?? null}
+                                onChange={(id) => updateContra(i, { businessPartnerId: id })}
                                 disabled={!account?.isControlAccount}
-                                onChange={(e) => updateContra(i, { businessPartnerId: e.target.value || null })}
-                              >
-                                <option value="">{account?.isControlAccount ? "Select…" : "—"}</option>
-                                {partners
-                                  .filter((p) => p.bpType === account?.defaultBpType)
-                                  .map((p) => (
-                                    <option key={p.id} value={p.id}>
-                                      {p.name}
-                                    </option>
-                                  ))}
-                              </select>
+                              />
                               {warn && <div className="ent-warn-note">⚠ required</div>}
                             </td>
                             <td>
@@ -686,21 +678,12 @@ export default function JournalEntriesPage() {
                               </select>
                             </td>
                             <td>
-                              <select
-                                className="ent-fc"
-                                value={line.businessPartnerId ?? ""}
+                              <PartnerPicker
+                                partners={partners.filter((p) => p.bpType === account?.defaultBpType)}
+                                value={line.businessPartnerId ?? null}
+                                onChange={(id) => updateFullLine(i, { businessPartnerId: id })}
                                 disabled={!account?.isControlAccount}
-                                onChange={(e) => updateFullLine(i, { businessPartnerId: e.target.value || null })}
-                              >
-                                <option value="">{account?.isControlAccount ? "Select…" : "—"}</option>
-                                {partners
-                                  .filter((p) => p.bpType === account?.defaultBpType)
-                                  .map((p) => (
-                                    <option key={p.id} value={p.id}>
-                                      {p.name}
-                                    </option>
-                                  ))}
-                              </select>
+                              />
                               {warn && <div className="ent-warn-note">⚠ required</div>}
                             </td>
                             <td>

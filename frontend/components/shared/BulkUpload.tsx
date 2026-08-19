@@ -28,6 +28,7 @@ export function useBulkUpload<Row extends BulkUploadRowBase>(
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<{ created: number; updated: number } | null>(null);
+  const [errorsOnly, setErrorsOnly] = useState(false);
 
   async function handleTemplateDownload() {
     setError("");
@@ -44,6 +45,7 @@ export function useBulkUpload<Row extends BulkUploadRowBase>(
     setPreview(null);
     setResult(null);
     setError("");
+    setErrorsOnly(false);
     setUploading(true);
     try {
       const res = await previewBulkUpload<Row>(entity, file);
@@ -77,7 +79,16 @@ export function useBulkUpload<Row extends BulkUploadRowBase>(
   const statusColor = { create: "#15803d", update: "#1d4ed8", error: "#dc2626" } as const;
   const createCount = preview?.filter((r) => r.status === "create").length ?? 0;
   const updateCount = preview?.filter((r) => r.status === "update").length ?? 0;
-  const errorCount = preview?.filter((r) => r.status === "error").length ?? 0;
+  const errorRows = preview?.filter((r) => r.status === "error") ?? [];
+  const errorCount = errorRows.length;
+  // The offending rows are rendered red, but on a 9,000-row upload that red
+  // row is somewhere inside a scroll container and there is no way to reach
+  // it — which is exactly what happened on the first Business Partner
+  // import. Row order is deliberately NOT changed: it maps 1:1 to the
+  // spreadsheet, and re-sorting would break that correspondence just when
+  // the user needs it to go and fix the file.
+  const shownRows = preview ? (errorsOnly ? errorRows : preview) : [];
+  const MAX_LISTED_ROWS = 12;
 
   const outlineBtn = { background: "#fff", color: "var(--color-navy, #1e3a5f)", border: "1px solid var(--color-border, #e2e8f0)" };
   const activeBtn = { background: "#dbeafe", color: "#1d4ed8", border: "1px solid #93c5fd" };
@@ -122,7 +133,19 @@ export function useBulkUpload<Row extends BulkUploadRowBase>(
                 <strong style={{ color: "#dc2626" }}>
                   {errorCount} error{errorCount !== 1 ? "s" : ""}
                 </strong>{" "}
-                (fix and re-upload)
+                {"("}
+                {errorCount <= MAX_LISTED_ROWS
+                  ? `row${errorCount !== 1 ? "s" : ""} ${errorRows.map((r) => r.rowNum).join(", ")}`
+                  : `rows ${errorRows.slice(0, MAX_LISTED_ROWS).map((r) => r.rowNum).join(", ")} and ${errorCount - MAX_LISTED_ROWS} more`}
+                {") — fix and re-upload"}
+                <button
+                  type="button"
+                  className="ent-ia ent-ia-edit"
+                  style={{ marginLeft: 10 }}
+                  onClick={() => setErrorsOnly((v) => !v)}
+                >
+                  {errorsOnly ? "Show all rows" : "Show errors only"}
+                </button>
               </>
             )}
           </div>
@@ -138,7 +161,7 @@ export function useBulkUpload<Row extends BulkUploadRowBase>(
                 </tr>
               </thead>
               <tbody>
-                {preview.map((r) => (
+                {shownRows.map((r) => (
                   <tr key={r.rowNum} style={{ background: statusBg[r.status] }}>
                     <td>{r.rowNum}</td>
                     {columns.map((c) => (
