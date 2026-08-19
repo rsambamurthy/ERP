@@ -240,10 +240,12 @@ export default function BusinessPartnerDetailPage() {
           </>
         ) : (
           <div className="ent-form-grid">
+            <div><span style={{ color: "var(--color-muted)", fontSize: 12 }}>Code</span><div>{bp.code || "—"}</div></div>
             <div><span style={{ color: "var(--color-muted)", fontSize: 12 }}>GSTIN</span><div>{bp.gstin || "—"}</div></div>
             <div><span style={{ color: "var(--color-muted)", fontSize: 12 }}>State (GST)</span><div>{GST_STATE_CODES.find((s) => s.code === bp.stateCode)?.name || bp.stateCode || "—"}</div></div>
             <div><span style={{ color: "var(--color-muted)", fontSize: 12 }}>Phone</span><div>{bp.phone || "—"}</div></div>
             <div><span style={{ color: "var(--color-muted)", fontSize: 12 }}>Email</span><div>{bp.email || "—"}</div></div>
+            <div style={{ gridColumn: "1 / -1" }}><span style={{ color: "var(--color-muted)", fontSize: 12 }}>Address</span><div>{bp.address?.full || "—"}</div></div>
             {isVendor && (
               <>
                 <div><span style={{ color: "var(--color-muted)", fontSize: 12 }}>Vendor Category</span><div>{bp.vendorCategory || "—"}</div></div>

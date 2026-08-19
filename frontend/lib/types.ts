@@ -265,6 +265,7 @@ export interface VendorBankAccount {
 export interface BusinessPartner {
   id: string;
   bpType: "CUSTOMER" | "VENDOR" | "ITEM";
+  code: string | null;
   name: string;
   gstin: string | null;
   // GST state code — auto-filled from gstin's first 2 characters when set,
@@ -272,6 +273,7 @@ export interface BusinessPartner {
   stateCode: string | null;
   phone: string | null;
   email: string | null;
+  address: { full?: string } | null;
   openingBalance: string;
   openingBalanceType: BalanceType | null;
   isActive: boolean;
