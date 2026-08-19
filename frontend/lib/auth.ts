@@ -151,6 +151,20 @@ export function canManageBusinessPartners(): boolean {
   return ["OWNER", "ADMIN", "ACCOUNTANT"].includes(role);
 }
 
+// Mirrors the backend's requirePermission("items.manage") on the item
+// create/edit/toggle/delete routes.
+//
+// NOT the same role set as canManageBusinessPartners above: ACCOUNTANT
+// deliberately does not get "items.manage" by default — permissions.ts
+// groups it with "coa.manage"/"company.manage" as master-data setup rather
+// than day-to-day posting. An org that wants an accountant maintaining the
+// item master grants it through a CUSTOM role.
+export function canManageItems(): boolean {
+  const role = getRole() ?? "";
+  if (role === "CUSTOM") return getPermissions().includes("items.manage");
+  return ["OWNER", "ADMIN"].includes(role);
+}
+
 export function clearSession() {
   if (typeof window === "undefined") return;
   localStorage.removeItem(TOKEN_KEY);

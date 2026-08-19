@@ -93,6 +93,61 @@ router.get("/stock-accounts", async (req, res) => {
   res.json({ data: accounts });
 });
 
+// GET /items/:id — one item, same shape as a row from GET / above so the
+// detail page and the list agree on field names.
+//
+// Declared after /costing-method and /stock-accounts deliberately: Express
+// matches in order and "/:id" is a single path segment, so it would
+// otherwise swallow both of those. Same shadowing trap as
+// business-partners' /lookup route.
+router.get("/:id", async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const item = await prisma.item.findFirst({
+    where: { id: req.params.id, organizationId, deletedAt: null },
+    include: { stockAccount: { select: { id: true, accountCode: true, accountName: true } }, itemStocks: true },
+  });
+  if (!item) return res.status(404).json({ message: "Item not found." });
+  res.json({
+    data: {
+      id: item.id, sku: item.sku, name: item.name, description: item.description, uom: item.uom,
+      hsnCode: item.hsnCode, isFinishedGood: item.isFinishedGood, isActive: item.isActive,
+      stockAccount: item.stockAccount,
+      salesRate: item.salesRate, purchaseRate: item.purchaseRate, taxRate: item.taxRate,
+      defaultDiscountPct: item.defaultDiscountPct,
+      totalQuantityOnHand: item.itemStocks.reduce((s, st) => s + Number(st.quantityOnHand), 0),
+    },
+  });
+});
+
+// PATCH /items/:id/toggle — activate/deactivate. Deactivating keeps every
+// stock movement and journal line intact; it only takes the item out of the
+// pickers on new documents. Use this rather than DELETE for an item that
+// has history — DELETE refuses one with stock movements anyway.
+//
+// The paired ITEM business partner (see POST / below) is flipped to match.
+// It's internal plumbing — the sub-ledger tag on stock account lines — and
+// leaving the two out of step would make the Business Partners screen show
+// an active partner for a retired item.
+router.patch("/:id/toggle", canManageItems, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const item = await prisma.item.findFirst({ where: { id: req.params.id, organizationId, deletedAt: null } });
+  if (!item) return res.status(404).json({ message: "Item not found." });
+
+  const isActive = !item.isActive;
+  const [updated] = await prisma.$transaction([
+    prisma.item.update({ where: { id: item.id }, data: { isActive } }),
+    prisma.businessPartner.update({ where: { id: item.businessPartnerId }, data: { isActive } }),
+  ]);
+  logAudit({
+    organizationId, actorUserId: req.user!.userId,
+    action: "TOGGLE", entityType: "item", entityId: item.id,
+    summary: `${isActive ? "Activated" : "Deactivated"} item ${item.sku} — ${item.name}`,
+  });
+  res.json({ data: updated });
+});
+
 // POST /items — create an item, its paired ITEM business partner, and (if
 // an opening balance was given) the opening stock movement. All three or
 // none — one transaction.

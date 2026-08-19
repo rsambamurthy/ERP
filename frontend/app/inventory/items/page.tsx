@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
 import AccountPicker from "@/components/shared/AccountPicker";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
-import { ApiError, createItem, getItems, getStockAccounts } from "@/lib/api";
+import { ApiError, createItem, getItems, getStockAccounts, toggleItem } from "@/lib/api";
+import { canManageItems } from "@/lib/auth";
 import { useBulkUpload } from "@/components/shared/BulkUpload";
 import type { Account, Item, ItemUploadRow } from "@/lib/types";
 
@@ -28,6 +30,7 @@ function ItemsPageInner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm());
 
@@ -47,6 +50,28 @@ function ItemsPageInner() {
   useEffect(() => { loadAll(); }, []);
 
   const bulk = useBulkUpload<ItemUploadRow>("items", "SmartERP_Items_Template.xlsx", ITEM_UPLOAD_COLUMNS, loadAll);
+
+  const canManage = canManageItems();
+
+  // Same client-side filter as Business Partners: the list endpoint has no
+  // pagination, so every item is already in memory and a round trip per
+  // keystroke would buy nothing.
+  const visibleItems = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(
+      (i) => i.name.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q)
+    );
+  }, [items, search]);
+
+  async function handleToggle(itemId: string) {
+    try {
+      await toggleItem(itemId);
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not change item status.");
+    }
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -82,6 +107,21 @@ function ItemsPageInner() {
       </div>
 
       <div className="ent-toolbar">
+        <input
+          className="ent-fc"
+          style={{ flex: "1 1 300px", maxWidth: 400, height: 34 }}
+          placeholder="Search by code or name…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        {search && (
+          <span style={{ fontSize: 12.5, color: "var(--color-muted)", whiteSpace: "nowrap" }}>
+            {visibleItems.length} of {items.length}
+            <button type="button" className="ent-ia ent-ia-edit" style={{ marginLeft: 8 }} onClick={() => setSearch("")}>
+              Clear
+            </button>
+          </span>
+        )}
         <div style={{ flex: 1 }} />
         {bulk.buttons}
         <button className="ent-btn-add" onClick={() => setShowForm((s) => !s)}>{showForm ? "Cancel" : "+ New Item"}</button>
@@ -159,17 +199,32 @@ function ItemsPageInner() {
 
       <div className="ent-page-table">
         <table>
-          <thead><tr><th>Code</th><th>Name</th><th>Stock Account</th><th style={{ textAlign: "right" }}>On Hand</th><th>Status</th></tr></thead>
+          <thead><tr><th>Code</th><th>Name</th><th>Stock Account</th><th style={{ textAlign: "right" }}>On Hand</th><th>Status</th><th /></tr></thead>
           <tbody>
-            {loading && <tr><td colSpan={5} className="ent-empty">Loading…</td></tr>}
-            {!loading && items.length === 0 && <tr><td colSpan={5} className="ent-empty">No items yet.</td></tr>}
-            {items.map((i) => (
+            {loading && <tr><td colSpan={6} className="ent-empty">Loading…</td></tr>}
+            {!loading && items.length === 0 && <tr><td colSpan={6} className="ent-empty">No items yet.</td></tr>}
+            {!loading && items.length > 0 && visibleItems.length === 0 && (
+              <tr><td colSpan={6} className="ent-empty">No item matches “{search}”.</td></tr>
+            )}
+            {visibleItems.map((i) => (
               <tr key={i.id}>
-                <td>{i.sku}</td>
-                <td style={{ fontWeight: 500 }}>{i.name}</td>
+                <td style={{ fontVariantNumeric: "tabular-nums" }}>{i.sku}</td>
+                <td style={{ fontWeight: 500 }}>
+                  <Link href={`/inventory/items/${i.id}`} style={{ color: "inherit", textDecoration: "none" }}>
+                    {i.name}
+                  </Link>
+                </td>
                 <td style={{ color: "var(--color-muted)" }}>{i.stockAccount.accountName}</td>
                 <td style={{ textAlign: "right" }}>{i.totalQuantityOnHand} {i.uom}</td>
                 <td><span className={i.isActive ? "badge badge-green" : "badge badge-gray"}>{i.isActive ? "Active" : "Inactive"}</span></td>
+                <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                  <Link href={`/inventory/items/${i.id}`} className="ent-ia ent-ia-edit" style={{ marginRight: 6 }}>View</Link>
+                  {canManage && (
+                    <button className="ent-ia ent-ia-edit" onClick={() => handleToggle(i.id)}>
+                      {i.isActive ? "Deactivate" : "Activate"}
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

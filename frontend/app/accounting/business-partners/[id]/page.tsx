@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import {
-  ApiError, getBusinessPartner, updateBusinessPartner, toggleBusinessPartner,
+  ApiError, getBusinessPartner, updateBusinessPartner, toggleBusinessPartner, deleteBusinessPartner,
   submitBusinessPartnerForApproval, approveBusinessPartner, rejectBusinessPartner,
   createVendorContact, updateVendorContact, deleteVendorContact,
   createVendorAddress, updateVendorAddress, deleteVendorAddress,
@@ -15,11 +15,14 @@ import { GST_STATE_CODES } from "@/lib/gstStates";
 import { VENDOR_CATEGORIES, TAX_ID_TYPE_SUGGESTIONS, COMMON_COUNTRIES } from "@/lib/types";
 import type { BusinessPartner, VendorContact, VendorAddress, VendorBankAccount } from "@/lib/types";
 
-// Vendor Management (Phase 1) detail page. Basic Details + a minimal
-// single-step approval workflow (placeholder for a future generic Workflow
-// Management System — see migration_028's comment) + Contacts/Addresses/
-// Bank Accounts child lists. Same page also renders for bpType CUSTOMER,
-// with the vendor-only sections hidden.
+// Business Partner detail — customers and vendors both. Basic Details,
+// Contacts/Addresses/Bank Accounts child lists, and (vendors only) the
+// minimal single-step approval workflow that stands in for a future generic
+// Workflow Management System — see migration_028's comment.
+//
+// The child lists are still named vendor* in the schema and API because
+// that is where migration_028 introduced them; they were never
+// vendor-specific in behaviour.
 export default function BusinessPartnerDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -32,6 +35,8 @@ export default function BusinessPartnerDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [showRejectBox, setShowRejectBox] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [editingBasics, setEditingBasics] = useState(false);
   const [basics, setBasics] = useState({
@@ -86,6 +91,28 @@ export default function BusinessPartnerDetailPage() {
     if (!bp) return;
     await toggleBusinessPartner(bp.id);
     await load();
+  }
+
+  async function handleDelete() {
+    if (!bp) return;
+    setActionBusy(true);
+    setDeleteError(null);
+    try {
+      await deleteBusinessPartner(bp.id);
+      router.push("/accounting/business-partners");
+    } catch (err) {
+      // 409 once the partner has any journal line — which includes every
+      // invoice, bill, receipt and payment. Say what to do instead rather
+      // than leaving the bare server message.
+      setDeleteError(
+        err instanceof ApiError
+          ? `${err.message} Deactivate instead to take it out of new documents.`
+          : "Could not delete this business partner."
+      );
+      setConfirmingDelete(false);
+    } finally {
+      setActionBusy(false);
+    }
   }
 
   async function handleSubmitForApproval() {
@@ -257,9 +284,40 @@ export default function BusinessPartnerDetailPage() {
         )}
       </div>
 
-      {isVendor && <ContactsSection businessPartnerId={bp.id} contacts={bp.vendorContacts ?? []} canManage={canManage} onChanged={load} />}
-      {isVendor && <AddressesSection businessPartnerId={bp.id} addresses={bp.vendorAddresses ?? []} canManage={canManage} onChanged={load} />}
-      {isVendor && <BankAccountsSection businessPartnerId={bp.id} accounts={bp.vendorBankAccounts ?? []} canManage={canManage} onChanged={load} />}
+      {/* Not gated on bpType. The tables and the API were always
+          type-neutral — GET /:id returns all three "regardless of bpType"
+          — only this page hid them, which left a customer with multiple
+          delivery sites or AP contacts nowhere to record them. Approval
+          status and Vendor Category above stay vendor-only; those really
+          are vendor concepts. */}
+      <ContactsSection businessPartnerId={bp.id} contacts={bp.vendorContacts ?? []} canManage={canManage} onChanged={load} />
+      <AddressesSection businessPartnerId={bp.id} addresses={bp.vendorAddresses ?? []} canManage={canManage} onChanged={load} />
+      <BankAccountsSection businessPartnerId={bp.id} accounts={bp.vendorBankAccounts ?? []} canManage={canManage} onChanged={load} />
+
+      {canManage && (
+        <div className="ent-section" style={{ padding: 14 }}>
+          <div className="ent-section-hdr"><span className="ent-section-title">Delete</span></div>
+          <p style={{ color: "var(--color-muted)", fontSize: 12, paddingBottom: 8 }}>
+            Only possible while this partner has never been posted against. Once it appears on
+            any journal entry the server refuses — deactivate it instead, which keeps its
+            ledger history and removes it from new documents.
+          </p>
+          {deleteError && <p style={{ color: "#dc2626", fontSize: 13, paddingBottom: 8 }}>{deleteError}</p>}
+          {confirmingDelete ? (
+            <>
+              <span style={{ fontSize: 13, marginRight: 8 }}>Delete <strong>{bp.name}</strong>?</span>
+              <button className="ent-ia ent-ia-del" disabled={actionBusy} onClick={handleDelete}>
+                {actionBusy ? "Deleting…" : "Yes, delete"}
+              </button>
+              <button className="ent-ia ent-ia-edit" style={{ marginLeft: 6 }} onClick={() => setConfirmingDelete(false)}>Cancel</button>
+            </>
+          ) : (
+            <button className="ent-ia ent-ia-del" onClick={() => { setConfirmingDelete(true); setDeleteError(null); }}>
+              Delete {bp.bpType === "CUSTOMER" ? "Customer" : "Vendor"}
+            </button>
+          )}
+        </div>
+      )}
     </AppShell>
   );
 }
@@ -592,7 +650,7 @@ function BankAccountsSection({ businessPartnerId, accounts, canManage, onChanged
             <label htmlFor="bank-primary" className="ent-fl" style={{ margin: 0 }}>Primary account</label>
           </div>
           <p style={{ fontSize: 12, color: "var(--color-muted)", gridColumn: "1/-1" }}>
-            Fill in whichever code applies to this vendor's country — IFSC, SWIFT/BIC, and Routing Number can all coexist. Master data only; SmartERP has no payment-execution feature.
+            Fill in whichever code applies to this partner&apos;s country — IFSC, SWIFT/BIC, and Routing Number can all coexist. Master data only; SmartERP has no payment-execution feature.
           </p>
           {err && <p style={{ color: "#dc2626", fontSize: 13, gridColumn: "1/-1" }}>{err}</p>}
           <div style={{ gridColumn: "1/-1" }}>

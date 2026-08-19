@@ -582,8 +582,16 @@ export function createItem(body: {
   return request<{ data: Item }>("/items", { method: "POST", body: JSON.stringify(body) });
 }
 
+export function getItem(id: string) {
+  return request<{ data: Item }>(`/items/${id}`);
+}
+
 export function updateItem(id: string, body: Partial<Item>) {
   return request<{ data: Item }>(`/items/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function toggleItem(id: string) {
+  return request<{ data: Item }>(`/items/${id}/toggle`, { method: "PATCH" });
 }
 
 export function deleteItem(id: string) {

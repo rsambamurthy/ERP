@@ -173,7 +173,7 @@ export default function BusinessPartnersPage() {
             )}
           </div>
           <p style={{ fontSize: 12, color: "var(--color-muted)", padding: "0 14px 6px" }}>
-            Contacts, addresses, and bank accounts can be added after saving, from the vendor&apos;s detail page.
+            Contacts, addresses, and bank accounts can be added after saving, from the partner&apos;s detail page.
           </p>
           {error && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 10px" }}>{error}</p>}
           <div style={{ padding: "0 14px 14px" }}>
