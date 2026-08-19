@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import PartnerPicker from "@/components/shared/PartnerPicker";
+import CurrencyPicker from "@/components/shared/CurrencyPicker";
+import ItemPicker from "@/components/shared/ItemPicker";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import {
   ApiError, approvePurchaseBill, createPurchaseBill, extractInvoice, getBranches, getBusinessPartnerLookup, getGoodsReceiptNotes, getItems,
@@ -703,9 +705,12 @@ function PurchaseBillsInner() {
           <div className="ent-form-grid" style={{ gridTemplateColumns: isForeign ? "1fr 1fr 2fr" : "1fr 3fr" }}>
             <div className="ent-fg">
               <label className="ent-fl">Currency</label>
-              <select className="ent-fc" value={currency} onChange={(e) => setCurrency(e.target.value)} disabled={!!linkedPO}>
-                {SUPPORTED_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.name}</option>)}
-              </select>
+              <CurrencyPicker
+                currencies={SUPPORTED_CURRENCIES}
+                value={currency || null}
+                onChange={(code) => setCurrency(code ?? "")}
+                disabled={!!linkedPO}
+              />
               {linkedPO && <span style={{ fontSize: 11, color: "var(--color-muted)" }}>Locked to the linked Purchase Order's currency.</span>}
             </div>
             {isForeign && (
@@ -748,10 +753,11 @@ function PurchaseBillsInner() {
                 {lines.map((line, i) => (
                   <tr key={i}>
                     <td>
-                      <select className="ent-fc" value={line.itemId} onChange={(e) => pickItem(i, e.target.value)}>
-                        <option value="">Select item…</option>
-                        {items.filter((it) => it.isActive).map((it) => <option key={it.id} value={it.id}>{it.sku} — {it.name}</option>)}
-                      </select>
+                      <ItemPicker
+                        items={items.filter((it) => it.isActive)}
+                        value={line.itemId || null}
+                        onChange={(id) => pickItem(i, id ?? "")}
+                      />
                     </td>
                     <td><input type="number" min={0} step="0.0001" className="ent-fc" value={line.quantity || ""} onChange={(e) => updateLine(i, { quantity: Number(e.target.value) })} /></td>
                     {isForeign ? (

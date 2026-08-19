@@ -354,15 +354,13 @@ export default function TeamPage() {
                   {m.role === "OWNER" ? (
                     <span style={{ color: "var(--color-muted)", fontSize: 13 }}>All branches</span>
                   ) : (
-                    <select
-                      className="ent-fc"
-                      style={{ height: 30, width: 150 }}
-                      value={m.branchId ?? ""}
-                      onChange={(e) => handleBranchChange(m.userId, e.target.value)}
-                    >
-                      <option value="">All branches</option>
-                      {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                    </select>
+                    <BranchPicker
+                      style={{ width: 150 }}
+                      branches={branches}
+                      value={m.branchId}
+                      onChange={(id) => handleBranchChange(m.userId, id ?? "")}
+                      emptyLabel="All branches"
+                    />
                   )}
                 </td>
                 <td><span className={m.isVerified ? "badge badge-green" : "badge badge-yellow"}>{m.isVerified ? "Verified" : "Pending"}</span></td>
