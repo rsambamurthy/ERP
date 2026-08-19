@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
+import AccountPicker from "@/components/shared/AccountPicker";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import { ApiError, createItem, getItems, getStockAccounts } from "@/lib/api";
 import { useBulkUpload } from "@/components/shared/BulkUpload";
@@ -110,10 +111,12 @@ function ItemsPageInner() {
             </div>
             <div className="ent-fg">
               <label className="ent-fl">Stock Account</label>
-              <select className="ent-fc" value={form.stockAccountId} onChange={(e) => setForm((f) => ({ ...f, stockAccountId: e.target.value }))} required>
-                <option value="">Select…</option>
-                {stockAccounts.map((a) => <option key={a.id} value={a.id}>{a.accountCode} — {a.accountName}</option>)}
-              </select>
+              <AccountPicker
+                accounts={stockAccounts}
+                value={form.stockAccountId || null}
+                onChange={(id) => setForm((f) => ({ ...f, stockAccountId: id ?? "" }))}
+                required
+              />
             </div>
             <div className="ent-fg">
               <label className="ent-fl">Tax Rate %</label>

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
+import AccountPicker from "@/components/shared/AccountPicker";
 import PartnerPicker from "@/components/shared/PartnerPicker";
 import { ApiError, getAccounts, getBusinessPartnerLookup, getLedger } from "@/lib/api";
 import type { Account, BusinessPartnerLookup, LedgerResponse } from "@/lib/types";
@@ -45,10 +46,12 @@ export default function LedgerPage() {
       </div>
 
       <div className="ent-toolbar">
-        <select className="ent-fc" style={{ flex: "1 1 240px", height: 34 }} value={accountId} onChange={(e) => { setAccountId(e.target.value); setBusinessPartnerId(""); }}>
-          <option value="">Select account…</option>
-          {accounts.map((a) => <option key={a.id} value={a.id}>{a.accountCode} — {a.accountName}</option>)}
-        </select>
+        <AccountPicker
+          style={{ flex: "1 1 240px" }}
+          accounts={accounts}
+          value={accountId || null}
+          onChange={(id) => { setAccountId(id ?? ""); setBusinessPartnerId(""); }}
+        />
         <PartnerPicker
           style={{ flex: "1 1 180px" }}
           partners={partners.filter((p) => p.bpType === account?.defaultBpType)}

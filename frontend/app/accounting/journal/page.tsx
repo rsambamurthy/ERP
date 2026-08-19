@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
+import AccountPicker from "@/components/shared/AccountPicker";
 import PartnerPicker from "@/components/shared/PartnerPicker";
 import {
   ApiError,
@@ -595,20 +596,11 @@ export default function JournalEntriesPage() {
                         return (
                           <tr key={i}>
                             <td>
-                              <select
-                                className="ent-fc"
-                                value={line.accountId}
-                                onChange={(e) => updateContra(i, { accountId: e.target.value, businessPartnerId: null })}
-                              >
-                                <option value="">Select account…</option>
-                                {accounts
-                                  .filter((a) => a.isActive && !a.isGroup && a.id !== moneyAccount?.id)
-                                  .map((a) => (
-                                    <option key={a.id} value={a.id}>
-                                      {a.accountCode} — {a.accountName}
-                                    </option>
-                                  ))}
-                              </select>
+                              <AccountPicker
+                                accounts={accounts.filter((a) => a.isActive && !a.isGroup && a.id !== moneyAccount?.id)}
+                                value={line.accountId || null}
+                                onChange={(id) => updateContra(i, { accountId: id ?? "", businessPartnerId: null })}
+                              />
                             </td>
                             <td>
                               <PartnerPicker
@@ -662,20 +654,11 @@ export default function JournalEntriesPage() {
                         return (
                           <tr key={i}>
                             <td>
-                              <select
-                                className="ent-fc"
-                                value={line.accountId}
-                                onChange={(e) => updateFullLine(i, { accountId: e.target.value, businessPartnerId: null })}
-                              >
-                                <option value="">Select account…</option>
-                                {accounts
-                                  .filter((a) => a.isActive && !a.isGroup)
-                                  .map((a) => (
-                                    <option key={a.id} value={a.id}>
-                                      {a.accountCode} — {a.accountName}
-                                    </option>
-                                  ))}
-                              </select>
+                              <AccountPicker
+                                accounts={accounts.filter((a) => a.isActive && !a.isGroup)}
+                                value={line.accountId || null}
+                                onChange={(id) => updateFullLine(i, { accountId: id ?? "", businessPartnerId: null })}
+                              />
                             </td>
                             <td>
                               <PartnerPicker
