@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/layout/AppShell";
+import BranchPicker from "@/components/shared/BranchPicker";
+import OptionPicker from "@/components/shared/OptionPicker";
 import {
   ApiError, cancelInvite, createOrgRole, deleteOrgRole, getBranches, getOrgRoles, getOrgUsers,
   inviteUser, removeMember, updateMemberBranch, updateMemberEmployeeDetails, updateMemberRole, updateMemberStatus, updateOrgRole,
@@ -32,6 +34,7 @@ export default function TeamPage() {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastInviteLink, setLastInviteLink] = useState<string | null>(null);
+  const [memberSearch, setMemberSearch] = useState("");
 
   const [form, setForm] = useState<{ identifier: string; roleValue: string }>({ identifier: "", roleValue: "ACCOUNTANT" });
 
@@ -74,6 +77,22 @@ export default function TeamPage() {
     ...FIXED_ROLES.map((r) => ({ value: r, label: r })),
     ...customRoles.map((r) => ({ value: `custom:${r.id}`, label: r.name })),
   ];
+
+  // Members come back in one unpaginated response, so filtering here costs a
+  // single pass and avoids a round trip per keystroke. Matches name, email
+  // and phone because which of the three an admin remembers varies — and a
+  // member invited by phone has no name until they accept.
+  const visibleMembers = useMemo(() => {
+    const all = data?.members ?? [];
+    const q = memberSearch.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter(
+      (m) =>
+        (m.name ?? "").toLowerCase().includes(q) ||
+        (m.email ?? "").toLowerCase().includes(q) ||
+        (m.phone ?? "").toLowerCase().includes(q)
+    );
+  }, [data, memberSearch]);
 
   async function handleInvite(e: React.FormEvent) {
     e.preventDefault();
@@ -208,6 +227,21 @@ export default function TeamPage() {
       </div>
 
       <div className="ent-toolbar">
+        <input
+          className="ent-fc"
+          style={{ flex: "1 1 300px", maxWidth: 380, height: 34 }}
+          placeholder="Search members by name, email or phone…"
+          value={memberSearch}
+          onChange={(e) => setMemberSearch(e.target.value)}
+        />
+        {memberSearch && (
+          <span style={{ fontSize: 12.5, color: "var(--color-muted)", whiteSpace: "nowrap" }}>
+            {visibleMembers.length} of {data?.members.length ?? 0}
+            <button type="button" className="ent-ia ent-ia-edit" style={{ marginLeft: 8 }} onClick={() => setMemberSearch("")}>
+              Clear
+            </button>
+          </span>
+        )}
         <div style={{ flex: 1 }} />
         <button
           className="ent-btn-add"
@@ -302,9 +336,12 @@ export default function TeamPage() {
             </div>
             <div className="ent-fg">
               <label className="ent-fl">Role</label>
-              <select className="ent-fc" value={form.roleValue} onChange={(e) => setForm((f) => ({ ...f, roleValue: e.target.value }))}>
-                {roleOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
+              <OptionPicker
+                options={roleOptions}
+                value={form.roleValue || null}
+                onChange={(v) => setForm((f) => ({ ...f, roleValue: v ?? "" }))}
+                placeholder="Search role…"
+              />
             </div>
           </div>
           {error && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 10px" }}>{error}</p>}
@@ -330,7 +367,10 @@ export default function TeamPage() {
           <thead><tr><th>Member</th><th>Role</th><th>Branch</th><th>Verification</th><th>Access</th><th /></tr></thead>
           <tbody>
             {loading && <tr><td colSpan={6} className="ent-empty">Loading…</td></tr>}
-            {data?.members.map((m) => (
+            {!loading && (data?.members.length ?? 0) > 0 && visibleMembers.length === 0 && (
+              <tr><td colSpan={6} className="ent-empty">No member matches “{memberSearch}”.</td></tr>
+            )}
+            {visibleMembers.map((m) => (
               <tr key={m.userId}>
                 <td style={{ fontWeight: 500 }}>
                   {m.name || m.email || m.phone}
@@ -340,29 +380,26 @@ export default function TeamPage() {
                   {m.role === "OWNER" ? (
                     <span className="badge badge-purple">OWNER</span>
                   ) : (
-                    <select
-                      className="ent-fc"
-                      style={{ height: 30, width: 160 }}
+                    <OptionPicker
+                      style={{ width: 160 }}
+                      options={roleOptions}
                       value={roleValue(m.role, m.customRoleId)}
-                      onChange={(e) => handleRoleChange(m.userId, e.target.value)}
-                    >
-                      {roleOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
+                      onChange={(v) => handleRoleChange(m.userId, v ?? "")}
+                      placeholder="Search role…"
+                    />
                   )}
                 </td>
                 <td>
                   {m.role === "OWNER" ? (
                     <span style={{ color: "var(--color-muted)", fontSize: 13 }}>All branches</span>
                   ) : (
-                    <select
-                      className="ent-fc"
-                      style={{ height: 30, width: 150 }}
-                      value={m.branchId ?? ""}
-                      onChange={(e) => handleBranchChange(m.userId, e.target.value)}
-                    >
-                      <option value="">All branches</option>
-                      {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                    </select>
+                    <BranchPicker
+                      style={{ width: 150 }}
+                      branches={branches}
+                      value={m.branchId}
+                      onChange={(id) => handleBranchChange(m.userId, id ?? "")}
+                      emptyLabel="All branches"
+                    />
                   )}
                 </td>
                 <td><span className={m.isVerified ? "badge badge-green" : "badge badge-yellow"}>{m.isVerified ? "Verified" : "Pending"}</span></td>
