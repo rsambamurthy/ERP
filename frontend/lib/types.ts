@@ -582,6 +582,15 @@ export interface DocumentLineInput {
   // SO -> DN -> Invoice). Required on every line whenever the invoice
   // itself carries a salesOrderId — see DeliveryNote below.
   deliveryNoteLineId?: string;
+  // Purchase Bill service lines only — spread this line over time instead of
+  // expensing it now. The line debits Prepaid Expenses (1105) and a schedule
+  // releases it to the item's expense head one month at a time. See
+  // migration_032. Tax is untouched: the full ITC is still claimed in the
+  // month the bill is booked.
+  prepaid?: boolean;
+  // "YYYY-MM" — the month the first instalment belongs to.
+  prepaidStartMonth?: string;
+  prepaidMonths?: number;
 }
 
 // Read-only result of POST /purchase-bills/extract-invoice — a vendor

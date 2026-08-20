@@ -104,6 +104,11 @@ function buildComparison(
 
 const emptyLine = (): DocumentLineInput => ({ itemId: "", quantity: 0, rate: 0, rateFc: 0, taxRate: 0, customsDutyRate: 0 });
 
+function currentMonth(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 const BILL_STATUS_COLORS: Record<PurchaseBillStatus, { bg: string; fg: string }> = {
   POSTED: { bg: "#dcfce7", fg: "#166534" },
   PENDING_APPROVAL: { bg: "#fef3c7", fg: "#92400e" },
@@ -212,6 +217,35 @@ function PurchaseBillsInner() {
   // note on POST /purchase-bills. Never fall back to CGST+SGST just
   // because a foreign vendor has no Indian state code on file.
   const interState = isForeign ? true : isInterState(headOffice?.stateCode, selectedVendor?.stateCode);
+
+  // ── Prepaid (migration_032) ──────────────────────────────────────────
+  // Only offered where the server will actually accept it: a domestic,
+  // non-PO bill. PO lines are stock-only and a prepaid line must be a
+  // service item, so the column would never have anything to show on a
+  // PO-linked bill anyway.
+  const canPrepay = !isForeign && !linkedPO;
+  const isServiceLine = (l: DocumentLineInput) => itemById.get(l.itemId)?.itemKind === "SERVICE";
+
+  // What the schedule will actually do, spelled out before it is committed.
+  // Deliberately mirrors the server: equal instalments with the rounding
+  // remainder landing on the last one, so the figure shown is the figure
+  // that posts.
+  function prepaidHint(l: DocumentLineInput): string {
+    const months = Number(l.prepaidMonths);
+    const amount = Number(l.quantity) * Number(l.rate);
+    if (!Number.isInteger(months) || months < 1 || !(amount > 0) || !l.prepaidStartMonth) {
+      return "Set a start month and a number of months.";
+    }
+    const per = Math.floor((amount / months) * 100) / 100;
+    const last = Math.round((amount - per * (months - 1)) * 100) / 100;
+    const [y, m] = l.prepaidStartMonth.split("-").map(Number);
+    const end = new Date(Date.UTC(y, m - 1 + months - 1, 1));
+    const endLabel = end.toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
+    const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return per === last
+      ? `${fmt(per)} / month · ends ${endLabel}`
+      : `${fmt(per)} / month, last ${fmt(last)} · ends ${endLabel}`;
+  }
 
   const totals = useMemo(() => {
     let subtotal = 0, tax = 0, cgst = 0, sgst = 0, igst = 0, customsDuty = 0;
@@ -485,7 +519,14 @@ function PurchaseBillsInner() {
         businessPartnerId: linkedPO ? undefined : businessPartnerId, billDate, narration,
         lines: lines
           .filter((l) => l.itemId && l.quantity > 0)
-          .map((l) => (isForeign ? l : { ...l, customsDutyRate: undefined })),
+          .map((l) => (isForeign ? l : { ...l, customsDutyRate: undefined }))
+          // Strip prepaid fields from any line that isn't actually prepaid,
+          // and from every line when the bill can't carry one at all. A
+          // stale prepaidMonths left behind by unticking the box would
+          // otherwise ride along and be rejected by the server.
+          .map((l) => (canPrepay && l.prepaid && isServiceLine(l)
+            ? l
+            : { ...l, prepaid: undefined, prepaidStartMonth: undefined, prepaidMonths: undefined })),
         currency, exchangeRate: isForeign ? Number(exchangeRate) : undefined,
         billOfEntryNumber: isForeign ? newBoeNumber || undefined : undefined,
         billOfEntryDate: isForeign ? newBoeDate || undefined : undefined,
@@ -748,7 +789,10 @@ function PurchaseBillsInner() {
 
           <div style={{ padding: "0 14px" }}>
             <table className="ent-table">
-              <thead><tr><th style={{ width: "32%" }}>Item</th><th>Qty</th><th>Rate{isForeign ? ` (${currency})` : ""}</th>{isForeign && <th>Rate (₹)</th>}<th>Tax %</th>{isForeign && <th>Duty %</th>}<th /></tr></thead>
+              {/* The Prepaid column is hidden on a foreign-currency or
+                  PO-linked bill: the server rejects prepaid on both, so
+                  offering it would only produce a rejected post. */}
+              <thead><tr><th style={{ width: "28%" }}>Item</th><th>Qty</th><th>Rate{isForeign ? ` (${currency})` : ""}</th>{isForeign && <th>Rate (₹)</th>}<th>Tax %</th>{isForeign && <th>Duty %</th>}{canPrepay && <th style={{ width: "24%" }}>Prepaid</th>}<th /></tr></thead>
               <tbody>
                 {lines.map((line, i) => (
                   <tr key={i}>
@@ -771,6 +815,49 @@ function PurchaseBillsInner() {
                     <td><input type="number" min={0} step="0.01" className="ent-fc" value={line.taxRate || ""} onChange={(e) => updateLine(i, { taxRate: Number(e.target.value) })} /></td>
                     {isForeign && (
                       <td><input type="number" min={0} step="0.01" className="ent-fc" value={line.customsDutyRate || ""} onChange={(e) => updateLine(i, { customsDutyRate: Number(e.target.value) })} /></td>
+                    )}
+                    {canPrepay && (
+                      <td>
+                        {isServiceLine(line) ? (
+                          <>
+                            <label style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
+                              <input
+                                type="checkbox"
+                                checked={!!line.prepaid}
+                                onChange={(e) => updateLine(i, e.target.checked
+                                  ? { prepaid: true, prepaidStartMonth: line.prepaidStartMonth || currentMonth(), prepaidMonths: line.prepaidMonths || 12 }
+                                  : { prepaid: false, prepaidStartMonth: undefined, prepaidMonths: undefined })}
+                              />
+                              Spread over time
+                            </label>
+                            {line.prepaid && (
+                              <>
+                                <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                                  <input
+                                    type="month" className="ent-fc" style={{ flex: "1 1 110px" }}
+                                    value={line.prepaidStartMonth ?? ""}
+                                    onChange={(e) => updateLine(i, { prepaidStartMonth: e.target.value })}
+                                  />
+                                  <input
+                                    type="number" min={1} max={600} step={1} className="ent-fc" style={{ width: 62 }}
+                                    value={line.prepaidMonths ?? ""}
+                                    onChange={(e) => updateLine(i, { prepaidMonths: Number(e.target.value) })}
+                                  />
+                                </div>
+                                {/* The consequence, shown before it is committed —
+                                    the point of the whole control. */}
+                                <div style={{ fontSize: 11.5, color: "var(--color-muted)", marginTop: 4 }}>
+                                  {prepaidHint(line)}
+                                </div>
+                              </>
+                            )}
+                          </>
+                        ) : (
+                          <span style={{ fontSize: 11.5, color: "var(--color-muted)" }}>
+                            {line.itemId ? "Stock item" : "—"}
+                          </span>
+                        )}
+                      </td>
                     )}
                     <td><button type="button" className="ent-ia ent-ia-del" disabled={lines.length <= 1} onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))}>✕</button></td>
                   </tr>
