@@ -339,7 +339,7 @@ function PurchaseOrdersInner() {
                   <tr key={i}>
                     <td>
                       <ItemPicker
-                        items={items.filter((it) => it.isActive)}
+                        items={items.filter((it) => it.isActive && it.itemKind === "STOCK")}
                         value={line.itemId || null}
                         onChange={(id) => pickItem(i, id ?? "")}
                       />

@@ -134,7 +134,7 @@ export default function ItemDetailPage() {
       <div className="ent-page-hdr">
         <h1>{item.name}</h1>
         <p>
-          Item · {item.sku}
+          {item.itemKind === "SERVICE" ? "Service" : "Item"} · {item.sku}
           {" · "}
           <button className="ent-ia ent-ia-edit" style={{ padding: 0 }} onClick={() => router.push("/inventory/items")}>
             Back to list
@@ -167,8 +167,9 @@ export default function ItemDetailPage() {
               </div>
             </div>
             <p style={{ ...muted, padding: "0 0 8px" }}>
-              Item Code and Stock Account are fixed at creation — the code is the bulk-upload
-              match key, and the account is what existing stock movements posted against.
+              Item Code, Kind and Account are fixed at creation — the code is the bulk-upload
+              match key, the kind decides which sort of account the item posts to, and the
+              account is what anything already posted was booked against.
             </p>
             {actionError && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 0 10px" }}>{actionError}</p>}
             <button className="ent-btn-save" disabled={actionBusy} onClick={handleSave}>{actionBusy ? "Saving…" : "Save"}</button>
@@ -177,14 +178,22 @@ export default function ItemDetailPage() {
         ) : (
           <div className="ent-form-grid">
             <div><span style={muted}>Item Code</span><div>{item.sku}</div></div>
+            <div>
+              <span style={muted}>Kind</span>
+              <div>
+                <span className={item.itemKind === "SERVICE" ? "badge badge-purple" : "badge badge-gray"}>
+                  {item.itemKind === "SERVICE" ? "Service / expense" : "Stock item"}
+                </span>
+              </div>
+            </div>
             <div><span style={muted}>UOM</span><div>{item.uom || "—"}</div></div>
             <div><span style={muted}>HSN/SAC</span><div>{item.hsnCode || "—"}</div></div>
-            <div><span style={muted}>Stock Account</span><div>{item.stockAccount.accountCode} — {item.stockAccount.accountName}</div></div>
+            <div><span style={muted}>{item.itemKind === "SERVICE" ? "Expense Account" : "Stock Account"}</span><div>{item.stockAccount.accountCode} — {item.stockAccount.accountName}</div></div>
             <div><span style={muted}>Tax Rate</span><div>{item.taxRate}%</div></div>
             <div><span style={muted}>Default Discount</span><div>{item.defaultDiscountPct}%</div></div>
             <div><span style={muted}>Sales Rate</span><div>{item.salesRate ?? "—"}</div></div>
             <div><span style={muted}>Purchase Rate</span><div>{item.purchaseRate ?? "—"}</div></div>
-            <div><span style={muted}>On Hand</span><div>{item.totalQuantityOnHand}</div></div>
+            <div><span style={muted}>On Hand</span><div>{item.itemKind === "SERVICE" ? "—" : item.totalQuantityOnHand}</div></div>
             <div><span style={muted}>Type</span><div>{item.isFinishedGood ? "Finished good" : "Standard"}</div></div>
             <div style={{ gridColumn: "1 / -1" }}><span style={muted}>Description</span><div>{item.description || "—"}</div></div>
             <div>

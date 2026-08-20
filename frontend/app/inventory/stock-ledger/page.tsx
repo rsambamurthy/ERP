@@ -37,7 +37,7 @@ function StockLedgerInner() {
       <div className="ent-toolbar">
         <select className="ent-fc" style={{ flex: "1 1 240px", height: 34 }} value={itemId} onChange={(e) => setItemId(e.target.value)}>
           <option value="">Select item…</option>
-          {items.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}
+          {items.filter((i) => i.itemKind === "STOCK").map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}
         </select>
         <input type="date" className="ent-fc" style={{ width: 150, height: 34 }} value={from} onChange={(e) => setFrom(e.target.value)} />
         <input type="date" className="ent-fc" style={{ width: 150, height: 34 }} value={to} onChange={(e) => setTo(e.target.value)} />

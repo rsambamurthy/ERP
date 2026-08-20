@@ -486,10 +486,19 @@ model Item {
   uom            String    @default("EA") @db.VarChar(20)
   hsnCode        String?   @map("hsn_code") @db.VarChar(10)
   isFinishedGood Boolean   @default(false) @map("is_finished_good")
-  // Which control account this item's stock value posts to — Inventory
-  // (Trading), Raw Materials, or Finished Goods (Manufacturing). Explicit
-  // rather than inferred from isFinishedGood/domain, since an org that
-  // selected both domains has more than one candidate account.
+  // STOCK (default) or SERVICE — see migration_029. A SERVICE item debits
+  // an EXPENSE account and never moves stock; it exists so a GST-bearing
+  // expense (rent, telecom, professional fees) can go through a Purchase
+  // Bill and therefore show up as ITC, which lib/gstReports.ts only ever
+  // sources from purchase_bills.
+  itemKind       String    @default("STOCK") @map("item_kind") @db.VarChar(10)
+  // The account this item posts against. For STOCK that's the control
+  // account its stock value sits in — Inventory (Trading), Raw Materials or
+  // Finished Goods (Manufacturing) — explicit rather than inferred from
+  // isFinishedGood/domain, since an org that selected both domains has more
+  // than one candidate. For SERVICE it's the EXPENSE account the bill line
+  // debits. Deliberately not renamed: it would touch every existing row and
+  // query for no functional gain.
   stockAccountId String    @map("stock_account_id") @db.Uuid
   // The paired sub-ledger row (business_partners.bp_type = 'ITEM') that
   // tags every journal line against stockAccountId for this item — same

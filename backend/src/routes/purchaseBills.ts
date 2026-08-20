@@ -63,7 +63,7 @@ interface LineInput {
 function buildBillJournalLineRows(args: {
   journalEntryId: string;
   computed: { itemId: string; quantity: number; lineSubtotal: number; customsDutyAmount: number }[];
-  itemById: Map<string, { stockAccountId: string; businessPartnerId: string; sku: string }>;
+  itemById: Map<string, { stockAccountId: string; businessPartnerId: string; sku: string; itemKind: string }>;
   cgstTotal: number; sgstTotal: number; igstTotal: number;
   cgstInput: { id: string } | null; sgstInput: { id: string } | null; igstInput: { id: string } | null;
   customsDutyPayableCredit: number; customsDutyPayable: { id: string } | null;
@@ -79,7 +79,13 @@ function buildBillJournalLineRows(args: {
     ...computed.map((l) => ({
       journalEntryId,
       accountId: itemById.get(l.itemId)!.stockAccountId,
-      businessPartnerId: itemById.get(l.itemId)!.businessPartnerId,
+      // The partner tag is the item's paired ITEM sub-ledger row, which only
+      // means anything on a stock control account. A SERVICE line debits a
+      // plain expense head with no sub-ledger, so tagging it would put a
+      // balance on a partner nobody will ever look up.
+      businessPartnerId: itemById.get(l.itemId)!.itemKind === "SERVICE"
+        ? null
+        : itemById.get(l.itemId)!.businessPartnerId,
       debit: l.lineSubtotal + l.customsDutyAmount, credit: 0,
       narration: `${itemById.get(l.itemId)!.sku} x ${l.quantity}`,
     })),
@@ -499,6 +505,12 @@ router.post("/", canPost, async (req, res) => {
       // never runs for one either way.)
       if (!linkedPo) {
         for (const l of computed) {
+          // SERVICE items have no stock to receive — their line already
+          // debited an expense account rather than a stock control account
+          // (see migration_029). Everything else about the bill is
+          // identical, which is the whole point: GST input, Trade Payables
+          // and therefore GSTR-3B's ITC all work unchanged.
+          if (itemById.get(l.itemId)!.itemKind === "SERVICE") continue;
           await receiveStock(tx, {
             organizationId, branchId: resolvedBranchId!, itemId: l.itemId,
             quantity: l.quantity, unitCost: l.unitCost, costingMethod: org.costingMethod!,

@@ -69,6 +69,7 @@ router.get("/", async (req, res) => {
   res.json({
     data: items.map((i) => ({
       id: i.id, sku: i.sku, name: i.name, description: i.description, uom: i.uom, hsnCode: i.hsnCode,
+      itemKind: i.itemKind,
       isFinishedGood: i.isFinishedGood, isActive: i.isActive,
       stockAccount: i.stockAccount,
       salesRate: i.salesRate, purchaseRate: i.purchaseRate, taxRate: i.taxRate,
@@ -93,6 +94,20 @@ router.get("/stock-accounts", async (req, res) => {
   res.json({ data: accounts });
 });
 
+// GET /items/expense-accounts — candidate accounts for a SERVICE item.
+// Any active EXPENSE account, not the isControlAccount/defaultBpType=ITEM
+// set that stock items draw from: an expense head has no sub-ledger and
+// nothing posts a per-partner balance against it.
+router.get("/expense-accounts", async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const accounts = await prisma.account.findMany({
+    where: { organizationId, deletedAt: null, accountType: "EXPENSE", isGroup: false, isActive: true },
+    orderBy: { accountCode: "asc" },
+  });
+  res.json({ data: accounts });
+});
+
 // GET /items/:id — one item, same shape as a row from GET / above so the
 // detail page and the list agree on field names.
 //
@@ -111,7 +126,8 @@ router.get("/:id", async (req, res) => {
   res.json({
     data: {
       id: item.id, sku: item.sku, name: item.name, description: item.description, uom: item.uom,
-      hsnCode: item.hsnCode, isFinishedGood: item.isFinishedGood, isActive: item.isActive,
+      hsnCode: item.hsnCode, itemKind: item.itemKind,
+      isFinishedGood: item.isFinishedGood, isActive: item.isActive,
       stockAccount: item.stockAccount,
       salesRate: item.salesRate, purchaseRate: item.purchaseRate, taxRate: item.taxRate,
       defaultDiscountPct: item.defaultDiscountPct,
@@ -156,10 +172,12 @@ router.post("/", canManageItems, async (req, res) => {
   if (!organizationId) return;
 
   const {
-    sku, name, description, uom, hsnCode, isFinishedGood,
+    sku, name, description, uom, hsnCode, isFinishedGood, itemKind,
     stockAccountId, salesRate, purchaseRate, taxRate, defaultDiscountPct,
     openingQuantity, openingCost, openingBranchId, openingDate,
   } = req.body ?? {};
+
+  const kind = itemKind === "SERVICE" ? "SERVICE" : "STOCK";
 
   if (!sku || !name || !stockAccountId) {
     return res.status(400).json({ message: "sku, name, and stockAccountId are required." });
@@ -170,16 +188,36 @@ router.post("/", canManageItems, async (req, res) => {
     return res.status(422).json({ message: "Set the organization's stock costing method before adding items." });
   }
 
-  const account = await prisma.account.findFirst({
-    where: { id: stockAccountId, organizationId, isControlAccount: true, defaultBpType: "ITEM" },
-  });
-  if (!account) return res.status(400).json({ message: "stockAccountId must be one of this org's item control accounts." });
+  // stockAccountId means different things per kind — a stock control
+  // account for STOCK, the expense head to debit for SERVICE. See the
+  // column comment in schema.prisma for why the field wasn't renamed.
+  const account = kind === "SERVICE"
+    ? await prisma.account.findFirst({
+        where: { id: stockAccountId, organizationId, deletedAt: null, accountType: "EXPENSE", isGroup: false },
+      })
+    : await prisma.account.findFirst({
+        where: { id: stockAccountId, organizationId, isControlAccount: true, defaultBpType: "ITEM" },
+      });
+  if (!account) {
+    return res.status(400).json({
+      message: kind === "SERVICE"
+        ? "For a service item, stockAccountId must be one of this org's expense accounts."
+        : "stockAccountId must be one of this org's item control accounts.",
+    });
+  }
 
   const existing = await prisma.item.findUnique({ where: { organizationId_sku: { organizationId, sku } } });
   if (existing) return res.status(409).json({ message: `Item code ${sku} already exists.` });
 
-  const qty = Number(openingQuantity ?? 0);
-  const cost = Number(openingCost ?? 0);
+  // A service has no stock, so an opening balance is meaningless rather
+  // than merely unused — reject it instead of silently dropping the number
+  // someone typed.
+  if (kind === "SERVICE" && Number(openingQuantity ?? 0) > 0) {
+    return res.status(400).json({ message: "A service item cannot have an opening quantity." });
+  }
+
+  const qty = kind === "SERVICE" ? 0 : Number(openingQuantity ?? 0);
+  const cost = kind === "SERVICE" ? 0 : Number(openingCost ?? 0);
   let resolvedOpeningBranchId: string | null = openingBranchId ?? null;
   if (qty > 0) {
     if (!resolvedOpeningBranchId) {
@@ -200,7 +238,8 @@ router.post("/", canManageItems, async (req, res) => {
         description: description ?? null,
         uom: uom || "EA",
         hsnCode: hsnCode ?? null,
-        isFinishedGood: !!isFinishedGood,
+        isFinishedGood: kind === "SERVICE" ? false : !!isFinishedGood,
+        itemKind: kind,
         stockAccountId,
         businessPartnerId: bp.id,
         salesRate: salesRate ?? null,
@@ -449,6 +488,13 @@ router.post("/bulk-upload/apply", canManageItems, async (req, res) => {
           data: {
             organizationId, sku: row.sku, name: row.name,
             description: row.description, uom: row.uom || "EA", hsnCode: row.hsnCode,
+            // Bulk upload only ever creates STOCK items: the template has a
+            // Stock Account column and no kind, and a service item needs an
+            // expense account instead. Explicit rather than relying on the
+            // column default, so this doesn't silently change if the default
+            // ever does. Service items are created one at a time on the
+            // Items screen; extending the template is a later phase.
+            itemKind: "STOCK",
             stockAccountId: account.id, businessPartnerId: bp.id,
             salesRate: row.salesRate, purchaseRate: row.purchaseRate, taxRate: row.taxRate,
             openingQuantity: row.openingQuantity, openingCost: row.openingCost,

@@ -93,7 +93,7 @@ function StockAdjustmentsInner() {
                     <td>
                       <select className="ent-fc" value={line.itemId} onChange={(e) => updateLine(i, { itemId: e.target.value })}>
                         <option value="">Select item…</option>
-                        {items.filter((it) => it.isActive).map((it) => <option key={it.id} value={it.id}>{it.sku} — {it.name}</option>)}
+                        {items.filter((it) => it.isActive && it.itemKind === "STOCK").map((it) => <option key={it.id} value={it.id}>{it.sku} — {it.name}</option>)}
                       </select>
                     </td>
                     <td>

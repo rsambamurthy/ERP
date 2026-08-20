@@ -569,13 +569,19 @@ export function getStockAccounts() {
   return request<{ data: Account[] }>("/items/stock-accounts");
 }
 
+// Candidate accounts for a SERVICE item — plain EXPENSE heads, not the
+// control accounts a STOCK item posts to. See migration_029.
+export function getExpenseAccounts() {
+  return request<{ data: Account[] }>("/items/expense-accounts");
+}
+
 export function getItems() {
   return request<{ data: Item[] }>("/items");
 }
 
 export function createItem(body: {
   sku: string; name: string; description?: string; uom?: string; hsnCode?: string;
-  isFinishedGood?: boolean; stockAccountId: string; salesRate?: number; purchaseRate?: number; taxRate?: number;
+  isFinishedGood?: boolean; itemKind?: "STOCK" | "SERVICE"; stockAccountId: string; salesRate?: number; purchaseRate?: number; taxRate?: number;
   defaultDiscountPct?: number;
   openingQuantity?: number; openingCost?: number; openingBranchId?: string; openingDate?: string;
 }) {

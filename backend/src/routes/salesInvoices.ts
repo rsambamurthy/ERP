@@ -318,7 +318,12 @@ router.post("/", canPost, async (req, res) => {
 
   const typedLines: LineInput[] = lines;
   const itemIds = [...new Set(typedLines.map((l) => l.itemId))];
-  const items = await prisma.item.findMany({ where: { id: { in: itemIds }, organizationId, deletedAt: null } });
+  // SERVICE items are purchase-only (migration_029): they debit an expense
+  // head and have no stock, so issuing, receiving or adjusting one is
+  // meaningless. Filtering here rather than only in the picker means an
+  // API-level call can't post one either — a sales line would otherwise
+  // credit an expense account and try to issue stock that never existed.
+  const items = await prisma.item.findMany({ where: { id: { in: itemIds }, organizationId, deletedAt: null, itemKind: "STOCK" } });
   if (items.length !== itemIds.length) return res.status(400).json({ message: "One or more items are invalid for this organization." });
   const itemById = new Map(items.map((i) => [i.id, i]));
 

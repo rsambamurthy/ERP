@@ -535,8 +535,15 @@ export interface Item {
   description: string | null;
   uom: string;
   hsnCode: string | null;
+  // STOCK or SERVICE — see migration_029. A SERVICE item debits an EXPENSE
+  // account and never moves stock; it exists so a GST-bearing expense can go
+  // through a Purchase Bill and therefore produce ITC. Purchase-only: every
+  // sales, PO and stock-adjustment route rejects one server-side.
+  itemKind: "STOCK" | "SERVICE";
   isFinishedGood: boolean;
   isActive: boolean;
+  // For STOCK this is the stock control account; for SERVICE it's the
+  // expense account the bill line debits. Same column either way.
   stockAccount: { id: string; accountCode: string; accountName: string };
   salesRate: string | null;
   purchaseRate: string | null;
