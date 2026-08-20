@@ -54,6 +54,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: "chart_of_accounts", label: "Chart of Accounts", path: "/accounting/chart-of-accounts", dot: "#2563eb", roles: ALL_ROLES },
       { id: "business_partners", label: "Business Partners", path: "/accounting/business-partners", dot: "#0891b2", roles: ALL_ROLES },
       { id: "items", label: "Items", path: "/inventory/items", dot: "#0d9488", roles: ALL_ROLES },
+      { id: "recurring_expenses", label: "Recurring Expenses", path: "/settings/recurring-expenses", dot: "#e11d48", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "purchase.post" },
       { id: "branches", label: "Branches", path: "/settings/branches", dot: "#0284c7", roles: ["OWNER", "ADMIN"], permission: "branches.manage" },
       { id: "team", label: "Team", path: "/settings/team", dot: "#a855f7", roles: ["OWNER", "ADMIN"] },
       { id: "access_control", label: "Access Control", path: "/settings/access-control", dot: "#dc2626", roles: ["OWNER", "ADMIN"] },

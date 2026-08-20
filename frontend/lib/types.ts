@@ -1471,3 +1471,72 @@ export interface JournalUploadRow extends BulkUploadRowBase {
   lineNarration: string | null;
   entryNarration: string | null;
 }
+
+// ── Recurring Expenses ───────────────────────────────────────────────────
+// A monthly expense template. Generating one produces a Purchase Bill of
+// SERVICE items rather than a Journal Entry, because GSTR-3B's ITC only ever
+// comes from purchase_bills — see migration_030.
+
+export type RecurringAmountMode = "FIXED" | "PROMPTED";
+
+export interface RecurringExpenseLine {
+  id: string;
+  itemId: string;
+  quantity: string;
+  // Null only on a PROMPTED template — the amount isn't known until the
+  // month it's raised.
+  rate: string | null;
+  taxRate: string;
+  sortOrder: number;
+  item?: { id: string; sku: string; name: string; uom: string };
+}
+
+export interface RecurringExpenseRun {
+  id: string;
+  periodMonth: string;
+  purchaseBillId: string;
+  generatedAt: string;
+  purchaseBill?: { id: string; billNumber: string; billDate: string; grandTotal: string };
+}
+
+// Row shape from GET /recurring-expenses — carries the derived fields the
+// list shows and the detail response doesn't bother computing.
+export interface RecurringExpenseSummary {
+  id: string;
+  name: string;
+  businessPartner: { id: string; name: string; code: string | null };
+  dayOfMonth: number;
+  startMonth: string;
+  endMonth: string | null;
+  amountMode: RecurringAmountMode;
+  isActive: boolean;
+  lineCount: number;
+  // Null for PROMPTED — showing 0 would read as "free".
+  estimatedAmount: number | null;
+  lastRunMonth: string | null;
+  nextDueMonth: string | null;
+}
+
+export interface RecurringExpense {
+  id: string;
+  name: string;
+  businessPartnerId: string;
+  businessPartner: { id: string; name: string; code: string | null };
+  branchId: string | null;
+  branch: { id: string; name: string } | null;
+  dayOfMonth: number;
+  startMonth: string;
+  endMonth: string | null;
+  amountMode: RecurringAmountMode;
+  narration: string | null;
+  isActive: boolean;
+  lines: RecurringExpenseLine[];
+  runs: RecurringExpenseRun[];
+}
+
+export interface RecurringExpenseLineInput {
+  itemId: string;
+  quantity: number;
+  rate: number | null;
+  taxRate: number;
+}

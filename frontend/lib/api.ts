@@ -28,6 +28,9 @@ import type {
   Gstr3bReport,
   IntegrationConnectionStatus,
   Item,
+  RecurringExpense,
+  RecurringExpenseSummary,
+  RecurringExpenseLineInput,
   ScheduleIIIBalanceSheet,
   ChatMessage,
   JournalEntry,
@@ -1234,4 +1237,46 @@ export function generateIntegrationConnection(label?: string) {
 
 export function revokeIntegrationConnection() {
   return request<{ data: { revoked: true } }>("/integration/connections", { method: "DELETE" });
+}
+
+// ── Recurring Expenses ───────────────────────────────────────────────────
+
+export function getRecurringExpenses() {
+  return request<{ data: RecurringExpenseSummary[] }>("/recurring-expenses");
+}
+
+export function getRecurringExpense(id: string) {
+  return request<{ data: RecurringExpense }>(`/recurring-expenses/${id}`);
+}
+
+export interface RecurringExpenseInput {
+  name: string;
+  businessPartnerId: string;
+  branchId?: string | null;
+  dayOfMonth: number;
+  startMonth: string;
+  endMonth?: string | null;
+  amountMode: "FIXED" | "PROMPTED";
+  narration?: string | null;
+  lines: RecurringExpenseLineInput[];
+}
+
+export function createRecurringExpense(body: RecurringExpenseInput) {
+  return request<{ data: { id: string } }>("/recurring-expenses", {
+    method: "POST", body: JSON.stringify(body),
+  });
+}
+
+export function updateRecurringExpense(id: string, body: Partial<RecurringExpenseInput>) {
+  return request<{ data: { updated: true } }>(`/recurring-expenses/${id}`, {
+    method: "PATCH", body: JSON.stringify(body),
+  });
+}
+
+export function toggleRecurringExpense(id: string) {
+  return request<{ data: RecurringExpense }>(`/recurring-expenses/${id}/toggle`, { method: "PATCH" });
+}
+
+export function deleteRecurringExpense(id: string) {
+  return request<{ data: { deleted: true } }>(`/recurring-expenses/${id}`, { method: "DELETE" });
 }

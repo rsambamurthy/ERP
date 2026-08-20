@@ -129,6 +129,7 @@ model Organization {
   menuConfig       OrgMenuConfig[]
   salesInvoices    SalesInvoice[]
   purchaseBills    PurchaseBill[]
+  recurringExpenses RecurringExpense[]
   stockAdjustments StockAdjustment[]
   salesReturns     SalesReturn[]
   purchaseReturns  PurchaseReturn[]
@@ -255,6 +256,7 @@ model Branch {
   goodsReceiptNotes GoodsReceiptNote[]
   salesOrders      SalesOrder[]
   deliveryNotes    DeliveryNote[]
+  recurringExpenses RecurringExpense[]
 
   @@unique([organizationId, code])
   @@map("branches")
@@ -541,6 +543,7 @@ model Item {
   goodsReceiptNoteLines GoodsReceiptNoteLine[]
   salesOrderLines      SalesOrderLine[]
   deliveryNoteLines    DeliveryNoteLine[]
+  recurringExpenseLines RecurringExpenseLine[]
 
   @@unique([organizationId, sku])
   @@map("items")
@@ -809,6 +812,7 @@ model PurchaseBill {
   purchaseOrder   PurchaseOrder?     @relation(fields: [purchaseOrderId], references: [id])
   lines           PurchaseBillLine[]
   returns         PurchaseReturn[]
+  recurringExpenseRuns RecurringExpenseRun[]
 
   @@unique([organizationId, billNumber])
   @@map("purchase_bills")
@@ -1436,6 +1440,7 @@ model BusinessPartner {
   vendorContacts     VendorContact[]
   vendorAddresses    VendorAddress[]
   vendorBankAccounts VendorBankAccount[]
+  recurringExpenses RecurringExpense[]
 
   @@map("business_partners")
 }
@@ -1582,4 +1587,76 @@ model CurrencyRate {
 
   @@unique([organizationId, currencyCode, effectiveFrom])
   @@map("currency_rates")
+}
+
+// ── Recurring Expenses ───────────────────────────────────────────────────
+// A template for an expense that repeats monthly. Generating one produces a
+// Purchase Bill of SERVICE items (migration_029) rather than a Journal
+// Entry, because lib/gstReports.ts sources GSTR-3B's ITC exclusively from
+// purchase_bills — a JV-based recurring expense would quietly forfeit input
+// credit on rent, telecom and professional fees.
+
+model RecurringExpense {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String    @map("organization_id") @db.Uuid
+  branchId          String?   @map("branch_id") @db.Uuid
+  name              String    @db.VarChar(200)
+  businessPartnerId String    @map("business_partner_id") @db.Uuid
+  // 1..28 by CHECK constraint. Higher values would need a rule for what the
+  // 31st of February means, and that rule is always the thing nobody
+  // remembers — see migration_030's comment.
+  dayOfMonth        Int       @default(1) @map("day_of_month") @db.SmallInt
+  // Both pinned to the 1st of their month.
+  startMonth        DateTime  @map("start_month") @db.Date
+  endMonth          DateTime? @map("end_month") @db.Date
+  // FIXED — lines carry a rate. PROMPTED — entered fresh each month.
+  amountMode        String    @default("FIXED") @map("amount_mode") @db.VarChar(10)
+  narration         String?   @db.VarChar(255)
+  isActive          Boolean   @default(true) @map("is_active")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  createdBy         String?   @map("created_by") @db.Uuid
+  deletedAt         DateTime? @map("deleted_at")
+
+  organization    Organization             @relation(fields: [organizationId], references: [id])
+  branch          Branch?                  @relation(fields: [branchId], references: [id])
+  businessPartner BusinessPartner          @relation(fields: [businessPartnerId], references: [id])
+  lines           RecurringExpenseLine[]
+  runs            RecurringExpenseRun[]
+
+  @@map("recurring_expenses")
+}
+
+model RecurringExpenseLine {
+  id                 String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recurringExpenseId String  @map("recurring_expense_id") @db.Uuid
+  // Always a SERVICE item — the route rejects a STOCK one.
+  itemId             String  @map("item_id") @db.Uuid
+  quantity           Decimal @default(1) @db.Decimal(14, 3)
+  // Null only when the parent template is PROMPTED.
+  rate               Decimal? @db.Decimal(14, 2)
+  taxRate            Decimal @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  sortOrder          Int     @default(0) @map("sort_order") @db.SmallInt
+
+  recurringExpense RecurringExpense @relation(fields: [recurringExpenseId], references: [id])
+  item             Item             @relation(fields: [itemId], references: [id])
+
+  @@map("recurring_expense_lines")
+}
+
+// One row per template per month. The unique index is the real guard behind
+// Phase 3's Post button: concurrent clicks collide here rather than
+// double-booking a payable.
+model RecurringExpenseRun {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recurringExpenseId String   @map("recurring_expense_id") @db.Uuid
+  periodMonth        DateTime @map("period_month") @db.Date
+  purchaseBillId     String   @map("purchase_bill_id") @db.Uuid
+  generatedAt        DateTime @default(now()) @map("generated_at")
+  generatedBy        String?  @map("generated_by") @db.Uuid
+
+  recurringExpense RecurringExpense @relation(fields: [recurringExpenseId], references: [id])
+  purchaseBill     PurchaseBill     @relation(fields: [purchaseBillId], references: [id])
+
+  @@unique([recurringExpenseId, periodMonth])
+  @@map("recurring_expense_runs")
 }
