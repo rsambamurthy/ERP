@@ -130,6 +130,7 @@ model Organization {
   salesInvoices    SalesInvoice[]
   purchaseBills    PurchaseBill[]
   recurringExpenses RecurringExpense[]
+  prepaidSchedules PrepaidSchedule[]
   stockAdjustments StockAdjustment[]
   salesReturns     SalesReturn[]
   purchaseReturns  PurchaseReturn[]
@@ -257,6 +258,7 @@ model Branch {
   salesOrders      SalesOrder[]
   deliveryNotes    DeliveryNote[]
   recurringExpenses RecurringExpense[]
+  prepaidSchedules PrepaidSchedule[]
 
   @@unique([organizationId, code])
   @@map("branches")
@@ -295,6 +297,11 @@ model Account {
   children     Account[]     @relation("AccountHierarchy")
   journalLines JournalLine[]
   itemsUsingAsStockAccount Item[]
+  // Two distinct roles on a prepaid schedule: the asset the bill debits, and
+  // the expense head each instalment releases into. Named because Prisma
+  // cannot tell two relations to the same model apart otherwise.
+  prepaidSchedulesHeldHere   PrepaidSchedule[] @relation("PrepaidScheduleAsset")
+  prepaidSchedulesReleasedTo PrepaidSchedule[] @relation("PrepaidScheduleExpense")
 
   @@unique([organizationId, accountCode])
   @@map("accounts")
@@ -829,6 +836,7 @@ model PurchaseBill {
   lines           PurchaseBillLine[]
   returns         PurchaseReturn[]
   recurringExpenseRuns RecurringExpenseRun[]
+  prepaidSchedules PrepaidSchedule[]
 
   @@unique([organizationId, billNumber])
   @@map("purchase_bills")
@@ -875,6 +883,7 @@ model PurchaseBillLine {
   purchaseOrderLine PurchaseOrderLine?    @relation(fields: [purchaseOrderLineId], references: [id])
   goodsReceiptNoteLine GoodsReceiptNoteLine? @relation(fields: [goodsReceiptNoteLineId], references: [id])
   returnLines       PurchaseReturnLine[]
+  prepaidSchedule   PrepaidSchedule?
 
   @@map("purchase_bill_lines")
 }
@@ -1474,6 +1483,7 @@ model BusinessPartner {
   vendorAddresses    VendorAddress[]
   vendorBankAccounts VendorBankAccount[]
   recurringExpenses RecurringExpense[]
+  prepaidSchedules PrepaidSchedule[]
 
   @@map("business_partners")
 }
@@ -1679,6 +1689,79 @@ model RecurringExpenseLine {
 // One row per template per month. The unique index is the real guard behind
 // Phase 3's Post button: concurrent clicks collide here rather than
 // double-booking a payable.
+// ── Prepaid expenses ─────────────────────────────────────────────────────
+// See migration_032. A Purchase Bill line marked prepaid debits Prepaid
+// Expenses (1105) rather than the service item's own expense head, and this
+// schedule releases it to that head one month at a time.
+//
+// Input tax credit is never scheduled — it attaches to the tax invoice date,
+// so the full GST is claimed in the month the bill is booked and none of the
+// amortization entries carry any. totalAmount is net of tax.
+
+model PrepaidSchedule {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
+  branchId           String?   @map("branch_id") @db.Uuid
+  // Nullable so a schedule can later be opened for a prepayment that predates
+  // SmartERP and has no bill here. Nothing creates one that way yet.
+  purchaseBillId     String?   @map("purchase_bill_id") @db.Uuid
+  purchaseBillLineId String?   @unique @map("purchase_bill_line_id") @db.Uuid
+  // This schedule's own card in the 1105 sub-ledger (bpType PREPAID), so the
+  // GL balance of Prepaid Expenses breaks down schedule by schedule without
+  // leaving the ledger — same arrangement as an Item's card under Inventory.
+  businessPartnerId  String    @map("business_partner_id") @db.Uuid
+  name               String    @db.VarChar(200)
+  prepaidAccountId   String    @map("prepaid_account_id") @db.Uuid
+  // Snapshot of the service item's expense account, not a live read of it.
+  // Re-pointing the item later must change what future bills do, not redirect
+  // the remaining instalments of a schedule already half-released.
+  expenseAccountId   String    @map("expense_account_id") @db.Uuid
+  totalAmount        Decimal   @map("total_amount") @db.Decimal(14, 2)
+  // Pinned to the 1st, like RecurringExpense.startMonth.
+  startMonth         DateTime  @map("start_month") @db.Date
+  months             Int
+  status             String    @default("ACTIVE") @db.VarChar(12)
+  cancelledAt        DateTime? @map("cancelled_at")
+  cancelledBy        String?   @map("cancelled_by") @db.Uuid
+  createdBy          String?   @map("created_by") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at")
+  deletedAt          DateTime? @map("deleted_at")
+
+  organization     Organization      @relation(fields: [organizationId], references: [id])
+  branch           Branch?           @relation(fields: [branchId], references: [id])
+  purchaseBill     PurchaseBill?     @relation(fields: [purchaseBillId], references: [id])
+  purchaseBillLine PurchaseBillLine? @relation(fields: [purchaseBillLineId], references: [id])
+  businessPartner  BusinessPartner   @relation(fields: [businessPartnerId], references: [id])
+  prepaidAccount   Account           @relation("PrepaidScheduleAsset", fields: [prepaidAccountId], references: [id])
+  expenseAccount   Account           @relation("PrepaidScheduleExpense", fields: [expenseAccountId], references: [id])
+  runs             PrepaidScheduleRun[]
+
+  @@map("prepaid_schedules")
+}
+
+model PrepaidScheduleRun {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  prepaidScheduleId String   @map("prepaid_schedule_id") @db.Uuid
+  periodMonth       DateTime @map("period_month") @db.Date
+  // 1-based. instalmentNo == months is the final, balancing slice.
+  instalmentNo      Int      @map("instalment_no")
+  amount            Decimal  @db.Decimal(14, 2)
+  // Deliberately a scalar rather than a relation: nothing ever navigates from
+  // a JournalEntry back to a prepaid run, and modelling it would put an
+  // unused array on JournalEntry.
+  journalEntryId    String   @map("journal_entry_id") @db.Uuid
+  // AMORTIZATION is the normal monthly slice; WRITE_OFF is the single entry
+  // that clears the remainder when a schedule is cancelled early.
+  runType           String   @default("AMORTIZATION") @map("run_type") @db.VarChar(14)
+  generatedBy       String?  @map("generated_by") @db.Uuid
+  generatedAt       DateTime @default(now()) @map("generated_at")
+
+  prepaidSchedule PrepaidSchedule @relation(fields: [prepaidScheduleId], references: [id])
+
+  @@unique([prepaidScheduleId, periodMonth])
+  @@map("prepaid_schedule_runs")
+}
+
 model RecurringExpenseRun {
   id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   recurringExpenseId String   @map("recurring_expense_id") @db.Uuid

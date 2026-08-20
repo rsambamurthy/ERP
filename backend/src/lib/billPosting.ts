@@ -45,7 +45,16 @@ export async function loadPostingAccounts(organizationId: string): Promise<Posti
 // Cr Trade Payables tagged to the vendor.
 export function buildBillJournalLineRows(args: {
   journalEntryId: string;
-  computed: { itemId: string; quantity: number; lineSubtotal: number; customsDutyAmount: number }[];
+  computed: {
+    itemId: string; quantity: number; lineSubtotal: number; customsDutyAmount: number;
+    // Set only by a prepaid line (see routes/purchaseBills.ts and
+    // migration_032). The debit goes to Prepaid Expenses tagged to that
+    // schedule's sub-ledger card, instead of to the item's own account.
+    // Absent on every other line, and never set by the recurring-expense
+    // generator, so nothing else changes shape.
+    debitAccountIdOverride?: string;
+    debitPartnerIdOverride?: string;
+  }[];
   itemById: Map<string, { stockAccountId: string; businessPartnerId: string; sku: string; itemKind: string }>;
   cgstTotal: number; sgstTotal: number; igstTotal: number;
   cgstInput: { id: string } | null; sgstInput: { id: string } | null; igstInput: { id: string } | null;
@@ -61,14 +70,20 @@ export function buildBillJournalLineRows(args: {
   return [
     ...computed.map((l) => ({
       journalEntryId,
-      accountId: itemById.get(l.itemId)!.stockAccountId,
+      accountId: l.debitAccountIdOverride ?? itemById.get(l.itemId)!.stockAccountId,
       // The partner tag is the item's paired ITEM sub-ledger row, which only
       // means anything on a stock control account. A SERVICE line debits a
       // plain expense head with no sub-ledger, so tagging it would put a
       // balance on a partner nobody will ever look up.
-      businessPartnerId: itemById.get(l.itemId)!.itemKind === "SERVICE"
-        ? null
-        : itemById.get(l.itemId)!.businessPartnerId,
+      //
+      // A prepaid line is the exception: it debits a control account (1105)
+      // and does carry a tag — its own schedule's card — which is what lets
+      // Prepaid Expenses be broken down schedule by schedule.
+      businessPartnerId: l.debitAccountIdOverride
+        ? l.debitPartnerIdOverride ?? null
+        : itemById.get(l.itemId)!.itemKind === "SERVICE"
+          ? null
+          : itemById.get(l.itemId)!.businessPartnerId,
       debit: l.lineSubtotal + l.customsDutyAmount, credit: 0,
       narration: `${itemById.get(l.itemId)!.sku} x ${l.quantity}`,
     })),

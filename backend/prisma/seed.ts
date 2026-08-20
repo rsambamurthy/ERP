@@ -129,6 +129,18 @@ async function main() {
     // owed to the foreign vendor (both are owed to customs/government,
     // typically via a clearing agent) — see routes/purchaseBills.ts.
     { domainTypeId: null, accountCode: "2105", accountName: "Customs Duty Payable", accountType: "LIABILITY", scheduleIiiHead: "OTHER_CURRENT_LIABILITIES" },
+    // Prepaid Expenses — a control account, so its balance breaks down one
+    // card per schedule rather than sitting as a single lump. See
+    // migration_032, which also backfills this into existing organizations.
+    {
+      domainTypeId: null,
+      accountCode: "1105",
+      accountName: "Prepaid Expenses",
+      accountType: "ASSET",
+      isControlAccount: true,
+      defaultBpType: "PREPAID",
+      scheduleIiiHead: "OTHER_CURRENT_ASSETS",
+    },
     { domainTypeId: null, accountCode: "4001", accountName: "Cost of Goods Sold", accountType: "EXPENSE" },
     // Gross-method Sales Invoice discount posting: Sales Revenue posts at
     // full pre-discount value, this contra account absorbs everything taken

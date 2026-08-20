@@ -47,6 +47,20 @@ interface LineInput {
   // Stock is never re-received for a line like this — the GRN it
   // references already moved that stock in.
   goodsReceiptNoteLineId?: string;
+  // ── Prepaid expense (migration_032) ──────────────────────────────────
+  // Set only on a SERVICE line the buyer wants spread over time — annual
+  // insurance, a 12-month AMC, a software licence. The line then debits
+  // Prepaid Expenses (1105) instead of the item's own expense head, and a
+  // schedule releases it to that head one month at a time.
+  //
+  // Tax is untouched: ITC attaches to the tax invoice date, so the whole
+  // GST is still claimed in the month this bill is booked. Only the net
+  // line value is scheduled.
+  prepaid?: boolean;
+  // "YYYY-MM". The month the first instalment belongs to.
+  prepaidStartMonth?: string;
+  // How many monthly instalments, 1..600.
+  prepaidMonths?: number;
 }
 
 
@@ -388,6 +402,60 @@ router.post("/", canPost, async (req, res) => {
   }
   const tradePayablesCredit = isForeign ? subtotal : grandTotal;
 
+  // ── Prepaid lines ────────────────────────────────────────────────────
+  // Validated here, before anything is written, so a bad prepaid input can
+  // never leave a bill posted with a broken schedule beside it.
+  //
+  // A prepaid line can only ever be a SERVICE item, and PO lines are
+  // STOCK-only (routes/purchaseOrders.ts), so a prepaid line can never
+  // appear on a PO-linked bill — and price-variance approval only happens
+  // on PO-linked bills. That is why nothing below has to deal with a bill
+  // held at PENDING_APPROVAL: the two states are mutually exclusive. The
+  // explicit rejection is there to keep it that way if PO lines ever open
+  // up to service items.
+  const prepaidIdx: number[] = [];
+  computed.forEach((l, i) => {
+    if ((l as { prepaid?: boolean }).prepaid) prepaidIdx.push(i);
+  });
+
+  let prepaidAccountId: string | null = null;
+  if (prepaidIdx.length > 0) {
+    if (linkedPo) {
+      return res.status(400).json({ message: "A Purchase-Order-linked bill can't carry a prepaid line." });
+    }
+    if (isForeign) {
+      // Whether a prepaid asset is a monetary item to be retranslated at
+      // each balance-sheet date is a real question with a real answer, and
+      // it is not one to settle silently inside a bill-posting route.
+      return res.status(400).json({ message: "Prepaid scheduling isn't supported on a foreign-currency bill yet." });
+    }
+    for (const i of prepaidIdx) {
+      const l = computed[i] as { itemId: string; prepaidStartMonth?: string; prepaidMonths?: number; lineSubtotal: number };
+      const item = itemById.get(l.itemId)!;
+      if (item.itemKind !== "SERVICE") {
+        return res.status(400).json({ message: `Only a service item can be prepaid — ${item.sku} is a stock item.` });
+      }
+      const months = Number(l.prepaidMonths);
+      if (!Number.isInteger(months) || months < 1 || months > 600) {
+        return res.status(400).json({ message: `${item.sku}: prepaidMonths must be a whole number between 1 and 600.` });
+      }
+      if (!/^\d{4}-\d{2}$/.test(String(l.prepaidStartMonth ?? ""))) {
+        return res.status(400).json({ message: `${item.sku}: prepaidStartMonth is required, as YYYY-MM.` });
+      }
+      if (!(l.lineSubtotal > 0)) {
+        return res.status(400).json({ message: `${item.sku}: a prepaid line needs an amount greater than zero.` });
+      }
+    }
+    const prepaidAccount = await prisma.account.findFirst({
+      where: { organizationId, accountCode: "1105", deletedAt: null },
+      select: { id: true },
+    });
+    if (!prepaidAccount) {
+      return res.status(500).json({ message: "Prepaid Expenses account (1105) not found — re-run provisioning." });
+    }
+    prepaidAccountId = prepaidAccount.id;
+  }
+
   const count = await prisma.purchaseBill.count({ where: { organizationId } });
   const billNumber = `PB-${String(count + 1).padStart(4, "0")}`;
 
@@ -399,6 +467,25 @@ router.post("/", canPost, async (req, res) => {
       // and its lines are still fully created below so the record exists
       // and is visible on the Pending Approval list — only the posting
       // side effects are deferred.
+      // Each prepaid line gets its own card in the 1105 sub-ledger before the
+      // journal is written, because the journal line has to be tagged to it.
+      // The card is what makes Prepaid Expenses break down schedule by
+      // schedule: this bill debits it for the full amount, and each monthly
+      // instalment credits the same card back down to zero.
+      const prepaidCard = new Map<number, string>();
+      for (const i of prepaidIdx) {
+        const l = computed[i] as { itemId: string } & Record<string, unknown>;
+        const card = await tx.businessPartner.create({
+          data: {
+            organizationId, bpType: "PREPAID",
+            name: `${itemById.get(l.itemId)!.name} — ${billNumber}`,
+          },
+        });
+        prepaidCard.set(i, card.id);
+        l.debitAccountIdOverride = prepaidAccountId!;
+        l.debitPartnerIdOverride = card.id;
+      }
+
       const journalEntry = requiresApproval ? null : await tx.journalEntry.create({
         data: {
           organizationId, branchId: resolvedBranchId, entryDate: new Date(billDate),
@@ -438,18 +525,55 @@ router.post("/", canPost, async (req, res) => {
         },
       });
 
-      await tx.purchaseBillLine.createMany({
-        data: computed.map((l) => ({
-          purchaseBillId: created.id, itemId: l.itemId, quantity: l.quantity, rate: l.rate,
-          taxRate: l.taxRate ?? 0, lineSubtotal: l.lineSubtotal, taxAmount: l.taxAmount, lineTotal: l.lineTotal,
-          cgstAmount: l.cgstAmount, sgstAmount: l.sgstAmount, igstAmount: l.igstAmount,
-          rateFc: l.rateFc ?? null, lineTotalFc: isForeign ? round2(l.lineTotal / fxRate) : null,
-          customsDutyRate: isForeign && l.customsDutyRate ? l.customsDutyRate : null,
-          customsDutyAmount: l.customsDutyAmount,
-          purchaseOrderLineId: (l as { purchaseOrderLineId?: string }).purchaseOrderLineId ?? null,
-          goodsReceiptNoteLineId: (l as { goodsReceiptNoteLineId?: string }).goodsReceiptNoteLineId ?? null,
-        })),
-      });
+      // Created one at a time rather than with createMany, because a prepaid
+      // schedule has to point at the exact line that created it and
+      // createMany returns no ids. Matching them back up by itemId afterwards
+      // would be ambiguous the moment a bill carries the same service item on
+      // two lines. Bills have a handful of lines, and this is inside the
+      // transaction either way.
+      const lineIds: string[] = [];
+      for (const l of computed) {
+        const row = await tx.purchaseBillLine.create({
+          data: {
+            purchaseBillId: created.id, itemId: l.itemId, quantity: l.quantity, rate: l.rate,
+            taxRate: l.taxRate ?? 0, lineSubtotal: l.lineSubtotal, taxAmount: l.taxAmount, lineTotal: l.lineTotal,
+            cgstAmount: l.cgstAmount, sgstAmount: l.sgstAmount, igstAmount: l.igstAmount,
+            rateFc: l.rateFc ?? null, lineTotalFc: isForeign ? round2(l.lineTotal / fxRate) : null,
+            customsDutyRate: isForeign && l.customsDutyRate ? l.customsDutyRate : null,
+            customsDutyAmount: l.customsDutyAmount,
+            purchaseOrderLineId: (l as { purchaseOrderLineId?: string }).purchaseOrderLineId ?? null,
+            goodsReceiptNoteLineId: (l as { goodsReceiptNoteLineId?: string }).goodsReceiptNoteLineId ?? null,
+          },
+          select: { id: true },
+        });
+        lineIds.push(row.id);
+      }
+
+      // The schedules themselves. Nothing is released here — this only
+      // records what is to be released, and by which month. The instalment
+      // amounts are derived when they are posted, so a schedule is a
+      // statement of intent rather than a pre-written set of entries.
+      for (const i of prepaidIdx) {
+        const l = computed[i] as { itemId: string; lineSubtotal: number; prepaidStartMonth?: string; prepaidMonths?: number };
+        const item = itemById.get(l.itemId)!;
+        await tx.prepaidSchedule.create({
+          data: {
+            organizationId, branchId: resolvedBranchId,
+            purchaseBillId: created.id, purchaseBillLineId: lineIds[i],
+            businessPartnerId: prepaidCard.get(i)!,
+            name: `${item.name} — ${billNumber}`,
+            prepaidAccountId: prepaidAccountId!,
+            // Snapshot, not a live read: re-pointing the service item later
+            // must change what future bills do, never redirect the remaining
+            // instalments of a schedule already part-released.
+            expenseAccountId: item.stockAccountId,
+            totalAmount: l.lineSubtotal,
+            startMonth: new Date(`${l.prepaidStartMonth}-01T00:00:00.000Z`),
+            months: Number(l.prepaidMonths),
+            createdBy: req.user!.userId,
+          },
+        });
+      }
 
       // Stock inward only for ad-hoc (non-PO) lines — a PO-linked bill's
       // stock was already received via its Goods Receipt Note(s), so
