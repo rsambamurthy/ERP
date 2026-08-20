@@ -86,6 +86,25 @@ export default function RecurringExpensesPage() {
     setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   }
 
+  // Picking an item seeds rate and tax from the item master, the same way
+  // Purchase Bills does — a recurring template is a purchase bill waiting to
+  // happen, so it should default identically. Both stay editable: the master
+  // rate is a starting point, not a rule.
+  //
+  // The rate is deliberately left alone on a PROMPTED template, where the
+  // whole point is that the amount isn't known until the month it's raised
+  // and the field is disabled anyway.
+  function pickItem(i: number, itemId: string) {
+    const item = serviceItems.find((it) => it.id === itemId);
+    updateLine(i, {
+      itemId,
+      ...(form.amountMode === "PROMPTED"
+        ? {}
+        : { rate: item?.purchaseRate ? String(Number(item.purchaseRate)) : "" }),
+      taxRate: item?.taxRate ? String(Number(item.taxRate)) : "0",
+    });
+  }
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
@@ -256,7 +275,7 @@ export default function RecurringExpensesPage() {
                       <ItemPicker
                         items={serviceItems}
                         value={line.itemId || null}
-                        onChange={(id) => updateLine(i, { itemId: id ?? "" })}
+                        onChange={(id) => pickItem(i, id ?? "")}
                         placeholder="Search service item…"
                       />
                     </td>
