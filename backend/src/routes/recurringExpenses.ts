@@ -2,6 +2,8 @@ import { Router } from "express";
 import { prisma } from "../db";
 import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
+import { isInterState, round2, splitGst } from "../lib/discountGst";
+import { buildBillJournalLineRows, loadPostingAccounts } from "../lib/billPosting";
 
 // Recurring Expenses — configuration only (Phase 2). A template says which
 // vendor, which service items, what amount and which day of the month.
@@ -150,6 +152,274 @@ router.get("/", async (req, res) => {
       };
     }),
   });
+});
+
+
+// The bill date for a given period: the template's day, clamped to the
+// month's length. Clamping is only reachable for a template created before
+// the 1..28 CHECK existed — it's cheap insurance either way.
+function billDateFor(period: Date, dayOfMonth: number): Date {
+  const daysInMonth = new Date(Date.UTC(period.getUTCFullYear(), period.getUTCMonth() + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(period.getUTCFullYear(), period.getUTCMonth(), Math.min(dayOfMonth, daysInMonth)));
+}
+
+// Is this template scheduled for this month at all? Independent of whether
+// it has already been generated — the caller checks runs separately, so the
+// due screen can show "already raised" rather than silently omitting it.
+function isScheduledFor(t: { startMonth: Date; endMonth: Date | null; isActive: boolean }, period: Date): boolean {
+  if (!t.isActive) return false;
+  if (period < new Date(t.startMonth)) return false;
+  if (t.endMonth && period > new Date(t.endMonth)) return false;
+  return true;
+}
+
+// GET /recurring-expenses/due?month=YYYY-MM — every template scheduled for
+// that month, with its lines costed, and whether it has already been raised.
+//
+// Declared above /:id: "due" is a single path segment, so /:id would
+// otherwise swallow it and look for a template with that id. Same trap this
+// codebase has hit twice before (items /stock-accounts, business-partners
+// /lookup).
+router.get("/due", async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const period = monthStart(req.query.month) ?? thisMonth();
+
+  const templates = await prisma.recurringExpense.findMany({
+    where: { organizationId, deletedAt: null, isActive: true },
+    include: {
+      businessPartner: { select: { id: true, name: true, code: true } },
+      lines: { orderBy: { sortOrder: "asc" }, include: { item: { select: { id: true, sku: true, name: true, uom: true } } } },
+      runs: { where: { periodMonth: period }, include: { purchaseBill: { select: { id: true, billNumber: true, grandTotal: true } } } },
+    },
+    orderBy: { name: "asc" },
+  });
+
+  res.json({
+    data: templates
+      .filter((t) => isScheduledFor(t, period))
+      .map((t) => {
+        const run = t.runs[0] ?? null;
+        const lines = t.lines.map((l) => {
+          const qty = Number(l.quantity);
+          const rate = l.rate === null ? null : Number(l.rate);
+          const lineSubtotal = rate === null ? null : round2(qty * rate);
+          return {
+            itemId: l.itemId,
+            item: l.item,
+            quantity: qty,
+            rate,
+            taxRate: Number(l.taxRate),
+            lineSubtotal,
+            lineTotal: lineSubtotal === null ? null : round2(lineSubtotal + (lineSubtotal * Number(l.taxRate)) / 100),
+          };
+        });
+        const total = lines.every((l) => l.lineTotal !== null)
+          ? round2(lines.reduce((s, l) => s + (l.lineTotal ?? 0), 0))
+          : null;
+        return {
+          id: t.id,
+          name: t.name,
+          businessPartner: t.businessPartner,
+          amountMode: t.amountMode,
+          dayOfMonth: t.dayOfMonth,
+          billDate: billDateFor(period, t.dayOfMonth).toISOString().slice(0, 10),
+          narration: t.narration,
+          lines,
+          estimatedTotal: total,
+          // Already-raised templates stay in the list rather than vanishing,
+          // so it's obvious at a glance that nothing was missed.
+          alreadyRaised: run
+            ? { billId: run.purchaseBill.id, billNumber: run.purchaseBill.billNumber, grandTotal: run.purchaseBill.grandTotal }
+            : null,
+        };
+      }),
+  });
+});
+
+// POST /recurring-expenses/generate
+//   { month: "YYYY-MM", items: [{ recurringExpenseId, lines?: [{ itemId, quantity, rate, taxRate }] }] }
+//
+// One Purchase Bill per template, each in its own transaction so a failure
+// on one doesn't roll back the ones that already worked — the response says
+// exactly which succeeded and which didn't.
+//
+// The ledger shape comes from lib/billPosting.ts, shared with
+// routes/purchaseBills.ts, so a recurring bill and a hand-entered one post
+// identically. What is deliberately NOT reimplemented here: PO linking,
+// 3-way matching, price-variance approval, foreign currency and customs
+// duty. A recurring expense has none of those, and pretending otherwise
+// would mean duplicating the most delicate code in the app.
+router.post("/generate", canManage, async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+  const period = monthStart(req.body?.month);
+  if (!period) return res.status(400).json({ message: "month is required, as YYYY-MM." });
+
+  const requests: { recurringExpenseId: string; lines?: LineInput[] }[] =
+    Array.isArray(req.body?.items) ? req.body.items : [];
+  if (requests.length === 0) return res.status(400).json({ message: "Select at least one recurring expense to raise." });
+
+  const accounts = await loadPostingAccounts(organizationId);
+  if (!accounts.tradePayables) {
+    return res.status(500).json({ message: "Trade Payables account not found — re-run provisioning." });
+  }
+
+  const ho = await prisma.branch.findFirst({ where: { organizationId, isHeadOffice: true } });
+  if (!ho) return res.status(400).json({ message: "No head office branch found — set one up first." });
+  const branch = await prisma.branch.findFirst({ where: { id: ho.id, organizationId }, select: { stateCode: true } });
+
+  const created: { recurringExpenseId: string; billNumber: string; grandTotal: number }[] = [];
+  const failed: { recurringExpenseId: string; message: string }[] = [];
+
+  for (const wanted of requests) {
+    try {
+      const t = await prisma.recurringExpense.findFirst({
+        where: { id: wanted.recurringExpenseId, organizationId, deletedAt: null },
+        include: {
+          businessPartner: true,
+          lines: { orderBy: { sortOrder: "asc" } },
+        },
+      });
+      if (!t) { failed.push({ recurringExpenseId: wanted.recurringExpenseId, message: "Not found." }); continue; }
+      if (!isScheduledFor(t, period)) {
+        failed.push({ recurringExpenseId: t.id, message: `${t.name} is not scheduled for this month.` });
+        continue;
+      }
+
+      // Overrides are matched to template lines by position, and only the
+      // rate is taken from them. Quantity and tax rate stay with the
+      // template so the due screen can't quietly change what is being
+      // billed — only how much.
+      const overrides = Array.isArray(wanted.lines) ? wanted.lines : null;
+      const lineInputs = t.lines.map((l, i) => {
+        const override = overrides?.[i];
+        const rate = override && override.rate !== null && override.rate !== undefined
+          ? Number(override.rate)
+          : l.rate === null ? null : Number(l.rate);
+        return { itemId: l.itemId, quantity: Number(l.quantity), rate, taxRate: Number(l.taxRate) };
+      });
+      const missing = lineInputs.find((l) => l.rate === null || !(l.rate >= 0));
+      if (missing) {
+        failed.push({ recurringExpenseId: t.id, message: `${t.name}: enter an amount before raising it.` });
+        continue;
+      }
+
+      const items = await prisma.item.findMany({
+        where: { id: { in: lineInputs.map((l) => l.itemId) }, organizationId, deletedAt: null },
+      });
+      const itemById = new Map(items.map((i) => [i.id, i]));
+      if (items.length !== new Set(lineInputs.map((l) => l.itemId)).size) {
+        failed.push({ recurringExpenseId: t.id, message: `${t.name}: one or more items no longer exist.` });
+        continue;
+      }
+
+      const interState = isInterState(branch?.stateCode, t.businessPartner.stateCode);
+      let subtotal = 0, taxTotal = 0, cgstTotal = 0, sgstTotal = 0, igstTotal = 0;
+      const computed = lineInputs.map((l) => {
+        const lineSubtotal = round2(l.quantity * l.rate!);
+        const taxAmount = round2((lineSubtotal * l.taxRate) / 100);
+        const { cgst, sgst, igst } = splitGst(taxAmount, interState);
+        subtotal += lineSubtotal; taxTotal += taxAmount;
+        cgstTotal += cgst; sgstTotal += sgst; igstTotal += igst;
+        return {
+          ...l, lineSubtotal, taxAmount, customsDutyAmount: 0,
+          lineTotal: lineSubtotal + taxAmount,
+          cgstAmount: cgst, sgstAmount: sgst, igstAmount: igst,
+        };
+      });
+      const grandTotal = round2(subtotal + taxTotal);
+      if (cgstTotal > 0 && !accounts.cgstInput) throw new Error("CGST Input Credit account not found — re-run provisioning.");
+      if (sgstTotal > 0 && !accounts.sgstInput) throw new Error("SGST Input Credit account not found — re-run provisioning.");
+      if (igstTotal > 0 && !accounts.igstInput) throw new Error("IGST Input Credit account not found — re-run provisioning.");
+
+      const billDate = billDateFor(period, t.dayOfMonth);
+
+      const bill = await prisma.$transaction(async (tx) => {
+        // Bill numbering matches routes/purchaseBills.ts. Inside the
+        // transaction so two concurrent generates can't both read the same
+        // count.
+        const count = await tx.purchaseBill.count({ where: { organizationId } });
+        const billNumber = `PB-${String(count + 1).padStart(4, "0")}`;
+
+        const journalEntry = await tx.journalEntry.create({
+          data: {
+            organizationId, branchId: ho.id, entryDate: billDate,
+            narration: t.narration || `${t.name} — ${billDate.toISOString().slice(0, 7)}`,
+            voucherType: "PB", referenceType: "purchase_bill", createdBy: req.user!.userId,
+          },
+        });
+        await tx.journalLine.createMany({
+          data: buildBillJournalLineRows({
+            journalEntryId: journalEntry.id,
+            computed,
+            itemById: itemById as never,
+            cgstTotal, sgstTotal, igstTotal,
+            cgstInput: accounts.cgstInput, sgstInput: accounts.sgstInput, igstInput: accounts.igstInput,
+            customsDutyPayableCredit: 0, customsDutyPayable: null,
+            tradePayables: accounts.tradePayables!, tradePayablesCredit: grandTotal,
+            vendor: t.businessPartner,
+          }),
+        });
+
+        const createdBill = await tx.purchaseBill.create({
+          data: {
+            organizationId, branchId: ho.id, businessPartnerId: t.businessPartnerId,
+            billNumber, billDate, narration: t.narration ?? "",
+            journalEntryId: journalEntry.id,
+            status: "POSTED",
+            subtotal, taxTotal, grandTotal,
+            cgstTotal, sgstTotal, igstTotal, customsDutyTotal: 0,
+            currency: "INR", exchangeRate: 1,
+            createdBy: req.user!.userId,
+          },
+        });
+
+        await tx.purchaseBillLine.createMany({
+          data: computed.map((l) => ({
+            purchaseBillId: createdBill.id, itemId: l.itemId, quantity: l.quantity, rate: l.rate!,
+            taxRate: l.taxRate, lineSubtotal: l.lineSubtotal, taxAmount: l.taxAmount, lineTotal: l.lineTotal,
+            cgstAmount: l.cgstAmount, sgstAmount: l.sgstAmount, igstAmount: l.igstAmount,
+            customsDutyAmount: 0,
+          })),
+        });
+
+        // No receiveStock: every line is a SERVICE item, which has no stock
+        // by definition (migration_029). The template route enforces that.
+        //
+        // This insert is the idempotency guard. The unique index on
+        // (recurring_expense_id, period_month) means a second concurrent
+        // generate for the same month fails here and rolls the whole
+        // transaction back — including the bill — rather than double-booking
+        // the payable.
+        await tx.recurringExpenseRun.create({
+          data: {
+            recurringExpenseId: t.id, periodMonth: period,
+            purchaseBillId: createdBill.id, generatedBy: req.user!.userId,
+          },
+        });
+
+        return createdBill;
+      });
+
+      logAudit({
+        organizationId, actorUserId: req.user!.userId,
+        action: "CREATE", entityType: "purchase_bill", entityId: bill.id,
+        summary: `Raised ${bill.billNumber} from recurring expense ${t.name} (${period.toISOString().slice(0, 7)})`,
+      });
+      created.push({ recurringExpenseId: t.id, billNumber: bill.billNumber, grandTotal });
+    } catch (err: unknown) {
+      // P2002 is the unique index doing its job — someone else raised this
+      // template for this month while we were working.
+      const code = (err as { code?: string })?.code;
+      const message = code === "P2002"
+        ? "Already raised for this month."
+        : (err as Error)?.message ?? "Could not raise this bill.";
+      failed.push({ recurringExpenseId: wanted.recurringExpenseId, message });
+    }
+  }
+
+  res.json({ data: { created, failed } });
 });
 
 // GET /recurring-expenses/:id — template, lines, and run history.

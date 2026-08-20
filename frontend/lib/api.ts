@@ -31,6 +31,8 @@ import type {
   RecurringExpense,
   RecurringExpenseSummary,
   RecurringExpenseLineInput,
+  RecurringDueRow,
+  RecurringGenerateResult,
   ScheduleIIIBalanceSheet,
   ChatMessage,
   JournalEntry,
@@ -1279,4 +1281,23 @@ export function toggleRecurringExpense(id: string) {
 
 export function deleteRecurringExpense(id: string) {
   return request<{ data: { deleted: true } }>(`/recurring-expenses/${id}`, { method: "DELETE" });
+}
+
+export function getRecurringExpensesDue(month: string) {
+  return request<{ data: RecurringDueRow[] }>(
+    `/recurring-expenses/due?month=${encodeURIComponent(month)}`,
+  );
+}
+
+// One Purchase Bill per selected template. `lines` is optional and only used
+// to override rates on a PROMPTED template — quantity and tax rate always
+// come from the stored template, so this screen can change how much is
+// billed but never what.
+export function generateRecurringExpenses(body: {
+  month: string;
+  items: { recurringExpenseId: string; lines?: RecurringExpenseLineInput[] }[];
+}) {
+  return request<{ data: RecurringGenerateResult }>("/recurring-expenses/generate", {
+    method: "POST", body: JSON.stringify(body),
+  });
 }

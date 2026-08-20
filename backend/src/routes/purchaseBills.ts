@@ -3,21 +3,14 @@ import { prisma } from "../db";
 import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { receiveStock } from "../lib/costing";
+import {
+  buildBillJournalLineRows, loadPostingAccounts,
+  TRADE_PAYABLES_CODE, CGST_INPUT_CODE, SGST_INPUT_CODE, IGST_INPUT_CODE, CUSTOMS_DUTY_PAYABLE_CODE,
+} from "../lib/billPosting";
 import { isInterState, round2, splitGst } from "../lib/discountGst";
 import { isSupportedCurrency } from "../lib/currencies";
 import { upload } from "../lib/upload";
 import { extractInvoiceData } from "../lib/invoiceExtraction";
-
-// Every org's core COA (seed.ts) always includes these — same convention
-// journal.ts uses for CASH_BANK_CODES.
-const TRADE_PAYABLES_CODE = "2001";
-const CGST_INPUT_CODE = "1102";
-const SGST_INPUT_CODE = "1103";
-const IGST_INPUT_CODE = "1104";
-// Import bills only — customs duty + import IGST both credit here instead
-// of Trade Payables, since neither is actually owed to the foreign vendor.
-// See the posting split in POST / below.
-const CUSTOMS_DUTY_PAYABLE_CODE = "2105";
 
 const router = Router();
 router.use(authenticate, requireActiveSubscription);
@@ -56,46 +49,6 @@ interface LineInput {
   goodsReceiptNoteLineId?: string;
 }
 
-// Shared by POST / (immediate posting) and POST /:id/approve (deferred
-// posting of a bill that was held for a price variance) — the same
-// journal shape either way: Dr each item's stock account, Dr GST Input
-// (split), Cr Customs Duty Payable (import only), Cr Trade Payables.
-function buildBillJournalLineRows(args: {
-  journalEntryId: string;
-  computed: { itemId: string; quantity: number; lineSubtotal: number; customsDutyAmount: number }[];
-  itemById: Map<string, { stockAccountId: string; businessPartnerId: string; sku: string; itemKind: string }>;
-  cgstTotal: number; sgstTotal: number; igstTotal: number;
-  cgstInput: { id: string } | null; sgstInput: { id: string } | null; igstInput: { id: string } | null;
-  customsDutyPayableCredit: number; customsDutyPayable: { id: string } | null;
-  tradePayables: { id: string }; tradePayablesCredit: number;
-  vendor: { id: string; name: string };
-}) {
-  const {
-    journalEntryId, computed, itemById, cgstTotal, sgstTotal, igstTotal,
-    cgstInput, sgstInput, igstInput, customsDutyPayableCredit, customsDutyPayable,
-    tradePayables, tradePayablesCredit, vendor,
-  } = args;
-  return [
-    ...computed.map((l) => ({
-      journalEntryId,
-      accountId: itemById.get(l.itemId)!.stockAccountId,
-      // The partner tag is the item's paired ITEM sub-ledger row, which only
-      // means anything on a stock control account. A SERVICE line debits a
-      // plain expense head with no sub-ledger, so tagging it would put a
-      // balance on a partner nobody will ever look up.
-      businessPartnerId: itemById.get(l.itemId)!.itemKind === "SERVICE"
-        ? null
-        : itemById.get(l.itemId)!.businessPartnerId,
-      debit: l.lineSubtotal + l.customsDutyAmount, credit: 0,
-      narration: `${itemById.get(l.itemId)!.sku} x ${l.quantity}`,
-    })),
-    ...(cgstTotal > 0 ? [{ journalEntryId, accountId: cgstInput!.id, businessPartnerId: null, debit: cgstTotal, credit: 0, narration: "CGST Input" }] : []),
-    ...(sgstTotal > 0 ? [{ journalEntryId, accountId: sgstInput!.id, businessPartnerId: null, debit: sgstTotal, credit: 0, narration: "SGST Input" }] : []),
-    ...(igstTotal > 0 ? [{ journalEntryId, accountId: igstInput!.id, businessPartnerId: null, debit: igstTotal, credit: 0, narration: "IGST Input" }] : []),
-    ...(customsDutyPayableCredit > 0 ? [{ journalEntryId, accountId: customsDutyPayable!.id, businessPartnerId: null, debit: 0, credit: customsDutyPayableCredit, narration: "Customs duty + import IGST payable" }] : []),
-    { journalEntryId, accountId: tradePayables.id, businessPartnerId: vendor.id, debit: 0, credit: tradePayablesCredit, narration: `Payable to ${vendor.name}` },
-  ];
-}
 
 // POST /purchase-bills/extract-invoice — reads an uploaded vendor invoice
 // (PDF or image) and returns structured data (vendor, date, currency,

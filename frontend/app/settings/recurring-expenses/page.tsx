@@ -167,6 +167,9 @@ export default function RecurringExpensesPage() {
           </span>
         )}
         <div style={{ flex: 1 }} />
+        <Link href="/purchase/recurring-due" className="ent-ia ent-ia-edit" style={{ marginRight: 8 }}>
+          What&rsquo;s due this month →
+        </Link>
         <button className="ent-btn-add" disabled={serviceItems.length === 0} onClick={() => setShowForm((s) => !s)}>
           {showForm ? "Cancel" : "+ New Recurring Expense"}
         </button>

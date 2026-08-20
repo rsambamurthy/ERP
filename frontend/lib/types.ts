@@ -1540,3 +1540,38 @@ export interface RecurringExpenseLineInput {
   rate: number | null;
   taxRate: number;
 }
+
+// Row shape from GET /recurring-expenses/due?month=YYYY-MM. Numbers here are
+// already `number` rather than the Prisma-decimal strings the other shapes
+// carry, because the server computes the line maths for this screen — the
+// due list must show exactly the figures the generator will post.
+export interface RecurringDueLine {
+  itemId: string;
+  item: { id: string; sku: string; name: string; uom: string } | null;
+  quantity: number;
+  // Null on a PROMPTED template with no amount entered yet.
+  rate: number | null;
+  taxRate: number;
+  lineSubtotal: number | null;
+  lineTotal: number | null;
+}
+
+export interface RecurringDueRow {
+  id: string;
+  name: string;
+  businessPartner: { id: string; name: string; code: string | null };
+  amountMode: RecurringAmountMode;
+  dayOfMonth: number;
+  billDate: string;
+  narration: string | null;
+  lines: RecurringDueLine[];
+  estimatedTotal: number | null;
+  // Present once a bill exists for this template and month. The row stays in
+  // the list rather than disappearing, so it's obvious nothing was missed.
+  alreadyRaised: { billId: string; billNumber: string; grandTotal: string } | null;
+}
+
+export interface RecurringGenerateResult {
+  created: { recurringExpenseId: string; billNumber: string; grandTotal: number }[];
+  failed: { recurringExpenseId: string; message: string }[];
+}
