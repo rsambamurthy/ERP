@@ -175,9 +175,16 @@ export default function RecurringExpensesPage() {
         </button>
       </div>
 
+      {/* The form's overflow must stay visible: .ent-section clips to its
+          rounded corners, which would swallow the ItemPicker dropdown
+          opening downward out of the last line row. */}
       {showForm && (
-        <form onSubmit={handleCreate} className="ent-section" style={{ marginBottom: 16 }}>
-          <div className="ent-section-hdr"><span className="ent-section-title">New Recurring Expense</span></div>
+        <form onSubmit={handleCreate} className="ent-section" style={{ marginBottom: 16, overflow: "visible" }}>
+          {/* The rounded top corners came from the section's overflow: hidden,
+              which is now off — so the header rounds itself instead. */}
+          <div className="ent-section-hdr" style={{ borderRadius: "6px 6px 0 0" }}>
+            <span className="ent-section-title">New Recurring Expense</span>
+          </div>
           <div className="ent-form-grid">
             <div className="ent-fg">
               <label className="ent-fl">Name</label>
@@ -228,8 +235,11 @@ export default function RecurringExpensesPage() {
             </div>
           </div>
 
-          <div className="ent-page-table" style={{ margin: "0 14px 12px" }}>
-            <table>
+          {/* Same shape Purchase Bills uses for its line table: a plain
+              padded div, not .ent-page-table. That class sets
+              overflow: hidden, which clipped the item dropdown here. */}
+          <div style={{ padding: "0 14px" }}>
+            <table className="ent-table">
               <thead>
                 <tr>
                   <th style={{ width: "45%" }}>Service Item</th>
