@@ -139,7 +139,13 @@ export async function computeGstr1(
 
   for (const inv of invoices) {
     const isForeign = inv.currency !== "INR";
-    const placeOfSupply = inv.businessPartner.stateCode ?? inv.branch?.stateCode ?? "—";
+    // Snapshot first, master only as a fallback for documents posted before
+    // migration_031 whose backfill somehow didn't reach them. Reading the
+    // master here is what let a customer edit restate an already-filed
+    // period — see the migration's header for the full account.
+    const partyGstin = inv.partyGstin ?? inv.businessPartner.gstin;
+    const partyName = inv.partyName ?? inv.businessPartner.name;
+    const placeOfSupply = inv.partyStateCode ?? inv.businessPartner.stateCode ?? inv.branch?.stateCode ?? "—";
     const byRate = new Map<number, RateAcc>();
     for (const line of inv.lines) {
       const rate = Number(line.taxRate);
@@ -148,12 +154,15 @@ export async function computeGstr1(
         addRateAcc(byRate.get(rate) ?? emptyRateAcc(), Number(line.taxableValue), Number(line.cgstAmount), Number(line.sgstAmount), Number(line.igstAmount))
       );
 
-      const hsnKey = `${line.item.hsnCode ?? "N/A"}|${rate}`;
+      // Same rule for the item: what was declared, not what the master
+      // says today.
+      const lineHsn = line.hsnCode ?? line.item.hsnCode ?? "N/A";
+      const hsnKey = `${lineHsn}|${rate}`;
       const prev = hsnMap.get(hsnKey);
       hsnMap.set(hsnKey, {
-        hsnCode: line.item.hsnCode ?? "N/A",
-        description: line.item.name,
-        uom: line.item.uom,
+        hsnCode: lineHsn,
+        description: line.itemName ?? line.item.name,
+        uom: line.uom ?? line.item.uom,
         rate,
         quantity: round2((prev?.quantity ?? 0) + Number(line.quantity)),
         taxableValue: round2((prev?.taxableValue ?? 0) + Number(line.taxableValue)),
@@ -181,11 +190,11 @@ export async function computeGstr1(
           exportType,
         });
       }
-    } else if (inv.businessPartner.gstin) {
+    } else if (partyGstin) {
       for (const [rate, acc] of byRate) {
         b2b.push({
-          gstin: inv.businessPartner.gstin,
-          receiverName: inv.businessPartner.name,
+          gstin: partyGstin,
+          receiverName: partyName,
           invoiceNumber: inv.invoiceNumber,
           invoiceDate: inv.invoiceDate.toISOString().slice(0, 10),
           invoiceValue: Number(inv.grandTotal),
@@ -211,12 +220,17 @@ export async function computeGstr1(
 
   const creditNotes: Gstr1CreditNoteRow[] = [];
   for (const ret of returns) {
-    const placeOfSupply = ret.businessPartner.stateCode ?? ret.branch?.stateCode ?? "—";
-    const interState = isInterState(ret.branch?.stateCode, ret.businessPartner.stateCode);
+    const placeOfSupply = ret.partyStateCode ?? ret.businessPartner.stateCode ?? ret.branch?.stateCode ?? "—";
+    // The split is stored on each line now (migration_031). Only a line
+    // predating that column and missed by the backfill falls back to
+    // recomputing, which is the behaviour this whole change exists to end.
     const byRate = new Map<number, RateAcc>();
     for (const line of ret.lines) {
       const rate = Number(line.taxRate);
-      const { cgst, sgst, igst } = splitGst(Number(line.taxAmount), interState);
+      const stored = Number(line.cgstAmount) + Number(line.sgstAmount) + Number(line.igstAmount);
+      const { cgst, sgst, igst } = stored > 0
+        ? { cgst: Number(line.cgstAmount), sgst: Number(line.sgstAmount), igst: Number(line.igstAmount) }
+        : splitGst(Number(line.taxAmount), isInterState(ret.branch?.stateCode, ret.partyStateCode ?? ret.businessPartner.stateCode));
       byRate.set(rate, addRateAcc(byRate.get(rate) ?? emptyRateAcc(), Number(line.lineSubtotal), cgst, sgst, igst));
     }
     for (const [rate, acc] of byRate) {
@@ -224,8 +238,8 @@ export async function computeGstr1(
         noteNumber: ret.returnNumber,
         noteDate: ret.returnDate.toISOString().slice(0, 10),
         originalInvoiceNumber: ret.salesInvoice.invoiceNumber,
-        gstin: ret.businessPartner.gstin,
-        receiverName: ret.businessPartner.name,
+        gstin: ret.partyGstin ?? ret.businessPartner.gstin,
+        receiverName: ret.partyName ?? ret.businessPartner.name,
         placeOfSupply,
         rate,
         ...acc,
@@ -302,32 +316,51 @@ export async function computeGstr3b(
     _sum: { subtotal: true, cgstTotal: true, sgstTotal: true, igstTotal: true },
   });
 
-  // Neither return type stores its own CGST/SGST/IGST split — recompute per
-  // return the same way the posting routes do (constant per return, since
-  // it only depends on branch vs. partner state, not on individual lines).
+  // Both return types now store their own CGST/SGST/IGST split per line
+  // (migration_031), decided once at posting. Before that it was recomputed
+  // here on every read from the partner's *current* state code, so moving a
+  // partner between states flipped CGST+SGST into IGST on returns that had
+  // already been filed the other way.
+  //
+  // The fallback recompute below only fires for a return whose lines are all
+  // still at 0/0/0 — pre-migration rows the backfill missed.
   const salesReturns = await prisma.salesReturn.findMany({
     where: { organizationId, returnDate: { gte: from, lte: to }, ...(branchId ? { branchId } : {}) },
-    include: { businessPartner: true, branch: true },
+    include: { businessPartner: true, branch: true, lines: true },
   });
   const purchaseReturns = await prisma.purchaseReturn.findMany({
     where: { organizationId, returnDate: { gte: from, lte: to }, ...(branchId ? { branchId } : {}) },
-    include: { businessPartner: true, branch: true },
+    include: { businessPartner: true, branch: true, lines: true },
   });
 
-  const retOut = salesReturns.reduce(
-    (t, r) => {
-      const { cgst, sgst, igst } = splitGst(Number(r.taxTotal), isInterState(r.branch?.stateCode, r.businessPartner.stateCode));
-      return { taxableValue: round2(t.taxableValue + Number(r.subtotal)), cgst: round2(t.cgst + cgst), sgst: round2(t.sgst + sgst), igst: round2(t.igst + igst) };
-    },
-    { taxableValue: 0, cgst: 0, sgst: 0, igst: 0 }
-  );
-  const retItc = purchaseReturns.reduce(
-    (t, r) => {
-      const { cgst, sgst, igst } = splitGst(Number(r.taxTotal), isInterState(r.branch?.stateCode, r.businessPartner.stateCode));
-      return { taxableValue: round2(t.taxableValue + Number(r.subtotal)), cgst: round2(t.cgst + cgst), sgst: round2(t.sgst + sgst), igst: round2(t.igst + igst) };
-    },
-    { taxableValue: 0, cgst: 0, sgst: 0, igst: 0 }
-  );
+  type ReturnLike = {
+    subtotal: unknown; taxTotal: unknown;
+    branch: { stateCode: string | null } | null;
+    businessPartner: { stateCode: string | null };
+    partyStateCode?: string | null;
+    lines: { cgstAmount: unknown; sgstAmount: unknown; igstAmount: unknown }[];
+  };
+
+  function sumReturns(rows: ReturnLike[]) {
+    return rows.reduce(
+      (t, r) => {
+        const cgstStored = r.lines.reduce((s, l) => s + Number(l.cgstAmount), 0);
+        const sgstStored = r.lines.reduce((s, l) => s + Number(l.sgstAmount), 0);
+        const igstStored = r.lines.reduce((s, l) => s + Number(l.igstAmount), 0);
+        const { cgst, sgst, igst } = cgstStored + sgstStored + igstStored > 0
+          ? { cgst: cgstStored, sgst: sgstStored, igst: igstStored }
+          : splitGst(Number(r.taxTotal), isInterState(r.branch?.stateCode, r.partyStateCode ?? r.businessPartner.stateCode));
+        return {
+          taxableValue: round2(t.taxableValue + Number(r.subtotal)),
+          cgst: round2(t.cgst + cgst), sgst: round2(t.sgst + sgst), igst: round2(t.igst + igst),
+        };
+      },
+      { taxableValue: 0, cgst: 0, sgst: 0, igst: 0 }
+    );
+  }
+
+  const retOut = sumReturns(salesReturns as unknown as ReturnLike[]);
+  const retItc = sumReturns(purchaseReturns as unknown as ReturnLike[]);
 
   const outward = sectionTotal({
     taxableValue: round2(Number(invAgg._sum.subtotal ?? 0) - Number(invAgg._sum.discountTotal ?? 0) - retOut.taxableValue),

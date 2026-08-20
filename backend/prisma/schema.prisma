@@ -673,6 +673,15 @@ model SalesInvoice {
   // this — it still moves its own stock exactly as it did before this
   // feature.
   salesOrderId       String?  @map("sales_order_id") @db.Uuid
+  // Customer identity as it stood when this invoice was posted — see
+  // migration_031. GSTR-1 reads these, never the master, so correcting a
+  // customer record cannot restate a period already filed with the GSTN.
+  // partyStateCode is the place of supply and also decides B2B vs B2C
+  // (via partyGstin) and CGST+SGST vs IGST, so all three must be pinned
+  // together or the document contradicts itself.
+  partyGstin        String?  @map("party_gstin") @db.VarChar(15)
+  partyName         String?  @map("party_name") @db.VarChar(200)
+  partyStateCode    String?  @map("party_state_code") @db.VarChar(2)
   createdBy         String?  @map("created_by") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at")
 
@@ -725,6 +734,13 @@ model SalesInvoiceLine {
   // that Delivery Note line).
   salesOrderLineId     String?  @map("sales_order_line_id") @db.Uuid
   deliveryNoteLineId   String?  @map("delivery_note_line_id") @db.Uuid
+  // Item identity at posting time, for GSTR-1's HSN summary — see
+  // migration_031. Same reasoning as unitCost above: correcting an item's
+  // HSN code should describe goods sold from now on, not rewrite what was
+  // already declared.
+  hsnCode              String?  @map("hsn_code") @db.VarChar(10)
+  itemName             String?  @map("item_name") @db.VarChar(200)
+  uom                  String?  @db.VarChar(20)
 
   salesInvoice     SalesInvoice      @relation(fields: [salesInvoiceId], references: [id])
   item             Item              @relation(fields: [itemId], references: [id])
@@ -1240,6 +1256,11 @@ model SalesReturn {
   taxTotal          Decimal  @map("tax_total") @db.Decimal(14, 2)
   grandTotal        Decimal  @map("grand_total") @db.Decimal(14, 2)
   totalCogsReversed Decimal  @map("total_cogs_reversed") @db.Decimal(14, 2)
+  // Customer identity at posting time — GSTR-1's credit note table reads
+  // these rather than the master. See SalesInvoice above and migration_031.
+  partyGstin        String?  @map("party_gstin") @db.VarChar(15)
+  partyName         String?  @map("party_name") @db.VarChar(200)
+  partyStateCode    String?  @map("party_state_code") @db.VarChar(2)
   createdBy         String?  @map("created_by") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at")
 
@@ -1268,6 +1289,13 @@ model SalesReturnLine {
   lineTotal          Decimal @map("line_total") @db.Decimal(14, 2)
   unitCost           Decimal @map("unit_cost") @db.Decimal(14, 4) // snapshot of the original invoice line's cost
   lineCogsReversed   Decimal @map("line_cogs_reversed") @db.Decimal(14, 2)
+  // The CGST/SGST vs IGST split, decided once at posting from the branch
+  // and customer state codes. Before migration_031 this was recomputed on
+  // every GST report read, so editing a partner's state flipped the split
+  // on returns that had already been filed the other way.
+  cgstAmount         Decimal @default(0) @map("cgst_amount") @db.Decimal(14, 2)
+  sgstAmount         Decimal @default(0) @map("sgst_amount") @db.Decimal(14, 2)
+  igstAmount         Decimal @default(0) @map("igst_amount") @db.Decimal(14, 2)
 
   salesReturn      SalesReturn      @relation(fields: [salesReturnId], references: [id])
   salesInvoiceLine SalesInvoiceLine @relation(fields: [salesInvoiceLineId], references: [id])
@@ -1318,6 +1346,11 @@ model PurchaseReturnLine {
   lineSubtotal       Decimal @map("line_subtotal") @db.Decimal(14, 2)
   taxAmount          Decimal @map("tax_amount") @db.Decimal(14, 2)
   lineTotal          Decimal @map("line_total") @db.Decimal(14, 2)
+  // Split pinned at posting — see SalesReturnLine and migration_031. This
+  // one feeds GSTR-3B's ITC reversal.
+  cgstAmount         Decimal @default(0) @map("cgst_amount") @db.Decimal(14, 2)
+  sgstAmount         Decimal @default(0) @map("sgst_amount") @db.Decimal(14, 2)
+  igstAmount         Decimal @default(0) @map("igst_amount") @db.Decimal(14, 2)
 
   purchaseReturn   PurchaseReturn   @relation(fields: [purchaseReturnId], references: [id])
   purchaseBillLine PurchaseBillLine @relation(fields: [purchaseBillLineId], references: [id])

@@ -508,6 +508,15 @@ router.post("/", canPost, async (req, res) => {
           shippingBillDate: isForeign && shippingBillDate ? new Date(shippingBillDate) : null,
           portCode: isForeign && portCode ? String(portCode) : null,
           salesOrderId: linkedSo?.id ?? null,
+          // Pin the customer's tax identity to this document. GSTR-1 reads
+          // these and never the master, so editing a customer later can no
+          // longer restate a period that has already been filed — see
+          // migration_031. interState above was computed from exactly this
+          // stateCode, so the split stored on the lines and the place of
+          // supply reported can never disagree.
+          partyGstin: customer.gstin ?? null,
+          partyName: customer.name,
+          partyStateCode: customer.stateCode ?? null,
           createdBy: req.user!.userId,
         },
       });
@@ -521,6 +530,11 @@ router.post("/", canPost, async (req, res) => {
           lineDiscountAmount: l.lineDiscountAmount, invoiceDiscountShare: l.invoiceDiscountShare, taxableValue: l.taxableValue,
           cgstAmount: l.cgstAmount, sgstAmount: l.sgstAmount, igstAmount: l.igstAmount,
           rateFc: isForeign ? l.rateFc : null, lineTotalFc: isForeign ? round2(l.lineTotal / fxRate) : null,
+          // Item identity pinned for the HSN summary, same reason as
+          // unitCost right above — migration_031.
+          hsnCode: itemById.get(l.itemId)?.hsnCode ?? null,
+          itemName: itemById.get(l.itemId)?.name ?? null,
+          uom: itemById.get(l.itemId)?.uom ?? null,
           salesOrderLineId: (l as { salesOrderLineId?: string }).salesOrderLineId ?? null,
           deliveryNoteLineId: (l as { deliveryNoteLineId?: string }).deliveryNoteLineId ?? null,
         })),

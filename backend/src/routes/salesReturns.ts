@@ -131,7 +131,12 @@ router.post("/", canPost, async (req, res) => {
   const resolvedBranchId: string | null = branchId ?? invoice.branchId ?? null;
   if (!resolvedBranchId) return res.status(400).json({ message: "No branch found — provide branchId." });
   const branch = await prisma.branch.findFirst({ where: { id: resolvedBranchId, organizationId }, select: { stateCode: true } });
-  const interState = isInterState(branch?.stateCode, invoice.businessPartner.stateCode);
+  // Prefer the state code pinned on the invoice being reversed (migration_031)
+  // over the customer master. A credit note must split exactly the way the
+  // invoice it reverses did, and the master may have moved since. Falls back
+  // to the master for invoices posted before that column existed.
+  const partyStateCode = invoice.partyStateCode ?? invoice.businessPartner.stateCode;
+  const interState = isInterState(branch?.stateCode, partyStateCode);
 
   const typedLines: LineInput[] = lines;
   for (const l of typedLines) {
@@ -261,17 +266,29 @@ router.post("/", canPost, async (req, res) => {
           organizationId, branchId: resolvedBranchId, salesInvoiceId, businessPartnerId: invoice.businessPartnerId,
           returnNumber, returnDate: new Date(returnDate), narration: narration ?? "",
           journalEntryId: journalEntry.id, subtotal, taxTotal, grandTotal, totalCogsReversed,
+          // Inherited from the invoice's own snapshot rather than re-read
+          // from the master, so a credit note always reports the identity
+          // the original invoice was filed under — migration_031.
+          partyGstin: invoice.partyGstin ?? invoice.businessPartner.gstin ?? null,
+          partyName: invoice.partyName ?? invoice.businessPartner.name,
+          partyStateCode: partyStateCode ?? null,
           createdBy: req.user!.userId,
         },
       });
 
       await tx.salesReturnLine.createMany({
-        data: computed.map((l) => ({
-          salesReturnId: createdReturn.id, salesInvoiceLineId: l.salesInvoiceLineId, itemId: l.itemId,
-          quantity: l.quantity, condition: l.condition, rate: l.rate, taxRate: l.taxRate,
-          lineSubtotal: l.lineSubtotal, taxAmount: l.taxAmount, lineTotal: l.lineTotal,
-          unitCost: l.unitCost, lineCogsReversed: l.lineCogsReversed,
-        })),
+        data: computed.map((l) => {
+          // Split each line at posting instead of leaving the GST reports to
+          // recompute it from whatever the master says at read time.
+          const { cgst, sgst, igst } = splitGst(l.taxAmount, interState);
+          return {
+            salesReturnId: createdReturn.id, salesInvoiceLineId: l.salesInvoiceLineId, itemId: l.itemId,
+            quantity: l.quantity, condition: l.condition, rate: l.rate, taxRate: l.taxRate,
+            lineSubtotal: l.lineSubtotal, taxAmount: l.taxAmount, lineTotal: l.lineTotal,
+            unitCost: l.unitCost, lineCogsReversed: l.lineCogsReversed,
+            cgstAmount: cgst, sgstAmount: sgst, igstAmount: igst,
+          };
+        }),
       });
 
       return createdReturn;

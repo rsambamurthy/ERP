@@ -247,11 +247,17 @@ router.post("/", canPost, async (req, res) => {
       });
 
       await tx.purchaseReturnLine.createMany({
-        data: computed.map((l) => ({
-          purchaseReturnId: createdReturn.id, purchaseBillLineId: l.purchaseBillLineId, itemId: l.itemId,
-          quantity: l.quantity, rate: l.rate, taxRate: l.taxRate,
-          lineSubtotal: l.lineSubtotal, taxAmount: l.taxAmount, lineTotal: l.lineTotal,
-        })),
+        data: computed.map((l) => {
+          // Pinned at posting so GSTR-3B's ITC reversal stops being
+          // recomputed from the vendor master on every read — migration_031.
+          const { cgst, sgst, igst } = splitGst(l.taxAmount, interState);
+          return {
+            purchaseReturnId: createdReturn.id, purchaseBillLineId: l.purchaseBillLineId, itemId: l.itemId,
+            quantity: l.quantity, rate: l.rate, taxRate: l.taxRate,
+            lineSubtotal: l.lineSubtotal, taxAmount: l.taxAmount, lineTotal: l.lineTotal,
+            cgstAmount: cgst, sgstAmount: sgst, igstAmount: igst,
+          };
+        }),
       });
 
       return createdReturn;
