@@ -591,6 +591,37 @@ export interface DocumentLineInput {
   // "YYYY-MM" — the month the first instalment belongs to.
   prepaidStartMonth?: string;
   prepaidMonths?: number;
+  // Purchase Bill service lines only — this line buys a fixed asset rather
+  // than an expense. The line debits the asset class's cost account instead
+  // of the item's own head and opens a row in the fixed asset register. See
+  // migration_034. Mutually exclusive with prepaid.
+  //
+  // One line is one asset, whatever the quantity: three laptops that will be
+  // disposed of separately need three lines.
+  capitalise?: boolean;
+  assetClassId?: string;
+  // Defaults to the item's name server-side.
+  assetName?: string;
+  // "YYYY-MM-DD" — when the asset was put to use, which is what Schedule II
+  // depreciates from. Never earlier than the bill date.
+  inUseDate?: string;
+  // Schedule II allows a justified departure from the class's default life.
+  usefulLifeMonths?: number;
+}
+
+// One row of GET /asset-classes — the defaults an asset is created from.
+// Income tax depreciation is out of scope, so no block code or rate here:
+// depreciation is Schedule II only.
+export interface AssetClassSummary {
+  id: string;
+  name: string;
+  isActive: boolean;
+  defaultUsefulLifeMonths: number;
+  defaultMethod: string;
+  defaultResidualPct: number;
+  assetAccount: { id: string; accountCode: string; accountName: string };
+  accumDepAccount: { id: string; accountCode: string; accountName: string };
+  depExpenseAccount: { id: string; accountCode: string; accountName: string };
 }
 
 // Read-only result of POST /purchase-bills/extract-invoice — a vendor

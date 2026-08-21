@@ -33,6 +33,7 @@ import type {
   RecurringExpenseLineInput,
   RecurringDueRow,
   RecurringGenerateResult,
+  AssetClassSummary,
   PrepaidScheduleSummary,
   PrepaidScheduleDetail,
   PrepaidDueRow,
@@ -1304,6 +1305,14 @@ export function generateRecurringExpenses(body: {
   return request<{ data: RecurringGenerateResult }>("/recurring-expenses/generate", {
     method: "POST", body: JSON.stringify(body),
   });
+}
+
+// ── Asset classes ────────────────────────────────────────────────────────
+
+// Read-only. Retired classes are excluded by default, which is what the
+// capitalisation picker wants — the server refuses them anyway.
+export function getAssetClasses() {
+  return request<{ data: AssetClassSummary[] }>("/asset-classes");
 }
 
 // ── Prepaid schedules ────────────────────────────────────────────────────
