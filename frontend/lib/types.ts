@@ -1580,6 +1580,87 @@ export interface RecurringDueRow {
   alreadyRaised: { billId: string; billNumber: string; grandTotal: string } | null;
 }
 
+// ── Prepaid schedules ────────────────────────────────────────────────────
+// The release side of a prepaid Purchase Bill line (migration_032). Amounts
+// are numbers rather than Prisma-decimal strings: the server does the
+// instalment arithmetic so the screen shows exactly what will post.
+
+export type PrepaidStatus = "ACTIVE" | "COMPLETED" | "CANCELLED";
+
+export interface PrepaidAccountRef {
+  id: string;
+  accountCode: string;
+  accountName: string;
+}
+
+export interface PrepaidScheduleSummary {
+  id: string;
+  name: string;
+  status: PrepaidStatus;
+  expenseAccount: PrepaidAccountRef;
+  purchaseBill: { id: string; billNumber: string; billDate: string } | null;
+  totalAmount: number;
+  released: number;
+  remaining: number;
+  startMonth: string;
+  endMonth: string;
+  months: number;
+  instalmentsPosted: number;
+  lastPostedMonth: string | null;
+}
+
+export interface PrepaidDueRow {
+  id: string;
+  name: string;
+  expenseAccount: PrepaidAccountRef;
+  purchaseBill: { id: string; billNumber: string } | null;
+  totalAmount: number;
+  released: number;
+  remaining: number;
+  instalmentNo: number;
+  months: number;
+  amount: number;
+  // Instalments before this month that were never posted. Straight-line makes
+  // out-of-order posting arithmetically harmless, but it is worth surfacing.
+  missingBefore: number;
+  alreadyPosted: { journalEntryId: string; amount: number } | null;
+}
+
+export interface PrepaidInstalment {
+  instalmentNo: number;
+  month: string;
+  amount: number;
+  cumulative: number;
+  balance: number;
+  postedAt: string | null;
+  journalEntryId: string | null;
+  postedAmount: number | null;
+}
+
+export interface PrepaidScheduleDetail {
+  id: string;
+  name: string;
+  status: PrepaidStatus;
+  branch: { id: string; name: string } | null;
+  expenseAccount: PrepaidAccountRef;
+  prepaidAccount: PrepaidAccountRef;
+  businessPartner: { id: string; name: string };
+  purchaseBill: { id: string; billNumber: string; billDate: string } | null;
+  totalAmount: number;
+  released: number;
+  remaining: number;
+  startMonth: string;
+  endMonth: string;
+  months: number;
+  createdAt: string;
+  instalments: PrepaidInstalment[];
+}
+
+export interface PrepaidPostResult {
+  posted: { id: string; amount: number }[];
+  failed: { id: string; message: string }[];
+}
+
 export interface RecurringGenerateResult {
   created: { recurringExpenseId: string; billNumber: string; grandTotal: number }[];
   failed: { recurringExpenseId: string; message: string }[];

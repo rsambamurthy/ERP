@@ -33,6 +33,10 @@ import type {
   RecurringExpenseLineInput,
   RecurringDueRow,
   RecurringGenerateResult,
+  PrepaidScheduleSummary,
+  PrepaidScheduleDetail,
+  PrepaidDueRow,
+  PrepaidPostResult,
   ScheduleIIIBalanceSheet,
   ChatMessage,
   JournalEntry,
@@ -1298,6 +1302,30 @@ export function generateRecurringExpenses(body: {
   items: { recurringExpenseId: string; lines?: RecurringExpenseLineInput[] }[];
 }) {
   return request<{ data: RecurringGenerateResult }>("/recurring-expenses/generate", {
+    method: "POST", body: JSON.stringify(body),
+  });
+}
+
+// ── Prepaid schedules ────────────────────────────────────────────────────
+
+export function getPrepaidSchedules() {
+  return request<{ data: PrepaidScheduleSummary[] }>("/prepaid-schedules");
+}
+
+export function getPrepaidSchedule(id: string) {
+  return request<{ data: PrepaidScheduleDetail }>(`/prepaid-schedules/${id}`);
+}
+
+export function getPrepaidDue(month: string) {
+  return request<{ data: PrepaidDueRow[] }>(
+    `/prepaid-schedules/due?month=${encodeURIComponent(month)}`,
+  );
+}
+
+// One journal entry per schedule — Dr the expense head, Cr Prepaid Expenses
+// against that schedule's own sub-ledger card.
+export function postPrepaidAmortization(body: { month: string; scheduleIds: string[] }) {
+  return request<{ data: PrepaidPostResult }>("/prepaid-schedules/post", {
     method: "POST", body: JSON.stringify(body),
   });
 }

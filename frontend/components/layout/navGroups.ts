@@ -107,6 +107,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: "trial_balance", label: "Trial Balance", path: "/accounting/trial-balance", dot: "#0891b2", roles: ALL_ROLES },
       { id: "pnl", label: "Profit & Loss", path: "/accounting/pnl", dot: "#f59e0b", roles: ALL_ROLES },
       { id: "balance_sheet", label: "Balance Sheet", path: "/accounting/balance-sheet", dot: "#7c3aed", roles: ALL_ROLES },
+      { id: "prepaid_schedules", label: "Prepaid Schedules", path: "/accounting/prepaid-schedules", dot: "#0d9488", roles: ALL_ROLES },
+      { id: "amortization_due", label: "Amortization Due", path: "/accounting/amortization-due", dot: "#e11d48", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "journal.post" },
     ],
   },
   {
