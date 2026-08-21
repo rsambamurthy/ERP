@@ -39,6 +39,7 @@ import companyMasterRoutes from "./routes/companyMaster";
 import currencyRatesRoutes from "./routes/currencyRates";
 import recurringExpensesRoutes from "./routes/recurringExpenses";
 import prepaidSchedulesRoutes from "./routes/prepaidSchedules";
+import assetClassesRoutes from "./routes/assetClasses";
 import integrationConnectionsRoutes from "./routes/integrationConnections";
 import integrationApiRoutes from "./routes/integrationApi";
 import chatbotRoutes from "./routes/chatbot";
@@ -89,6 +90,7 @@ app.use("/company-master", companyMasterRoutes);
 app.use("/currency-rates", currencyRatesRoutes);
 app.use("/recurring-expenses", recurringExpensesRoutes);
 app.use("/prepaid-schedules", prepaidSchedulesRoutes);
+app.use("/asset-classes", assetClassesRoutes);
 app.use("/chatbot", chatbotRoutes);
 // Mounted at two different paths, most-specific first — both routers
 // apply their auth middleware via a path-less `router.use(...)`, so if
