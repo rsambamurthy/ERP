@@ -131,6 +131,8 @@ model Organization {
   purchaseBills    PurchaseBill[]
   recurringExpenses RecurringExpense[]
   prepaidSchedules PrepaidSchedule[]
+  assetClasses     AssetClass[]
+  fixedAssets      FixedAsset[]
   stockAdjustments StockAdjustment[]
   salesReturns     SalesReturn[]
   purchaseReturns  PurchaseReturn[]
@@ -259,6 +261,7 @@ model Branch {
   deliveryNotes    DeliveryNote[]
   recurringExpenses RecurringExpense[]
   prepaidSchedules PrepaidSchedule[]
+  fixedAssets      FixedAsset[]
 
   @@unique([organizationId, code])
   @@map("branches")
@@ -302,6 +305,16 @@ model Account {
   // cannot tell two relations to the same model apart otherwise.
   prepaidSchedulesHeldHere   PrepaidSchedule[] @relation("PrepaidScheduleAsset")
   prepaidSchedulesReleasedTo PrepaidSchedule[] @relation("PrepaidScheduleExpense")
+  // Three roles apiece on an asset class and on an asset: the cost account,
+  // the accumulated-depreciation contra, and the expense head each charge
+  // lands in. Named because Prisma cannot tell relations to the same model
+  // apart otherwise.
+  assetClassesCost     AssetClass[] @relation("AssetClassCost")
+  assetClassesAccumDep AssetClass[] @relation("AssetClassAccumDep")
+  assetClassesExpense  AssetClass[] @relation("AssetClassExpense")
+  fixedAssetsCost      FixedAsset[] @relation("FixedAssetCost")
+  fixedAssetsAccumDep  FixedAsset[] @relation("FixedAssetAccumDep")
+  fixedAssetsExpense   FixedAsset[] @relation("FixedAssetExpense")
 
   @@unique([organizationId, accountCode])
   @@map("accounts")
@@ -837,6 +850,7 @@ model PurchaseBill {
   returns         PurchaseReturn[]
   recurringExpenseRuns RecurringExpenseRun[]
   prepaidSchedules PrepaidSchedule[]
+  fixedAssets      FixedAsset[]
 
   @@unique([organizationId, billNumber])
   @@map("purchase_bills")
@@ -884,6 +898,7 @@ model PurchaseBillLine {
   goodsReceiptNoteLine GoodsReceiptNoteLine? @relation(fields: [goodsReceiptNoteLineId], references: [id])
   returnLines       PurchaseReturnLine[]
   prepaidSchedule   PrepaidSchedule?
+  fixedAsset        FixedAsset?
 
   @@map("purchase_bill_lines")
 }
@@ -1484,6 +1499,7 @@ model BusinessPartner {
   vendorBankAccounts VendorBankAccount[]
   recurringExpenses RecurringExpense[]
   prepaidSchedules PrepaidSchedule[]
+  fixedAssets      FixedAsset[]
 
   @@map("business_partners")
 }
@@ -1760,6 +1776,127 @@ model PrepaidScheduleRun {
 
   @@unique([prepaidScheduleId, periodMonth])
   @@map("prepaid_schedule_runs")
+}
+
+// ── Depreciation ─────────────────────────────────────────────────────────
+// See migration_034. One register serves two statutes that never agree:
+// Schedule II of the Companies Act drives the ledger (per asset, useful life,
+// pro rata by day, residual value), Section 32 of the Income Tax Act drives
+// the return (per block, prescribed WDV rate, half rate under 180 days, no
+// residual). Only the first posts. The gap between them is what deferred tax
+// accounts for — deliberately not computed here.
+
+model AssetClass {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId          String   @map("organization_id") @db.Uuid
+  name                    String   @db.VarChar(120)
+  assetAccountId          String   @map("asset_account_id") @db.Uuid
+  accumDepAccountId       String   @map("accum_dep_account_id") @db.Uuid
+  depExpenseAccountId     String   @map("dep_expense_account_id") @db.Uuid
+  defaultUsefulLifeMonths Int      @map("default_useful_life_months")
+  defaultMethod           String   @default("SLM") @map("default_method") @db.VarChar(3)
+  // 5% is the Schedule II ceiling ("shall not be more than five per cent of
+  // the original cost"), not a requirement — hence a default, not a constant.
+  defaultResidualPct      Decimal  @default(5.00) @map("default_residual_pct") @db.Decimal(5, 2)
+  defaultItBlockCode      String   @map("default_it_block_code") @db.VarChar(30)
+  defaultItRate           Decimal  @map("default_it_rate") @db.Decimal(5, 2)
+  isActive                Boolean  @default(true) @map("is_active")
+  sortOrder               Int      @default(0) @map("sort_order")
+  createdAt               DateTime @default(now()) @map("created_at")
+
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  assetAccount    Account      @relation("AssetClassCost", fields: [assetAccountId], references: [id])
+  accumDepAccount Account      @relation("AssetClassAccumDep", fields: [accumDepAccountId], references: [id])
+  depExpenseAccount Account    @relation("AssetClassExpense", fields: [depExpenseAccountId], references: [id])
+  assets          FixedAsset[]
+
+  @@unique([organizationId, name])
+  @@map("asset_classes")
+}
+
+model FixedAsset {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId        String    @map("organization_id") @db.Uuid
+  branchId              String?   @map("branch_id") @db.Uuid
+  assetClassId          String    @map("asset_class_id") @db.Uuid
+  // Nullable so an asset owned before SmartERP can be opened by hand. Nothing
+  // creates one that way yet.
+  purchaseBillId        String?   @map("purchase_bill_id") @db.Uuid
+  purchaseBillLineId    String?   @unique @map("purchase_bill_line_id") @db.Uuid
+  // This asset's card, tagged on BOTH balance-sheet accounts, so its gross
+  // cost, accumulated depreciation and net book value are all readable from
+  // the ledger itself rather than only from this table.
+  businessPartnerId     String    @map("business_partner_id") @db.Uuid
+  assetCode             String    @map("asset_code") @db.VarChar(30)
+  name                  String    @db.VarChar(200)
+  // Snapshots of the class's accounts, not live reads: re-pointing a class
+  // later must change what future assets do, never redirect the remaining
+  // charges of one already part-depreciated.
+  assetAccountId        String    @map("asset_account_id") @db.Uuid
+  accumDepAccountId     String    @map("accum_dep_account_id") @db.Uuid
+  depExpenseAccountId   String    @map("dep_expense_account_id") @db.Uuid
+  grossCost             Decimal   @map("gross_cost") @db.Decimal(14, 2)
+  residualValue         Decimal   @default(0) @map("residual_value") @db.Decimal(14, 2)
+  // Section 16(3): claim the input tax credit OR capitalise the GST and
+  // depreciate it, never both. true means the GST sits inside grossCost.
+  gstCapitalised        Boolean   @default(false) @map("gst_capitalised")
+  purchaseDate          DateTime  @map("purchase_date") @db.Date
+  // What depreciation runs from — Schedule II charges pro rata "from the date
+  // of such addition", and an asset still in its crate is not in use.
+  inUseDate             DateTime  @map("in_use_date") @db.Date
+  method                String    @default("SLM") @db.VarChar(3)
+  usefulLifeMonths      Int       @map("useful_life_months")
+  // Pinned per asset: block rates change with each Finance Act, and an asset
+  // keeps computing at the rate it was capitalised under.
+  itBlockCode           String    @map("it_block_code") @db.VarChar(30)
+  itRate                Decimal   @map("it_rate") @db.Decimal(5, 2)
+  status                String    @default("ACTIVE") @db.VarChar(20)
+  disposalDate          DateTime? @map("disposal_date") @db.Date
+  disposalProceeds      Decimal?  @map("disposal_proceeds") @db.Decimal(14, 2)
+  disposalJournalEntryId String?  @map("disposal_journal_entry_id") @db.Uuid
+  createdBy             String?   @map("created_by") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at")
+  deletedAt             DateTime? @map("deleted_at")
+
+  organization      Organization      @relation(fields: [organizationId], references: [id])
+  branch            Branch?           @relation(fields: [branchId], references: [id])
+  assetClass        AssetClass        @relation(fields: [assetClassId], references: [id])
+  purchaseBill      PurchaseBill?     @relation(fields: [purchaseBillId], references: [id])
+  purchaseBillLine  PurchaseBillLine? @relation(fields: [purchaseBillLineId], references: [id])
+  businessPartner   BusinessPartner   @relation(fields: [businessPartnerId], references: [id])
+  assetAccount      Account           @relation("FixedAssetCost", fields: [assetAccountId], references: [id])
+  accumDepAccount   Account           @relation("FixedAssetAccumDep", fields: [accumDepAccountId], references: [id])
+  depExpenseAccount Account           @relation("FixedAssetExpense", fields: [depExpenseAccountId], references: [id])
+  runs              FixedAssetDepreciationRun[]
+
+  @@unique([organizationId, assetCode])
+  @@map("fixed_assets")
+}
+
+model FixedAssetDepreciationRun {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fixedAssetId   String   @map("fixed_asset_id") @db.Uuid
+  periodMonth    DateTime @map("period_month") @db.Date
+  amount         Decimal  @db.Decimal(14, 2)
+  // Stored, not recomputed on read. Under WDV each month depends on the one
+  // before it, so recomputing an old figure from today's rules would rewrite
+  // history — the same class of bug migration_031 fixed for GST.
+  openingWdv     Decimal  @map("opening_wdv") @db.Decimal(14, 2)
+  closingWdv     Decimal  @map("closing_wdv") @db.Decimal(14, 2)
+  // A scalar rather than a relation: nothing navigates from a JournalEntry
+  // back to a depreciation run, and modelling it would put an unused array on
+  // JournalEntry.
+  journalEntryId String   @map("journal_entry_id") @db.Uuid
+  // DISPOSAL_CATCHUP is the pro-rata charge up to a disposal date, posted
+  // with the disposal rather than on the monthly run.
+  runType        String   @default("MONTHLY") @map("run_type") @db.VarChar(20)
+  generatedBy    String?  @map("generated_by") @db.Uuid
+  generatedAt    DateTime @default(now()) @map("generated_at")
+
+  fixedAsset FixedAsset @relation(fields: [fixedAssetId], references: [id])
+
+  @@unique([fixedAssetId, periodMonth])
+  @@map("fixed_asset_depreciation_runs")
 }
 
 model RecurringExpenseRun {

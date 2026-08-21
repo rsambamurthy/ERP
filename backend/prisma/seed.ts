@@ -155,6 +155,30 @@ async function main() {
     // account for the inward case.
     { domainTypeId: null, accountCode: "4002", accountName: "Inventory Adjustments", accountType: "EXPENSE" },
     { domainTypeId: null, accountCode: "5001", accountName: "Sales Revenue", accountType: "INCOME" },
+    // ── Fixed assets and depreciation (migration_034) ──────────────────
+    // Five asset classes and five matching contra accounts. Accumulated
+    // depreciation is a SEPARATE contra-asset account, never a credit against
+    // the asset: Schedule III requires gross block, accumulated depreciation
+    // and net block to be shown separately, and netting them at posting time
+    // destroys that information for good.
+    //
+    // All ten are control accounts for the ASSET sub-ledger — each asset gets
+    // its own card, tagged on both its cost and its contra, so one asset's
+    // net book value is readable from the ledger rather than only from the
+    // fixed_assets table.
+    { domainTypeId: null, accountCode: "1401", accountName: "Land & Buildings", accountType: "ASSET", isControlAccount: true, defaultBpType: "ASSET", scheduleIiiHead: "FIXED_ASSETS" },
+    { domainTypeId: null, accountCode: "1402", accountName: "Plant & Machinery", accountType: "ASSET", isControlAccount: true, defaultBpType: "ASSET", scheduleIiiHead: "FIXED_ASSETS" },
+    { domainTypeId: null, accountCode: "1403", accountName: "Furniture & Fixtures", accountType: "ASSET", isControlAccount: true, defaultBpType: "ASSET", scheduleIiiHead: "FIXED_ASSETS" },
+    { domainTypeId: null, accountCode: "1404", accountName: "Vehicles", accountType: "ASSET", isControlAccount: true, defaultBpType: "ASSET", scheduleIiiHead: "FIXED_ASSETS" },
+    { domainTypeId: null, accountCode: "1405", accountName: "Computers & Equipment", accountType: "ASSET", isControlAccount: true, defaultBpType: "ASSET", scheduleIiiHead: "FIXED_ASSETS" },
+    { domainTypeId: null, accountCode: "1451", accountName: "Accumulated Depreciation - Buildings", accountType: "ASSET", isControlAccount: true, defaultBpType: "ASSET", scheduleIiiHead: "FIXED_ASSETS" },
+    { domainTypeId: null, accountCode: "1452", accountName: "Accumulated Depreciation - Plant & Machinery", accountType: "ASSET", isControlAccount: true, defaultBpType: "ASSET", scheduleIiiHead: "FIXED_ASSETS" },
+    { domainTypeId: null, accountCode: "1453", accountName: "Accumulated Depreciation - Furniture", accountType: "ASSET", isControlAccount: true, defaultBpType: "ASSET", scheduleIiiHead: "FIXED_ASSETS" },
+    { domainTypeId: null, accountCode: "1454", accountName: "Accumulated Depreciation - Vehicles", accountType: "ASSET", isControlAccount: true, defaultBpType: "ASSET", scheduleIiiHead: "FIXED_ASSETS" },
+    { domainTypeId: null, accountCode: "1455", accountName: "Accumulated Depreciation - Computers", accountType: "ASSET", isControlAccount: true, defaultBpType: "ASSET", scheduleIiiHead: "FIXED_ASSETS" },
+    { domainTypeId: null, accountCode: "4020", accountName: "Depreciation & Amortisation", accountType: "EXPENSE" },
+    { domainTypeId: null, accountCode: "4021", accountName: "Loss on Disposal of Assets", accountType: "EXPENSE" },
+    { domainTypeId: null, accountCode: "5010", accountName: "Gain on Disposal of Assets", accountType: "INCOME" },
     // Trading overlay
     {
       domainTypeId: trading.id,
