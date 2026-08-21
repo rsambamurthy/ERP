@@ -607,6 +607,12 @@ export interface DocumentLineInput {
   inUseDate?: string;
   // Schedule II allows a justified departure from the class's default life.
   usefulLifeMonths?: number;
+  // "SLM" or "WDV". Schedule II prescribes lives, not methods. Omitted means
+  // the class's default. WDV needs a residual above zero.
+  method?: string;
+  // Part A paragraph 3(i): a life differing from the PRESCRIBED one — longer
+  // or shorter — must be disclosed and justified with technical advice.
+  usefulLifeNote?: string;
 }
 
 // One row of GET /asset-classes — the defaults an asset is created from.
@@ -617,6 +623,9 @@ export interface AssetClassSummary {
   name: string;
   isActive: boolean;
   defaultUsefulLifeMonths: number;
+  // What Schedule II prescribes, as against what this org's class says. A
+  // deviation is measured against this one, never the editable default.
+  scheduleIiLifeMonths: number;
   defaultMethod: string;
   defaultResidualPct: number;
   assetAccount: { id: string; accountCode: string; accountName: string };

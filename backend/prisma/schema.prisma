@@ -1794,6 +1794,11 @@ model AssetClass {
   accumDepAccountId       String   @map("accum_dep_account_id") @db.Uuid
   depExpenseAccountId     String   @map("dep_expense_account_id") @db.Uuid
   defaultUsefulLifeMonths Int      @map("default_useful_life_months")
+  // The life Schedule II actually prescribes, kept apart from the default
+  // above because the default is editable and this is not. Part A paragraph
+  // 3(i) measures a deviation against the statute, so editing a class must
+  // never move the yardstick. See migration_035.
+  scheduleIiLifeMonths    Int      @map("schedule_ii_life_months")
   defaultMethod           String   @default("SLM") @map("default_method") @db.VarChar(3)
   // 5% is the Schedule II ceiling ("shall not be more than five per cent of
   // the original cost"), not a requirement — hence a default, not a constant.
@@ -1844,8 +1849,20 @@ model FixedAsset {
   // What depreciation runs from — Schedule II charges pro rata "from the date
   // of such addition", and an asset still in its crate is not in use.
   inUseDate             DateTime  @map("in_use_date") @db.Date
+  // Schedule II prescribes lives, not methods — Part A never names one, and
+  // Part C's Notes require only that the method used be disclosed. WDV must
+  // carry a residual: its rate is 1 - (residual/cost)^(1/n), which at zero
+  // residual writes the whole cost off in one period.
   method                String    @default("SLM") @db.VarChar(3)
   usefulLifeMonths      Int       @map("useful_life_months")
+  // Snapshotted from the class at capitalisation, so the register can answer
+  // "which assets depart from Schedule II" even after a class is edited.
+  scheduleIiLifeMonths  Int       @map("schedule_ii_life_months")
+  // Part A paragraph 3(i): a life different from the prescribed one must be
+  // disclosed and justified with technical advice. NOT NULL is wrong here —
+  // most assets do not deviate — so the requirement is a CHECK instead:
+  // fixed_assets_life_note_ck refuses a deviation with no note.
+  usefulLifeNote        String?   @map("useful_life_note") @db.VarChar(500)
   // Pinned per asset: block rates change with each Finance Act, and an asset
   // keeps computing at the rate it was capitalised under.
   itBlockCode           String    @map("it_block_code") @db.VarChar(30)

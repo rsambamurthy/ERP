@@ -58,6 +58,10 @@ router.get("/", async (req, res) => {
       // 30 months for some moulds) and monthly is the granularity the charge
       // is computed at anyway.
       defaultUsefulLifeMonths: c.defaultUsefulLifeMonths,
+      // What Schedule II prescribes, as opposed to what this org's class
+      // says. The screen needs both: it warns when the two differ, and a
+      // deviation from THIS one is what requires a justification.
+      scheduleIiLifeMonths: c.scheduleIiLifeMonths,
       defaultMethod: c.defaultMethod,
       defaultResidualPct: Number(c.defaultResidualPct),
       assetAccount: c.assetAccount,
