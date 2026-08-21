@@ -1593,12 +1593,23 @@ export interface PrepaidAccountRef {
   accountName: string;
 }
 
+// Who the prepayment was made to. Carried from the originating bill, not from
+// the schedule — an amortization entry has no counterparty, so this exists for
+// the register's benefit rather than the ledger's. Null for a schedule with no
+// bill behind it.
+export interface PrepaidVendorRef {
+  id: string;
+  name: string;
+  code: string | null;
+}
+
 export interface PrepaidScheduleSummary {
   id: string;
   name: string;
   status: PrepaidStatus;
   expenseAccount: PrepaidAccountRef;
   purchaseBill: { id: string; billNumber: string; billDate: string } | null;
+  vendor: PrepaidVendorRef | null;
   totalAmount: number;
   released: number;
   remaining: number;
@@ -1614,6 +1625,7 @@ export interface PrepaidDueRow {
   name: string;
   expenseAccount: PrepaidAccountRef;
   purchaseBill: { id: string; billNumber: string } | null;
+  vendor: PrepaidVendorRef | null;
   totalAmount: number;
   released: number;
   remaining: number;
@@ -1646,6 +1658,7 @@ export interface PrepaidScheduleDetail {
   prepaidAccount: PrepaidAccountRef;
   businessPartner: { id: string; name: string };
   purchaseBill: { id: string; billNumber: string; billDate: string } | null;
+  vendor: PrepaidVendorRef | null;
   totalAmount: number;
   released: number;
   remaining: number;

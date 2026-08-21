@@ -205,6 +205,9 @@ export default function AmortizationDuePage() {
                     <Link href={`/accounting/prepaid-schedules/${row.id}`} style={{ color: "inherit", textDecoration: "none" }}>
                       {row.name}
                     </Link>
+                    {row.vendor && (
+                      <div style={muted}>{row.vendor.name}</div>
+                    )}
                     {row.missingBefore > 0 && (
                       <div style={{ ...muted, color: "#b45309" }}>
                         {row.missingBefore} earlier instalment{row.missingBefore === 1 ? "" : "s"} not posted

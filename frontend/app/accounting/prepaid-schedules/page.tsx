@@ -53,7 +53,7 @@ export default function PrepaidSchedulesPage() {
     return rows.filter((r) => {
       if (!showCompleted && r.status !== "ACTIVE") return false;
       if (!q) return true;
-      return `${r.name} ${r.purchaseBill?.billNumber ?? ""} ${r.expenseAccount.accountName}`.toLowerCase().includes(q);
+      return `${r.name} ${r.vendor?.name ?? ""} ${r.purchaseBill?.billNumber ?? ""} ${r.expenseAccount.accountName}`.toLowerCase().includes(q);
     });
   }, [rows, search, showCompleted]);
 
@@ -75,7 +75,7 @@ export default function PrepaidSchedulesPage() {
         <input
           className="ent-fc"
           style={{ flex: "1 1 300px", maxWidth: 400, height: 34 }}
-          placeholder="Search by name, bill or account…"
+          placeholder="Search by name, vendor, bill or account…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -104,6 +104,7 @@ export default function PrepaidSchedulesPage() {
           <thead>
             <tr>
               <th>Name</th>
+              <th>Vendor</th>
               <th>Expense account</th>
               <th>Source</th>
               <th>Period</th>
@@ -115,14 +116,14 @@ export default function PrepaidSchedulesPage() {
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={9} className="ent-empty">Loading…</td></tr>}
+            {loading && <tr><td colSpan={10} className="ent-empty">Loading…</td></tr>}
             {!loading && rows.length === 0 && (
-              <tr><td colSpan={9} className="ent-empty">
+              <tr><td colSpan={10} className="ent-empty">
                 No prepaid schedules yet. Tick &ldquo;Spread over time&rdquo; on a service line when entering a Purchase Bill.
               </td></tr>
             )}
             {!loading && rows.length > 0 && visible.length === 0 && (
-              <tr><td colSpan={9} className="ent-empty">Nothing matches.</td></tr>
+              <tr><td colSpan={10} className="ent-empty">Nothing matches.</td></tr>
             )}
             {visible.map((r) => (
               <tr key={r.id}>
@@ -130,6 +131,11 @@ export default function PrepaidSchedulesPage() {
                   <Link href={`/accounting/prepaid-schedules/${r.id}`} style={{ color: "inherit", textDecoration: "none" }}>
                     {r.name}
                   </Link>
+                </td>
+                <td>
+                  {r.vendor
+                    ? <>{r.vendor.code ? <span style={{ color: "var(--color-muted)" }}>{r.vendor.code} · </span> : null}{r.vendor.name}</>
+                    : <span style={{ color: "var(--color-muted)" }}>—</span>}
                 </td>
                 <td style={{ color: "var(--color-muted)" }}>
                   {r.expenseAccount.accountCode} — {r.expenseAccount.accountName}

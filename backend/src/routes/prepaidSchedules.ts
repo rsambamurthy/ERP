@@ -83,7 +83,16 @@ router.get("/", async (req, res) => {
     where: { organizationId, deletedAt: null },
     include: {
       expenseAccount: { select: { id: true, accountCode: true, accountName: true } },
-      purchaseBill: { select: { id: true, billNumber: true, billDate: true } },
+      // The vendor lives on the bill, not on the schedule — an amortization
+      // owes nobody anything, so there is no partner on its journal entry.
+      // Carried through here purely so the register can answer "who did this
+      // come from" without a click into the bill.
+      purchaseBill: {
+        select: {
+          id: true, billNumber: true, billDate: true,
+          businessPartner: { select: { id: true, name: true, code: true } },
+        },
+      },
       runs: { select: { amount: true, periodMonth: true } },
     },
     orderBy: { createdAt: "desc" },
@@ -104,6 +113,7 @@ router.get("/", async (req, res) => {
         purchaseBill: s.purchaseBill
           ? { id: s.purchaseBill.id, billNumber: s.purchaseBill.billNumber, billDate: s.purchaseBill.billDate.toISOString().slice(0, 10) }
           : null,
+        vendor: s.purchaseBill?.businessPartner ?? null,
         totalAmount: total,
         released,
         remaining: round2(total - released),
@@ -131,7 +141,12 @@ router.get("/due", async (req, res) => {
     where: { organizationId, deletedAt: null, status: "ACTIVE" },
     include: {
       expenseAccount: { select: { id: true, accountCode: true, accountName: true } },
-      purchaseBill: { select: { id: true, billNumber: true } },
+      purchaseBill: {
+        select: {
+          id: true, billNumber: true,
+          businessPartner: { select: { id: true, name: true, code: true } },
+        },
+      },
       runs: { select: { periodMonth: true, amount: true, journalEntryId: true } },
     },
     orderBy: { name: "asc" },
@@ -160,7 +175,8 @@ router.get("/due", async (req, res) => {
         id: s.id,
         name: s.name,
         expenseAccount: s.expenseAccount,
-        purchaseBill: s.purchaseBill,
+        purchaseBill: s.purchaseBill ? { id: s.purchaseBill.id, billNumber: s.purchaseBill.billNumber } : null,
+        vendor: s.purchaseBill?.businessPartner ?? null,
         totalAmount: total,
         released,
         remaining: round2(total - released),
@@ -299,7 +315,12 @@ router.get("/:id", async (req, res) => {
       prepaidAccount: { select: { id: true, accountCode: true, accountName: true } },
       businessPartner: { select: { id: true, name: true } },
       branch: { select: { id: true, name: true } },
-      purchaseBill: { select: { id: true, billNumber: true, billDate: true } },
+      purchaseBill: {
+        select: {
+          id: true, billNumber: true, billDate: true,
+          businessPartner: { select: { id: true, name: true, code: true } },
+        },
+      },
       runs: true,
     },
   });
@@ -344,6 +365,7 @@ router.get("/:id", async (req, res) => {
       purchaseBill: s.purchaseBill
         ? { id: s.purchaseBill.id, billNumber: s.purchaseBill.billNumber, billDate: s.purchaseBill.billDate.toISOString().slice(0, 10) }
         : null,
+      vendor: s.purchaseBill?.businessPartner ?? null,
       totalAmount: total,
       released,
       remaining: round2(total - released),

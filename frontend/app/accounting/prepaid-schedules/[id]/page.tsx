@@ -91,6 +91,15 @@ export default function PrepaidScheduleDetailPage() {
             <span style={muted}>this schedule&rsquo;s card balance</span>
           </div>
           <div className="ent-fg">
+            <span className="ent-fl">Paid to</span>
+            <div style={{ fontSize: 15 }}>{s.vendor ? s.vendor.name : "—"}</div>
+            <span style={muted}>
+              {s.vendor
+                ? "from the originating bill — an amortization entry itself has no counterparty"
+                : "no bill behind this schedule"}
+            </span>
+          </div>
+          <div className="ent-fg">
             <span className="ent-fl">Period</span>
             <div style={{ fontSize: 15 }}>{monthLabel(s.startMonth)} – {monthLabel(s.endMonth)}</div>
             <span style={muted}>{s.months} monthly instalments</span>
