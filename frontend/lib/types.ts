@@ -646,6 +646,75 @@ export interface ItemAssetClassRef {
   name: string;
 }
 
+// ── Fixed asset register ─────────────────────────────────────────────────
+//
+// Read-only. An asset is created by capitalising a Purchase Bill line and is
+// never edited: its cost, life, method, residual and accounts were all fixed
+// at capitalisation, and everything afterwards happens through depreciation
+// runs and disposal.
+//
+// Gross block, accumulated depreciation and net block are shown separately
+// because Schedule III requires exactly that. Accumulated depreciation is
+// summed from what actually posted rather than stored, so it cannot drift
+// from the ledger.
+
+export interface FixedAssetSummary {
+  id: string;
+  assetCode: string;
+  name: string;
+  assetClass: { id: string; name: string };
+  branch: { id: string; name: string } | null;
+  assetAccount: { accountCode: string; accountName: string };
+  vendor: string | null;
+  billNumber: string | null;
+  purchaseDate: string | null;
+  inUseDate: string | null;
+  method: string;
+  usefulLifeMonths: number;
+  scheduleIiLifeMonths: number;
+  // The set an auditor asks for: assets whose life departs from Schedule II.
+  departsFromScheduleII: boolean;
+  grossCost: number;
+  residualValue: number;
+  accumulatedDepreciation: number;
+  netBookValue: number;
+  periodsPosted: number;
+  status: string;
+}
+
+export interface FixedAssetRun {
+  id: string;
+  periodStart: string | null;
+  periodEnd: string | null;
+  frequency: string;
+  amount: number;
+  openingWdv: number;
+  closingWdv: number;
+  runType: string;
+  journalEntryId: string;
+  generatedAt: string;
+}
+
+export interface FixedAssetDetail extends Omit<FixedAssetSummary, "vendor" | "billNumber" | "periodsPosted"> {
+  // This asset's sub-ledger card. Both balance-sheet accounts are tagged to
+  // it, so one asset's gross block and accumulated depreciation are readable
+  // from the ledger itself rather than only from this table.
+  card: { id: string; name: string };
+  accumDepAccount: { accountCode: string; accountName: string };
+  depExpenseAccount: { accountCode: string; accountName: string };
+  purchaseBill: {
+    id: string; billNumber: string; billDate: string | null;
+    vendor: { id: string; name: string } | null;
+  } | null;
+  // Copied from the asset class at capitalisation, so the Part A paragraph
+  // 3(i) disclosure stays with the asset even if the class is edited later.
+  usefulLifeNote: string | null;
+  gstCapitalised: boolean;
+  disposalDate: string | null;
+  disposalProceeds: number | null;
+  runs: FixedAssetRun[];
+}
+
 // One asset class as Configuration > Depreciation shows it. usefulLifeMonths
 // is what this company has adopted; scheduleIiLifeMonths is what the
 // Companies Act prescribes. When they differ, lifePolicyNote is the Part A

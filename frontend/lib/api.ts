@@ -35,6 +35,8 @@ import type {
   RecurringGenerateResult,
   AssetClassSummary,
   DepreciationPolicy,
+  FixedAssetSummary,
+  FixedAssetDetail,
   PrepaidScheduleSummary,
   PrepaidScheduleDetail,
   PrepaidDueRow,
@@ -1309,6 +1311,20 @@ export function generateRecurringExpenses(body: {
   return request<{ data: RecurringGenerateResult }>("/recurring-expenses/generate", {
     method: "POST", body: JSON.stringify(body),
   });
+}
+
+// ── Fixed asset register ─────────────────────────────────────────────────
+
+// Read-only: an asset is created by capitalising a Purchase Bill line and
+// changed only by depreciation and disposal.
+export function getFixedAssets(includeDisposed = false) {
+  return request<{ data: FixedAssetSummary[] }>(
+    `/fixed-assets${includeDisposed ? "?includeDisposed=true" : ""}`,
+  );
+}
+
+export function getFixedAsset(id: string) {
+  return request<{ data: FixedAssetDetail }>(`/fixed-assets/${id}`);
 }
 
 // ── Depreciation policy ──────────────────────────────────────────────────
