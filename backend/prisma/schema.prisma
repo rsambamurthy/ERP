@@ -86,6 +86,15 @@ model Organization {
   // disclosed. Changing it is a change in accounting estimate and applies
   // prospectively — see lib/depreciationPolicy.ts and migration_036.
   depreciationMethod String @default("SLM") @map("depreciation_method") @db.VarChar(3)
+  // How often depreciation is charged. The amount for a year is the same
+  // whichever this is; what changes is how many journal entries there are
+  // and when the expense shows up in an interim P&L. Plenty of companies
+  // compute it once at close. See migration_038.
+  depreciationFrequency String @default("MONTHLY") @map("depreciation_frequency") @db.VarChar(12)
+  // Below this, a capitalised line is expensed instead — nobody wants a
+  // fixed asset carrying a forty-rupee monthly charge. Zero means no
+  // threshold, which is what every organization starts with.
+  capitalisationThreshold Decimal @default(0) @map("capitalisation_threshold") @db.Decimal(14, 2)
   domainLockedAt      DateTime? @map("domain_locked_at")
   // Company Master data — for statutory filings (AOC-4 etc.), not used by
   // any transactional posting anywhere. All nullable and unvalidated in
@@ -1814,7 +1823,16 @@ model AssetClass {
   // above because the default is editable and this is not. Part A paragraph
   // 3(i) measures a deviation against the statute, so editing a class must
   // never move the yardstick. See migration_035.
+  // What the Companies Act prescribes. Editable, because the Act itself can
+  // be amended — a yardstick that could not move would make every asset look
+  // like a deviation the day it was. Editing it is a different act from
+  // editing the policy life above, and rarer.
   scheduleIiLifeMonths    Int      @map("schedule_ii_life_months")
+  // Part A paragraph 3(i)'s justification, for a POLICY life shorter than
+  // the statute. It lives here rather than on each asset because shortening
+  // Computers from 72 months to 36 is one decision, not one per computer;
+  // every asset copies this at capitalisation. See migration_038.
+  lifePolicyNote          String?  @map("life_policy_note") @db.VarChar(500)
   defaultMethod           String   @default("SLM") @map("default_method") @db.VarChar(3)
   // 5% is the Schedule II ceiling ("shall not be more than five per cent of
   // the original cost"), not a requirement — hence a default, not a constant.
@@ -1936,7 +1954,15 @@ model DepreciationMethodChange {
 model FixedAssetDepreciationRun {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   fixedAssetId   String   @map("fixed_asset_id") @db.Uuid
-  periodMonth    DateTime @map("period_month") @db.Date
+  // A PERIOD, not a month. An annual charge is one row covering twelve
+  // months, not twelve rows summed — see migration_038. periodStart is
+  // always the first of a month whichever frequency it belongs to.
+  periodStart    DateTime @map("period_start") @db.Date
+  periodEnd      DateTime @map("period_end") @db.Date
+  // Recorded per run rather than read from the organization, because the
+  // policy can change and a charge already posted has to stay explicable
+  // under the frequency it was actually computed at.
+  frequency      String   @db.VarChar(12)
   amount         Decimal  @db.Decimal(14, 2)
   // Stored, not recomputed on read. Under WDV each month depends on the one
   // before it, so recomputing an old figure from today's rules would rewrite
@@ -1955,7 +1981,7 @@ model FixedAssetDepreciationRun {
 
   fixedAsset FixedAsset @relation(fields: [fixedAssetId], references: [id])
 
-  @@unique([fixedAssetId, periodMonth])
+  @@unique([fixedAssetId, periodStart])
   @@map("fixed_asset_depreciation_runs")
 }
 

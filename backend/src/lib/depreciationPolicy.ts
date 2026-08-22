@@ -31,6 +31,46 @@ export function isDepreciationMethod(v: unknown): v is DepreciationMethod {
   return v === "SLM" || v === "WDV";
 }
 
+// How often the charge is posted. The amount for a year is identical
+// whichever this is — twelve monthly charges and one annual charge of the
+// same total are the same expense. What differs is the number of journal
+// entries and when the cost lands in an interim P&L.
+export type DepreciationFrequency = "MONTHLY" | "QUARTERLY" | "HALF_YEARLY" | "ANNUAL";
+
+export const FREQUENCY_MONTHS: Record<DepreciationFrequency, number> = {
+  MONTHLY: 1,
+  QUARTERLY: 3,
+  HALF_YEARLY: 6,
+  ANNUAL: 12,
+};
+
+export function isDepreciationFrequency(v: unknown): v is DepreciationFrequency {
+  return v === "MONTHLY" || v === "QUARTERLY" || v === "HALF_YEARLY" || v === "ANNUAL";
+}
+
+// Periods are anchored to the Indian financial year — 1 April — not to the
+// calendar. A company on quarterly depreciation means Apr-Jun, Jul-Sep,
+// Oct-Dec, Jan-Mar, which is what its quarterly results are drawn on;
+// Jan-Mar quarters would put a period boundary in the middle of the year it
+// is reporting.
+export function periodStartFor(month: Date, frequency: DepreciationFrequency): Date {
+  const span = FREQUENCY_MONTHS[frequency];
+  const y = month.getUTCFullYear();
+  const m = month.getUTCMonth(); // 0 = January
+  // Months since the start of the financial year this month belongs to.
+  const sinceApril = (m - 3 + 12) % 12;
+  const fyYear = m < 3 ? y - 1 : y;
+  const blocksIn = Math.floor(sinceApril / span) * span;
+  return new Date(Date.UTC(fyYear, 3 + blocksIn, 1));
+}
+
+// Last day of the period that starts here. Day 0 of the following month is
+// the last day of the previous one, which avoids every month-length case.
+export function periodEndFor(start: Date, frequency: DepreciationFrequency): Date {
+  const span = FREQUENCY_MONTHS[frequency];
+  return new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + span, 0));
+}
+
 // "YYYY-MM" or "YYYY-MM-DD" -> the first of that month in UTC.
 export function monthStart(value: unknown): Date | null {
   if (typeof value !== "string") return null;
@@ -65,15 +105,30 @@ export async function methodInForce(
   return isDepreciationMethod(org?.depreciationMethod) ? org!.depreciationMethod as DepreciationMethod : "SLM";
 }
 
-// The month of the most recently posted depreciation charge, or null if
-// nothing has ever posted. A method change cannot take effect on or before
-// this month: those charges are history, and a change in estimate does not
-// reach backwards.
+// The frequency in force. Unlike the method this has no dated history — a
+// frequency change takes effect from the next unposted period, and the
+// periods already posted carry their own frequency on the run row, so
+// nothing is lost by keeping only the current value.
+export async function frequencyInForce(organizationId: string): Promise<DepreciationFrequency> {
+  const org = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { depreciationFrequency: true },
+  });
+  return isDepreciationFrequency(org?.depreciationFrequency) ? org!.depreciationFrequency : "MONTHLY";
+}
+
+// The start of the most recently posted charge period, or null if nothing
+// has ever posted. A method change cannot take effect on or before this:
+// those charges are history, and a change in estimate does not reach
+// backwards.
 export async function lastPostedChargeMonth(organizationId: string): Promise<Date | null> {
   const run = await prisma.fixedAssetDepreciationRun.findFirst({
     where: { fixedAsset: { organizationId } },
-    orderBy: { periodMonth: "desc" },
-    select: { periodMonth: true },
+    orderBy: { periodStart: "desc" },
+    select: { periodEnd: true },
   });
-  return run?.periodMonth ?? null;
+  // The END of the last posted period, because a change may not land inside
+  // a period already charged. Under annual depreciation, posting 2026-27
+  // blocks any change before April 2027 — not merely before April 2026.
+  return run?.periodEnd ?? null;
 }
