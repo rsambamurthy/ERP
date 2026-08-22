@@ -255,34 +255,10 @@ function PurchaseBillsInner() {
     return applicable ? applicable.toMethod : depPolicy.currentMethod;
   }
 
-  function effectiveLife(l: DocumentLineInput, cls: AssetClassSummary): number {
-    return Number(l.usefulLifeMonths || cls.defaultUsefulLifeMonths);
-  }
-
-  // Part A paragraph 3(i). The comparison is against what Schedule II
-  // prescribes, never against the class's own default — a class is editable
-  // and the statute is not, so checking against the class would let someone
-  // move the yardstick and then measure against it.
-  //
-  // The 2014 amendment made both directions equal in law. They are not equal
-  // in risk: a longer life understates depreciation and overstates profit,
-  // which is the direction an auditor probes. Hence two different warnings
-  // rather than one.
-  function lifeDeviation(l: DocumentLineInput): { text: string; severe: boolean } | null {
-    const cls = assetClassById.get(String(l.assetClassId ?? ""));
-    if (!cls) return null;
-    const life = effectiveLife(l, cls);
-    if (life === cls.scheduleIiLifeMonths) return null;
-    return life > cls.scheduleIiLifeMonths
-      ? {
-          text: `Longer than the ${cls.scheduleIiLifeMonths} months Schedule II prescribes. This lowers the yearly charge and raises reported profit — it needs technical advice behind it, and will be disclosed.`,
-          severe: true,
-        }
-      : {
-          text: `Shorter than the ${cls.scheduleIiLifeMonths} months Schedule II prescribes. Permitted, and must still be disclosed with justification.`,
-          severe: false,
-        };
-  }
+  // No life or method control on the line any more. Both are policy — the
+  // life per asset class, the method per company — set under Configuration >
+  // Depreciation. What the line shows is the consequence of that policy for
+  // this purchase, which is the part someone entering a bill needs to see.
 
   function capitalHint(l: DocumentLineInput): string {
     const cls = assetClassById.get(String(l.assetClassId ?? ""));
@@ -290,7 +266,7 @@ function PurchaseBillsInner() {
     if (!cls) return "Pick an asset class.";
     if (!(amount > 0)) return "Enter a quantity and rate.";
     if (!l.inUseDate) return "Set the date it was put to use.";
-    const life = effectiveLife(l, cls);
+    const life = cls.defaultUsefulLifeMonths;
     const residual = round2(amount * cls.defaultResidualPct / 100);
     const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const start = new Date(`${l.inUseDate}T00:00:00.000Z`);
@@ -594,7 +570,7 @@ function PurchaseBillsInner() {
     // is that it cannot be missed by forgetting.
     const capital = canCapitalise && item?.itemKind === "SERVICE" && item?.defaultAssetClass
       ? { capitalise: true, assetClassId: item.defaultAssetClass.id, inUseDate: billDate }
-      : { capitalise: false, assetClassId: undefined, assetName: undefined, inUseDate: undefined, usefulLifeMonths: undefined, usefulLifeNote: undefined };
+      : { capitalise: false, assetClassId: undefined, assetName: undefined, inUseDate: undefined };
     updateLine(i, {
       itemId,
       // Item master rates are always INR — only useful as a default when
@@ -629,7 +605,7 @@ function PurchaseBillsInner() {
           // rejected by the server.
           .map((l) => (canCapitalise && l.capitalise && isServiceLine(l)
             ? l
-            : { ...l, capitalise: undefined, assetClassId: undefined, assetName: undefined, inUseDate: undefined, usefulLifeMonths: undefined, usefulLifeNote: undefined })),
+            : { ...l, capitalise: undefined, assetClassId: undefined, assetName: undefined, inUseDate: undefined })),
         currency, exchangeRate: isForeign ? Number(exchangeRate) : undefined,
         billOfEntryNumber: isForeign ? newBoeNumber || undefined : undefined,
         billOfEntryDate: isForeign ? newBoeDate || undefined : undefined,
@@ -974,7 +950,7 @@ function PurchaseBillsInner() {
                                 disabled={!!line.prepaid}
                                 onChange={(e) => updateLine(i, e.target.checked
                                   ? { capitalise: true, assetClassId: line.assetClassId || "", inUseDate: line.inUseDate || billDate }
-                                  : { capitalise: false, assetClassId: undefined, assetName: undefined, inUseDate: undefined, usefulLifeMonths: undefined, usefulLifeNote: undefined })}
+                                  : { capitalise: false, assetClassId: undefined, assetName: undefined, inUseDate: undefined })}
                               />
                               Capitalise this line
                             </label>
@@ -996,39 +972,14 @@ function PurchaseBillsInner() {
                                   value={line.inUseDate ?? ""}
                                   onChange={(e) => updateLine(i, { inUseDate: e.target.value })}
                                 />
-                                <div style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
-                                  <input
-                                    type="number" min={1} max={1200} step={1} className="ent-fc" style={{ width: 70 }}
-                                    title="Useful life in months"
-                                    placeholder="months"
-                                    value={line.usefulLifeMonths ?? assetClassById.get(String(line.assetClassId))?.defaultUsefulLifeMonths ?? ""}
-                                    onChange={(e) => updateLine(i, { usefulLifeMonths: Number(e.target.value) })}
-                                  />
-                                  {/* Shown, not chosen. The method is the
-                                      company's policy — one method for the
-                                      whole entity, disclosed once. */}
-                                  <span style={{ fontSize: 11.5, color: "var(--color-muted)" }}>
-                                    months · {methodForMonth(String(line.inUseDate).slice(0, 7)) === "WDV" ? "written-down value" : "straight line"}
-                                  </span>
+                                {/* Shown, never chosen. Life belongs to the
+                                    asset class and method to the company —
+                                    both under Configuration > Depreciation. */}
+                                <div style={{ fontSize: 11.5, color: "var(--color-muted)", marginTop: 6 }}>
+                                  {assetClassById.get(String(line.assetClassId))?.defaultUsefulLifeMonths ?? "—"} months
+                                  {" · "}
+                                  {methodForMonth(String(line.inUseDate).slice(0, 7)) === "WDV" ? "written-down value" : "straight line"}
                                 </div>
-                                {lifeDeviation(line) && (
-                                  <>
-                                    <div style={{
-                                      fontSize: 11.5, marginTop: 6, padding: "5px 7px", borderRadius: 4,
-                                      background: lifeDeviation(line)!.severe ? "#fef3c7" : "#f1f5f9",
-                                      color: lifeDeviation(line)!.severe ? "#92400e" : "#475569",
-                                    }}>
-                                      {lifeDeviation(line)!.text}
-                                    </div>
-                                    <textarea
-                                      className="ent-fc" style={{ width: "100%", marginTop: 6, height: 46, padding: 6 }}
-                                      placeholder="Justification, supported by technical advice — required"
-                                      maxLength={500}
-                                      value={line.usefulLifeNote ?? ""}
-                                      onChange={(e) => updateLine(i, { usefulLifeNote: e.target.value })}
-                                    />
-                                  </>
-                                )}
                                 {/* Depreciation runs from the date the asset was
                                     put to use, not the date it was bought —
                                     Schedule II charges "on a pro rata basis from

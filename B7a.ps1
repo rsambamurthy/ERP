@@ -1,4 +1,17 @@
-import { Router } from "express";
+﻿$ErrorActionPreference = 'Stop'
+$repo = $PSScriptRoot
+if (-not $repo) { $repo = (Get-Location).Path }
+Write-Host 'Depreciation configuration endpoint...' -ForegroundColor Cyan
+
+function Set-FileText($rel, $text) {
+  $p = Join-Path $repo $rel
+  $dir = Split-Path $p -Parent
+  if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  [IO.File]::WriteAllText($p, $text.Replace([string][char]13, ''), (New-Object Text.UTF8Encoding $false))
+  Write-Host "  wrote  $rel"
+}
+
+Set-FileText 'backend/src/routes/depreciationPolicy.ts' 'import { Router } from "express";
 import { prisma } from "../db";
 import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
@@ -161,7 +174,7 @@ router.patch("/", canManageCompany, async (req, res) => {
   res.json({ data });
 });
 
-// PATCH /depreciation-policy/classes/:id — a class's lives, residual and the
+// PATCH /depreciation-policy/classes/:id — a class''s lives, residual and the
 // justification for adopting a life the statute does not prescribe.
 //
 // Everything here affects FUTURE assets only. An asset copies its life,
@@ -347,3 +360,7 @@ router.delete("/change/:id", canManageCompany, async (req, res) => {
 });
 
 export default router;
+'
+
+Write-Host ''
+Write-Host 'Done.' -ForegroundColor Green

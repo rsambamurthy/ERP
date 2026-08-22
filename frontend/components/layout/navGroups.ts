@@ -55,6 +55,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: "business_partners", label: "Business Partners", path: "/accounting/business-partners", dot: "#0891b2", roles: ALL_ROLES },
       { id: "items", label: "Items", path: "/inventory/items", dot: "#0d9488", roles: ALL_ROLES },
       { id: "recurring_expenses", label: "Recurring Expenses", path: "/settings/recurring-expenses", dot: "#e11d48", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "purchase.post" },
+      { id: "depreciation", label: "Depreciation", path: "/settings/depreciation", dot: "#9333ea", roles: ["OWNER", "ADMIN"], permission: "company.manage" },
       { id: "branches", label: "Branches", path: "/settings/branches", dot: "#0284c7", roles: ["OWNER", "ADMIN"], permission: "branches.manage" },
       { id: "team", label: "Team", path: "/settings/team", dot: "#a855f7", roles: ["OWNER", "ADMIN"] },
       { id: "access_control", label: "Access Control", path: "/settings/access-control", dot: "#dc2626", roles: ["OWNER", "ADMIN"] },
@@ -109,7 +110,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: "balance_sheet", label: "Balance Sheet", path: "/accounting/balance-sheet", dot: "#7c3aed", roles: ALL_ROLES },
       { id: "prepaid_schedules", label: "Prepaid Schedules", path: "/accounting/prepaid-schedules", dot: "#0d9488", roles: ALL_ROLES },
       { id: "amortization_due", label: "Amortization Due", path: "/accounting/amortization-due", dot: "#e11d48", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "journal.post" },
-      { id: "depreciation_policy", label: "Depreciation Policy", path: "/accounting/depreciation-policy", dot: "#9333ea", roles: ALL_ROLES },
     ],
   },
   {

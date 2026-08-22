@@ -1326,6 +1326,29 @@ export function changeDepreciationMethod(body: { toMethod: string; effectiveMont
   });
 }
 
+// Frequency and the capitalisation threshold. Neither is dated: a frequency
+// change applies from the next unposted period, and the threshold only
+// affects bills entered after it is set.
+export function updateDepreciationConfig(body: { frequency?: string; capitalisationThreshold?: number }) {
+  return request<{ data: unknown }>("/depreciation-policy", {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+// A class's lives, residual and the justification for departing from the
+// statute. Affects future assets only — every asset copies these at
+// capitalisation.
+export function updateDepreciationClass(id: string, body: {
+  usefulLifeMonths?: number; scheduleIiLifeMonths?: number;
+  lifePolicyNote?: string | null; residualPct?: number; isActive?: boolean;
+}) {
+  return request<{ data: { id: string } }>(`/depreciation-policy/classes/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
 // Only works while the change is still in the future — once a month has been
 // depreciated under it, it cannot be withdrawn.
 export function withdrawDepreciationMethodChange(id: string) {

@@ -610,8 +610,10 @@ export interface DocumentLineInput {
   // "YYYY-MM-DD" — when the asset was put to use, which is what Schedule II
   // depreciates from. Never earlier than the bill date.
   inUseDate?: string;
-  // Schedule II allows a justified departure from the class's default life.
-  usefulLifeMonths?: number;
+  // NOTE: no useful life here either. A company adopting a life shorter than
+  // Schedule II is making one policy decision, not one per purchase, so it
+  // lives on the asset class under Configuration > Depreciation — with its
+  // justification, which every asset copies at capitalisation.
   // NOTE: no method here. The depreciation method is a company policy, not a
   // per-purchase choice — see DepreciationPolicy below. The useful life is
   // the opposite: Schedule II is about the life of a particular asset.
@@ -644,13 +646,35 @@ export interface ItemAssetClassRef {
   name: string;
 }
 
+// One asset class as Configuration > Depreciation shows it. usefulLifeMonths
+// is what this company has adopted; scheduleIiLifeMonths is what the
+// Companies Act prescribes. When they differ, lifePolicyNote is the Part A
+// paragraph 3(i) justification and is required.
+export interface DepreciationClassConfig {
+  id: string;
+  name: string;
+  isActive: boolean;
+  scheduleIiLifeMonths: number;
+  usefulLifeMonths: number;
+  lifePolicyNote: string | null;
+  residualPct: number;
+  assetAccount: { accountCode: string; accountName: string };
+}
+
+export type DepreciationFrequency = "MONTHLY" | "QUARTERLY" | "HALF_YEARLY" | "ANNUAL";
+
 export interface DepreciationPolicy {
   currentMethod: string;
+  frequency: string;
+  // Below this a capitalised line is expensed instead. Zero means no
+  // threshold.
+  capitalisationThreshold: number;
   // "YYYY-MM", or null when nothing has ever been depreciated. A change can
   // never take effect on or before this month.
   lastPostedChargeMonth: string | null;
   earliestEffectiveMonth: string;
   changes: DepreciationMethodChange[];
+  classes: DepreciationClassConfig[];
 }
 
 // One row of GET /asset-classes — the defaults an asset is created from.
