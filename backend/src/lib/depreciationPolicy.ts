@@ -90,9 +90,22 @@ export function monthStart(value: unknown): Date | null {
 export async function methodInForce(
   organizationId: string,
   month: Date,
+  assetClassId?: string | null,
 ): Promise<DepreciationMethod> {
+  // A class that has been given its own method keeps it even when the
+  // company changes — that is what an override means. A class that never
+  // has follows the company automatically, with nothing to configure.
+  if (assetClassId) {
+    const forClass = await prisma.depreciationMethodChange.findFirst({
+      where: { organizationId, assetClassId, effectiveMonth: { lte: month } },
+      orderBy: { effectiveMonth: "desc" },
+      select: { toMethod: true },
+    });
+    if (forClass && isDepreciationMethod(forClass.toMethod)) return forClass.toMethod;
+  }
+
   const change = await prisma.depreciationMethodChange.findFirst({
-    where: { organizationId, effectiveMonth: { lte: month } },
+    where: { organizationId, assetClassId: null, effectiveMonth: { lte: month } },
     orderBy: { effectiveMonth: "desc" },
     select: { toMethod: true },
   });

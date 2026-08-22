@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../db";
 import { authenticate, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
-import { frequencyInForce, isDepreciationMethod } from "../lib/depreciationPolicy";
+import { frequencyInForce, isDepreciationMethod, methodInForce } from "../lib/depreciationPolicy";
 import { buildSchedule } from "../lib/depreciationSchedule";
 
 // The fixed asset register.
@@ -195,12 +195,20 @@ router.get("/:id/schedule", async (req, res) => {
   });
   if (!a) return res.status(404).json({ message: "Asset not found." });
 
-  const frequency = await frequencyInForce(organizationId);
+  const now = new Date();
+  const [frequency, method] = await Promise.all([
+    frequencyInForce(organizationId),
+    // The method in force NOW for this asset's class, not the one stamped on
+    // the asset at capitalisation. A method change — company-wide or for the
+    // class — applies prospectively to assets already capitalised, so the
+    // projection has to follow it or it would forecast the wrong curve.
+    methodInForce(organizationId, new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)), a.assetClassId),
+  ]);
   const projected = buildSchedule({
     grossCost: Number(a.grossCost),
     residualValue: Number(a.residualValue),
     usefulLifeMonths: a.usefulLifeMonths,
-    method: isDepreciationMethod(a.method) ? a.method : "SLM",
+    method: isDepreciationMethod(method) ? method : "SLM",
     inUseDate: isoDay(a.inUseDate)!,
     frequency,
   });
@@ -211,7 +219,7 @@ router.get("/:id/schedule", async (req, res) => {
     data: {
       assetCode: a.assetCode,
       name: a.name,
-      method: a.method,
+      method,
       frequency,
       usefulLifeMonths: a.usefulLifeMonths,
       grossCost: Number(a.grossCost),

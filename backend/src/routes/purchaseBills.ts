@@ -651,7 +651,9 @@ router.post("/", canPost, async (req, res) => {
       // necessarily the method in force today: a change may already be dated
       // forward. Rejecting a line the policy would refuse is the point of
       // looking it up here rather than at posting time.
-      const method = await methodInForce(organizationId, new Date(`${String(l.inUseDate).slice(0, 7)}-01T00:00:00.000Z`));
+      // Scoped to the class: a class may carry its own method, and then it
+      // keeps it even when the company changes.
+      const method = await methodInForce(organizationId, new Date(`${String(l.inUseDate).slice(0, 7)}-01T00:00:00.000Z`), cls.id);
       capitalMethod.set(i, method);
       // fixed_assets_wdv_residual_ck says the same thing. The reason it is
       // said twice is that the consequence of it being wrong — the entire

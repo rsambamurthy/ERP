@@ -631,6 +631,9 @@ export interface DocumentLineInput {
 // change in estimate is disclosable.
 export interface DepreciationMethodChange {
   id: string;
+  // null means the change applies company-wide; a class means it applies to
+  // that class alone, which then keeps its method when the company changes.
+  assetClass: { id: string; name: string } | null;
   fromMethod: string;
   toMethod: string;
   // "YYYY-MM" — the first month the new method applies to.
@@ -760,6 +763,10 @@ export interface DepreciationClassConfig {
   lifePolicyNote: string | null;
   residualPct: number;
   assetAccount: { accountCode: string; accountName: string };
+  // What this class depreciates on today — its own method where it has one,
+  // otherwise the company's.
+  method: string;
+  differsFromCompany: boolean;
 }
 
 export type DepreciationFrequency = "MONTHLY" | "QUARTERLY" | "HALF_YEARLY" | "ANNUAL";

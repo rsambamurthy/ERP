@@ -12,7 +12,8 @@ import {
 //
 //   1. the useful life per asset class — what Schedule II prescribes, and
 //      what this company has adopted, which may be shorter
-//   2. the method, SLM or WDV
+//   2. the method, SLM or WDV — company-wide, or per class where a company
+//      depreciates one class differently from the rest
 //   3. how often the charge is posted
 //   4. the residual percentage per class
 //   5. the rate formulas, shown so the arithmetic is never a mystery
@@ -69,6 +70,7 @@ router.get("/", async (req, res) => {
       select: {
         id: true, fromMethod: true, toMethod: true, effectiveMonth: true,
         reason: true, createdAt: true,
+        assetClass: { select: { id: true, name: true } },
       },
     }),
     lastPostedChargeMonth(organizationId),
@@ -83,6 +85,12 @@ router.get("/", async (req, res) => {
       },
     }),
   ]);
+
+  // Resolved per class, because a class may carry its own method. Done
+  // after the classes are known rather than in the Promise.all above.
+  const classMethods = await Promise.all(
+    classes.map((c) => methodInForce(organizationId, thisMonth, c.id)),
+  );
 
   res.json({
     data: {
@@ -100,8 +108,10 @@ router.get("/", async (req, res) => {
         effectiveMonth: monthLabel(c.effectiveMonth),
         reason: c.reason,
         recordedAt: c.createdAt,
+        // null means company-wide.
+        assetClass: c.assetClass,
       })),
-      classes: classes.map((c) => ({
+      classes: classes.map((c, idx) => ({
         id: c.id,
         name: c.name,
         isActive: c.isActive,
@@ -110,6 +120,12 @@ router.get("/", async (req, res) => {
         lifePolicyNote: c.lifePolicyNote,
         residualPct: Number(c.defaultResidualPct),
         assetAccount: c.assetAccount,
+        // What this class actually depreciates on today. differsFromCompany
+        // is exactly that and no more — a class may carry an explicit
+        // override that happens to match the company, and calling that "its
+        // own" would be a claim this figure cannot support.
+        method: classMethods[idx],
+        differsFromCompany: classMethods[idx] !== current,
       })),
     },
   });
@@ -238,7 +254,7 @@ router.post("/change", canManageCompany, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
 
-  const { toMethod, effectiveMonth, reason } = req.body ?? {};
+  const { toMethod, effectiveMonth, reason, assetClassId } = req.body ?? {};
 
   if (!isDepreciationMethod(toMethod)) {
     return res.status(400).json({ message: "toMethod must be SLM or WDV." });
@@ -257,6 +273,18 @@ router.post("/change", canManageCompany, async (req, res) => {
     return res.status(400).json({ message: "The reason can be at most 500 characters." });
   }
 
+  // Scope. Absent means company-wide; a class id scopes the change to that
+  // class alone, which then keeps its method even when the company changes.
+  let scope: { id: string; name: string } | null = null;
+  if (assetClassId) {
+    const cls = await prisma.assetClass.findFirst({
+      where: { id: String(assetClassId), organizationId },
+      select: { id: true, name: true },
+    });
+    if (!cls) return res.status(400).json({ message: "That asset class doesn't belong to this organization." });
+    scope = cls;
+  }
+
   const lastPosted = await lastPostedChargeMonth(organizationId);
   if (lastPosted && effective <= lastPosted) {
     return res.status(400).json({
@@ -264,9 +292,13 @@ router.post("/change", canManageCompany, async (req, res) => {
     });
   }
 
-  const fromMethod = await methodInForce(organizationId, effective);
+  const fromMethod = await methodInForce(organizationId, effective, scope?.id ?? null);
   if (fromMethod === toMethod) {
-    return res.status(400).json({ message: `The method in force from ${monthLabel(effective)} is already ${toMethod}.` });
+    return res.status(400).json({
+      message: scope
+        ? `${scope.name} already depreciates on ${toMethod} from ${monthLabel(effective)}.`
+        : `The method in force from ${monthLabel(effective)} is already ${toMethod}.`,
+    });
   }
 
   // Switching to WDV needs every live asset to carry a residual: the rate is
@@ -276,7 +308,11 @@ router.post("/change", canManageCompany, async (req, res) => {
   // as a charge nobody questioned.
   if (toMethod === "WDV") {
     const zeroResidual = await prisma.fixedAsset.findMany({
-      where: { organizationId, status: "ACTIVE", deletedAt: null, residualValue: 0 },
+      where: {
+        organizationId, status: "ACTIVE", deletedAt: null, residualValue: 0,
+        // Only the assets the change actually reaches.
+        ...(scope ? { assetClassId: scope.id } : {}),
+      },
       select: { assetCode: true, name: true },
       take: 6,
     });
@@ -290,7 +326,8 @@ router.post("/change", canManageCompany, async (req, res) => {
 
   const change = await prisma.depreciationMethodChange.create({
     data: {
-      organizationId, fromMethod, toMethod,
+      organizationId, assetClassId: scope?.id ?? null,
+      fromMethod, toMethod,
       effectiveMonth: effective, reason: note,
       changedBy: req.user!.userId,
     },
@@ -299,12 +336,13 @@ router.post("/change", canManageCompany, async (req, res) => {
   logAudit({
     organizationId, actorUserId: req.user!.userId,
     action: "UPDATE", entityType: "depreciation_policy", entityId: change.id,
-    summary: `Depreciation method ${fromMethod} to ${toMethod} from ${monthLabel(effective)} — ${note}`,
+    summary: `${scope ? `${scope.name}: ` : "Company-wide: "}depreciation method ${fromMethod} to ${toMethod} from ${monthLabel(effective)} — ${note}`,
   });
 
   res.status(201).json({
     data: {
       id: change.id,
+      assetClass: scope,
       fromMethod, toMethod,
       effectiveMonth: monthLabel(effective),
       reason: note,

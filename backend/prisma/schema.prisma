@@ -1849,6 +1849,7 @@ model AssetClass {
   depExpenseAccount Account    @relation("AssetClassExpense", fields: [depExpenseAccountId], references: [id])
   assets          FixedAsset[]
   items           Item[]
+  methodChanges   DepreciationMethodChange[]
 
   @@unique([organizationId, name])
   @@map("asset_classes")
@@ -1937,6 +1938,11 @@ model FixedAsset {
 model DepreciationMethodChange {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId String   @map("organization_id") @db.Uuid
+  // NULL means the change applies company-wide; an id scopes it to that one
+  // asset class. Most companies use a single method, but a company may
+  // reasonably depreciate plant on WDV and buildings on SLM provided the
+  // policy note says which — see migration_039.
+  assetClassId   String?  @map("asset_class_id") @db.Uuid
   fromMethod     String   @map("from_method") @db.VarChar(3)
   toMethod       String   @map("to_method") @db.VarChar(3)
   // First of the month the new method starts applying from.
@@ -1946,8 +1952,13 @@ model DepreciationMethodChange {
   createdAt      DateTime @default(now()) @map("created_at")
 
   organization Organization @relation(fields: [organizationId], references: [id])
+  assetClass   AssetClass?  @relation(fields: [assetClassId], references: [id])
 
-  @@unique([organizationId, effectiveMonth])
+  // Uniqueness is two PARTIAL indexes in migration_039 — one company-wide
+  // change per month, one per class per month — which Prisma cannot express:
+  // a plain unique over (org, class, month) would admit two company-wide
+  // changes in a month, because Postgres treats NULLs as distinct.
+  @@index([organizationId, assetClassId, effectiveMonth])
   @@map("depreciation_method_changes")
 }
 

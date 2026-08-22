@@ -12,8 +12,10 @@ import type { DepreciationClassConfig, DepreciationPolicy } from "@/lib/types";
 //
 // The division of labour is the thing to hold on to. Schedule II prescribes
 // useful LIVES, per class of asset — so the life sits on the class. It says
-// nothing about METHOD, which is therefore the company's own policy, one for
-// the whole entity. Frequency and the capitalisation threshold are pure
+// nothing about METHOD, which is therefore the company's own choice: usually
+// one method for the whole entity, but a company may set a class's method
+// separately — plant on WDV, buildings on SLM — provided the policy note
+// discloses which. Frequency and the capitalisation threshold are pure
 // policy with no statutory dimension at all.
 //
 // Nothing here is retrospective. Every asset copies its life, residual,
@@ -55,6 +57,10 @@ export default function DepreciationConfigPage() {
 
   const [showMethodForm, setShowMethodForm] = useState(false);
   const [toMethod, setToMethod] = useState("WDV");
+  // "" is company-wide. Most companies use one method throughout, but a
+  // company may depreciate plant on WDV and buildings on SLM provided the
+  // policy note discloses which.
+  const [methodScope, setMethodScope] = useState("");
   const [effectiveMonth, setEffectiveMonth] = useState("");
   const [reason, setReason] = useState("");
 
@@ -208,6 +214,20 @@ export default function DepreciationConfigPage() {
                 </p>
                 <div className="ent-form-grid">
                   <div className="ent-fg">
+                    <span className="ent-fl">Applies to</span>
+                    <select className="ent-fc" value={methodScope} onChange={(e) => setMethodScope(e.target.value)}>
+                      <option value="">The whole company</option>
+                      {policy.classes.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name} only</option>
+                      ))}
+                    </select>
+                    <span style={muted}>
+                      {methodScope
+                        ? "This class keeps its own method afterwards, even when the company's changes."
+                        : "Every class that has not been given a method of its own."}
+                    </span>
+                  </div>
+                  <div className="ent-fg">
                     <span className="ent-fl">Change to</span>
                     <select className="ent-fc" value={toMethod} onChange={(e) => setToMethod(e.target.value)}>
                       <option value="SLM">Straight line</option>
@@ -239,8 +259,11 @@ export default function DepreciationConfigPage() {
                   <button
                     type="button" className="ent-btn-add" disabled={saving || !reason.trim()}
                     onClick={async () => {
-                      const ok = await run(() => changeDepreciationMethod({ toMethod, effectiveMonth, reason }));
-                      if (ok) { setShowMethodForm(false); setReason(""); }
+                      const ok = await run(() => changeDepreciationMethod({
+                        toMethod, effectiveMonth, reason,
+                        assetClassId: methodScope || undefined,
+                      }));
+                      if (ok) { setShowMethodForm(false); setReason(""); setMethodScope(""); }
                     }}
                   >
                     {saving ? "Recording…" : "Record the change"}
@@ -274,6 +297,7 @@ export default function DepreciationConfigPage() {
                     <th style={{ textAlign: "right", width: 110 }}>Schedule II</th>
                     <th style={{ textAlign: "right", width: 110 }}>Adopted</th>
                     <th style={{ textAlign: "right", width: 90 }}>Residual</th>
+                    <th style={{ width: 130 }}>Method</th>
                     <th>Justification</th>
                     <th style={{ width: 70 }} />
                   </tr>
@@ -296,6 +320,12 @@ export default function DepreciationConfigPage() {
                         {c.usefulLifeMonths} mo
                       </td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{c.residualPct}%</td>
+                      <td style={{ fontSize: 12 }}>
+                        {METHOD_LABEL[c.method] ?? c.method}
+                        {c.differsFromCompany && (
+                          <div style={{ color: "#6d28d9", fontSize: 11.5 }}>its own, not the company&rsquo;s</div>
+                        )}
+                      </td>
                       <td style={{ fontSize: 12, color: "var(--color-muted)" }}>{c.lifePolicyNote ?? "—"}</td>
                       <td style={{ textAlign: "right" }}>
                         <button type="button" className="ent-ia ent-ia-edit" onClick={() => openClass(c)}>Edit</button>
@@ -407,6 +437,7 @@ export default function DepreciationConfigPage() {
               <thead>
                 <tr>
                   <th style={{ width: 170 }}>Effective from</th>
+                  <th style={{ width: 180 }}>Applies to</th>
                   <th style={{ width: 220 }}>Change</th>
                   <th>Reason</th>
                   <th style={{ width: 110 }} />
@@ -414,7 +445,7 @@ export default function DepreciationConfigPage() {
               </thead>
               <tbody>
                 {policy.changes.length === 0 && (
-                  <tr><td colSpan={4} className="ent-empty">
+                  <tr><td colSpan={5} className="ent-empty">
                     The method has never changed. Everything has depreciated on{" "}
                     {(METHOD_LABEL[policy.currentMethod] ?? policy.currentMethod).toLowerCase()} since the beginning.
                   </td></tr>
@@ -426,6 +457,9 @@ export default function DepreciationConfigPage() {
                       <td style={{ fontWeight: 500 }}>
                         {monthLabel(c.effectiveMonth)}
                         {pending && <div><span className="badge badge-yellow">Not yet in effect</span></div>}
+                      </td>
+                      <td style={{ fontSize: 12.5 }}>
+                        {c.assetClass ? c.assetClass.name : <span style={{ color: "var(--color-muted)" }}>The whole company</span>}
                       </td>
                       <td style={{ color: "var(--color-muted)" }}>
                         {METHOD_LABEL[c.fromMethod] ?? c.fromMethod} → {METHOD_LABEL[c.toMethod] ?? c.toMethod}

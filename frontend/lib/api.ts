@@ -1342,7 +1342,12 @@ export function getDepreciationPolicy() {
 
 // effectiveMonth is "YYYY-MM". The reason is required: it is what the
 // disclosure of the change in estimate gets written from.
-export function changeDepreciationMethod(body: { toMethod: string; effectiveMonth: string; reason: string }) {
+export function changeDepreciationMethod(body: {
+  toMethod: string; effectiveMonth: string; reason: string;
+  // Omit for a company-wide change; pass a class id to scope it to that
+  // class, which then keeps its method when the company changes.
+  assetClassId?: string;
+}) {
   return request<{ data: { id: string } }>("/depreciation-policy/change", {
     method: "POST",
     body: JSON.stringify(body),
