@@ -5,10 +5,10 @@ import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
 import AccountPicker from "@/components/shared/AccountPicker";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
-import { ApiError, createItem, getItems, getStockAccounts, getExpenseAccounts, toggleItem } from "@/lib/api";
+import { ApiError, createItem, getAssetClasses, getItems, getStockAccounts, getExpenseAccounts, toggleItem } from "@/lib/api";
 import { canManageItems } from "@/lib/auth";
 import { useBulkUpload } from "@/components/shared/BulkUpload";
-import type { Account, Item, ItemUploadRow } from "@/lib/types";
+import type { Account, AssetClassSummary, Item, ItemUploadRow } from "@/lib/types";
 
 const ITEM_UPLOAD_COLUMNS: { key: keyof ItemUploadRow; label: string }[] = [
   { key: "sku", label: "SKU" },
@@ -24,7 +24,12 @@ const emptyForm = () => ({
   // which kind of account stockAccountId points at, and changing it later
   // would re-point whatever the item has already posted.
   itemKind: "STOCK" as "STOCK" | "SERVICE",
-  stockAccountId: "", salesRate: "", purchaseRate: "", taxRate: "0", defaultDiscountPct: "0",
+  stockAccountId: "",
+  // Set this and the item is capital by nature: every Purchase Bill line for
+  // it arrives capitalised against this class rather than debiting the
+  // expense account above. Service items only.
+  defaultAssetClassId: "",
+  salesRate: "", purchaseRate: "", taxRate: "0", defaultDiscountPct: "0",
   openingQuantity: "", openingCost: "",
 });
 
@@ -32,6 +37,7 @@ function ItemsPageInner() {
   const [items, setItems] = useState<Item[]>([]);
   const [stockAccounts, setStockAccounts] = useState<Account[]>([]);
   const [expenseAccounts, setExpenseAccounts] = useState<Account[]>([]);
+  const [assetClasses, setAssetClasses] = useState<AssetClassSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -42,12 +48,13 @@ function ItemsPageInner() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [itemsRes, accountsRes, expenseRes] = await Promise.all([
-        getItems(), getStockAccounts(), getExpenseAccounts(),
+      const [itemsRes, accountsRes, expenseRes, classRes] = await Promise.all([
+        getItems(), getStockAccounts(), getExpenseAccounts(), getAssetClasses(),
       ]);
       setItems(itemsRes.data);
       setStockAccounts(accountsRes.data);
       setExpenseAccounts(expenseRes.data);
+      setAssetClasses(classRes.data);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load items.");
     } finally {
@@ -91,6 +98,7 @@ function ItemsPageInner() {
         sku: form.sku, name: form.name, description: form.description || undefined,
         uom: form.uom, hsnCode: form.hsnCode || undefined, isFinishedGood: form.isFinishedGood,
         stockAccountId: form.stockAccountId,
+        defaultAssetClassId: form.defaultAssetClassId || undefined,
         salesRate: form.salesRate ? Number(form.salesRate) : undefined,
         purchaseRate: form.purchaseRate ? Number(form.purchaseRate) : undefined,
         taxRate: form.taxRate ? Number(form.taxRate) : undefined,
@@ -191,6 +199,26 @@ function ItemsPageInner() {
                 required
               />
             </div>
+            {form.itemKind === "SERVICE" && (
+              <div className="ent-fg">
+                <label className="ent-fl">Capital asset class (optional)</label>
+                <select
+                  className="ent-fc"
+                  value={form.defaultAssetClassId}
+                  onChange={(e) => setForm((f) => ({ ...f, defaultAssetClassId: e.target.value }))}
+                >
+                  <option value="">Not a capital asset</option>
+                  {assetClasses.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                <span style={{ fontSize: 11.5, color: "var(--color-muted)", marginTop: 3, lineHeight: 1.45 }}>
+                  {form.defaultAssetClassId
+                    ? "Every Purchase Bill line for this item will arrive capitalised against this class and open a fixed asset — the expense account above is then only used if someone deliberately unticks it."
+                    : "Set this for something that is always a fixed asset — a conference table, a laptop — so its cost cannot land in the P&L because a box went unticked."}
+                </span>
+              </div>
+            )}
             <div className="ent-fg">
               <label className="ent-fl">Tax Rate %</label>
               <input type="number" min={0} step="0.01" className="ent-fc" value={form.taxRate} onChange={(e) => setForm((f) => ({ ...f, taxRate: e.target.value }))} />

@@ -588,6 +588,13 @@ function PurchaseBillsInner() {
 
   function pickItem(i: number, itemId: string) {
     const item = itemById.get(itemId);
+    // An item mapped to an asset class in the Item master is capital by
+    // nature, so the line arrives ticked and classified. Still unticked by
+    // hand if this particular purchase is genuinely an expense — the point
+    // is that it cannot be missed by forgetting.
+    const capital = canCapitalise && item?.itemKind === "SERVICE" && item?.defaultAssetClass
+      ? { capitalise: true, assetClassId: item.defaultAssetClass.id, inUseDate: billDate }
+      : { capitalise: false, assetClassId: undefined, assetName: undefined, inUseDate: undefined, usefulLifeMonths: undefined, usefulLifeNote: undefined };
     updateLine(i, {
       itemId,
       // Item master rates are always INR — only useful as a default when
@@ -596,6 +603,7 @@ function PurchaseBillsInner() {
       rateFc: 0,
       taxRate: item?.taxRate ? Number(item.taxRate) : 0,
       customsDutyRate: 0,
+      ...capital,
     });
   }
 

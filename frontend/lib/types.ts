@@ -545,6 +545,11 @@ export interface Item {
   // For STOCK this is the stock control account; for SERVICE it's the
   // expense account the bill line debits. Same column either way.
   stockAccount: { id: string; accountCode: string; accountName: string };
+  // Set means this item is capital by nature — a conference table, a laptop.
+  // Its Purchase Bill line arrives capitalised against this class instead of
+  // debiting stockAccount, so an asset's cost cannot land in the P&L just
+  // because someone forgot to tick a box. SERVICE items only.
+  defaultAssetClass: ItemAssetClassRef | null;
   salesRate: string | null;
   purchaseRate: string | null;
   taxRate: string;
@@ -630,6 +635,13 @@ export interface DepreciationMethodChange {
   effectiveMonth: string;
   reason: string;
   recordedAt: string;
+}
+
+// Set on an Item that is capital by nature. Its Purchase Bill line arrives
+// capitalised against this class — see migration_037.
+export interface ItemAssetClassRef {
+  id: string;
+  name: string;
 }
 
 export interface DepreciationPolicy {

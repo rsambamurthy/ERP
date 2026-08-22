@@ -593,6 +593,9 @@ export function getItems() {
 export function createItem(body: {
   sku: string; name: string; description?: string; uom?: string; hsnCode?: string;
   isFinishedGood?: boolean; itemKind?: "STOCK" | "SERVICE"; stockAccountId: string; salesRate?: number; purchaseRate?: number; taxRate?: number;
+  // Set on an item that is capital by nature — its Purchase Bill line then
+  // arrives capitalised against this class. SERVICE items only.
+  defaultAssetClassId?: string;
   defaultDiscountPct?: number;
   openingQuantity?: number; openingCost?: number; openingBranchId?: string; openingDate?: string;
 }) {

@@ -528,6 +528,15 @@ model Item {
   // debits. Deliberately not renamed: it would touch every existing row and
   // query for no functional gain.
   stockAccountId String    @map("stock_account_id") @db.Uuid
+  // An item that is capital by nature — a conference table, a laptop — says
+  // so here, once, instead of on every Purchase Bill line. A line for such
+  // an item arrives capitalised against this class and can still be unticked
+  // deliberately; what it can no longer be is unticked by omission, which is
+  // the failure that puts an asset's cost in the P&L with no register entry.
+  //
+  // Only a SERVICE item may carry one: a STOCK item's purchase already moves
+  // inventory. migration_037's CHECK enforces that from the database.
+  defaultAssetClassId String? @map("default_asset_class_id") @db.Uuid
   // The paired sub-ledger row (business_partners.bp_type = 'ITEM') that
   // tags every journal line against stockAccountId for this item — same
   // pattern Trade Receivables/Payables already use for customers/vendors.
@@ -554,6 +563,7 @@ model Item {
 
   organization        Organization    @relation(fields: [organizationId], references: [id])
   stockAccount         Account         @relation(fields: [stockAccountId], references: [id])
+  defaultAssetClass AssetClass? @relation(fields: [defaultAssetClassId], references: [id])
   businessPartner       BusinessPartner @relation(fields: [businessPartnerId], references: [id])
   itemStocks           ItemStock[]
   bomLinesAsFinished   BomLine[]       @relation("FinishedItem")
@@ -1820,6 +1830,7 @@ model AssetClass {
   accumDepAccount Account      @relation("AssetClassAccumDep", fields: [accumDepAccountId], references: [id])
   depExpenseAccount Account    @relation("AssetClassExpense", fields: [depExpenseAccountId], references: [id])
   assets          FixedAsset[]
+  items           Item[]
 
   @@unique([organizationId, name])
   @@map("asset_classes")

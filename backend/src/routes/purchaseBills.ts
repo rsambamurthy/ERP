@@ -519,6 +519,21 @@ router.post("/", canPost, async (req, res) => {
   // Same shape as the prepaid block above and validated for the same
   // reason: everything that can be rejected is rejected before a single
   // row is written, so a bill can never post with a broken asset beside it.
+  // An item that carries a default asset class is capital by nature — a
+  // conference table, a laptop — so a line for it arrives capitalised
+  // against that class without anyone having to remember. See
+  // migration_037: the point is not that it cannot be overridden, but that
+  // it cannot be missed by omission, which is the failure that puts an
+  // asset's cost in the P&L with no register entry behind it.
+  //
+  // An explicit `capitalise: false` still wins. Absent is what defaults.
+  for (const l of computed as ({ itemId: string; capitalise?: boolean; assetClassId?: string })[]) {
+    const fromItem = itemById.get(l.itemId)?.defaultAssetClassId;
+    if (!fromItem) continue;
+    if (l.capitalise === undefined) l.capitalise = true;
+    if (l.capitalise && !l.assetClassId) l.assetClassId = fromItem;
+  }
+
   const capitalIdx: number[] = [];
   computed.forEach((l, i) => {
     if ((l as { capitalise?: boolean }).capitalise) capitalIdx.push(i);

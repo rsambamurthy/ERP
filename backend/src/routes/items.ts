@@ -63,7 +63,11 @@ router.get("/", async (req, res) => {
   if (!organizationId) return;
   const items = await prisma.item.findMany({
     where: { organizationId, deletedAt: null },
-    include: { stockAccount: { select: { id: true, accountCode: true, accountName: true } }, itemStocks: true },
+    include: {
+      stockAccount: { select: { id: true, accountCode: true, accountName: true } },
+      defaultAssetClass: { select: { id: true, name: true } },
+      itemStocks: true,
+    },
     orderBy: { name: "asc" },
   });
   res.json({
@@ -72,6 +76,9 @@ router.get("/", async (req, res) => {
       itemKind: i.itemKind,
       isFinishedGood: i.isFinishedGood, isActive: i.isActive,
       stockAccount: i.stockAccount,
+      // Present means this item always becomes a fixed asset — the Purchase
+      // Bill line arrives capitalised against this class.
+      defaultAssetClass: i.defaultAssetClass,
       salesRate: i.salesRate, purchaseRate: i.purchaseRate, taxRate: i.taxRate,
       defaultDiscountPct: i.defaultDiscountPct,
       totalQuantityOnHand: i.itemStocks.reduce((s, st) => s + Number(st.quantityOnHand), 0),
@@ -167,6 +174,31 @@ router.patch("/:id/toggle", canManageItems, async (req, res) => {
 // POST /items — create an item, its paired ITEM business partner, and (if
 // an opening balance was given) the opening stock movement. All three or
 // none — one transaction.
+// Returns the class id to store (or null), or `false` when it has already
+// answered the request with a 400. Shared by POST and PATCH so the two can
+// never disagree about what a capital item is.
+async function resolveAssetClass(
+  organizationId: string,
+  kind: string,
+  value: unknown,
+  res: import("express").Response,
+): Promise<string | null | false> {
+  if (value === undefined || value === null || value === "") return null;
+  if (kind !== "SERVICE") {
+    res.status(400).json({ message: "Only a non-stock item can be a capital asset — a stock item's purchase already moves inventory." });
+    return false;
+  }
+  const cls = await prisma.assetClass.findFirst({
+    where: { id: String(value), organizationId, isActive: true },
+    select: { id: true },
+  });
+  if (!cls) {
+    res.status(400).json({ message: "That asset class doesn't belong to this organization, or is no longer active." });
+    return false;
+  }
+  return cls.id;
+}
+
 router.post("/", canManageItems, async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
@@ -175,6 +207,7 @@ router.post("/", canManageItems, async (req, res) => {
     sku, name, description, uom, hsnCode, isFinishedGood, itemKind,
     stockAccountId, salesRate, purchaseRate, taxRate, defaultDiscountPct,
     openingQuantity, openingCost, openingBranchId, openingDate,
+    defaultAssetClassId,
   } = req.body ?? {};
 
   const kind = itemKind === "SERVICE" ? "SERVICE" : "STOCK";
@@ -205,6 +238,14 @@ router.post("/", canManageItems, async (req, res) => {
         : "stockAccountId must be one of this org's item control accounts.",
     });
   }
+
+  // A capital item — one that always becomes a fixed asset rather than an
+  // expense. Only a SERVICE item can be one, because a STOCK item's purchase
+  // already moves inventory and capitalising it would record the same
+  // purchase twice. items_asset_class_kind_ck says the same thing at the
+  // database; this is where it becomes a sentence rather than a 23514.
+  const assetClassId = await resolveAssetClass(organizationId, kind, defaultAssetClassId, res);
+  if (assetClassId === false) return;
 
   const existing = await prisma.item.findUnique({ where: { organizationId_sku: { organizationId, sku } } });
   if (existing) return res.status(409).json({ message: `Item code ${sku} already exists.` });
@@ -241,6 +282,7 @@ router.post("/", canManageItems, async (req, res) => {
         isFinishedGood: kind === "SERVICE" ? false : !!isFinishedGood,
         itemKind: kind,
         stockAccountId,
+        defaultAssetClassId: assetClassId,
         businessPartnerId: bp.id,
         salesRate: salesRate ?? null,
         purchaseRate: purchaseRate ?? null,
@@ -282,10 +324,22 @@ router.patch("/:id", canManageItems, async (req, res) => {
   const item = await prisma.item.findFirst({ where: { id: req.params.id, organizationId } });
   if (!item) return res.status(404).json({ message: "Item not found." });
 
-  const { name, description, uom, hsnCode, isFinishedGood, salesRate, purchaseRate, taxRate, defaultDiscountPct, isActive } = req.body ?? {};
+  const { name, description, uom, hsnCode, isFinishedGood, salesRate, purchaseRate, taxRate, defaultDiscountPct, isActive, defaultAssetClassId } = req.body ?? {};
+
+  // Unlike stockAccountId this one is editable after creation: it changes
+  // what FUTURE bills do and never touches an asset already capitalised,
+  // because every asset copies its accounts and life at capitalisation.
+  // Sending null clears it, which is how an item stops being capital.
+  let assetClassPatch: { defaultAssetClassId?: string | null } = {};
+  if (defaultAssetClassId !== undefined) {
+    const resolved = await resolveAssetClass(organizationId, item.itemKind, defaultAssetClassId, res);
+    if (resolved === false) return;
+    assetClassPatch = { defaultAssetClassId: resolved };
+  }
+
   const updated = await prisma.item.update({
     where: { id: item.id },
-    data: { name, description, uom, hsnCode, isFinishedGood, salesRate, purchaseRate, taxRate, defaultDiscountPct, isActive },
+    data: { name, description, uom, hsnCode, isFinishedGood, salesRate, purchaseRate, taxRate, defaultDiscountPct, isActive, ...assetClassPatch },
   });
 
   if (name && name !== item.name) {
