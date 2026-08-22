@@ -81,6 +81,11 @@ model Organization {
   // this at the route level) and never editable after, because every
   // ItemStock/StockLot row that follows is computed under this rule.
   costingMethod       String?   @map("costing_method") @db.VarChar(20)
+  // The company's depreciation policy. Schedule II prescribes useful lives,
+  // not methods, so the method is the company's own choice, declared once and
+  // disclosed. Changing it is a change in accounting estimate and applies
+  // prospectively — see lib/depreciationPolicy.ts and migration_036.
+  depreciationMethod String @default("SLM") @map("depreciation_method") @db.VarChar(3)
   domainLockedAt      DateTime? @map("domain_locked_at")
   // Company Master data — for statutory filings (AOC-4 etc.), not used by
   // any transactional posting anywhere. All nullable and unvalidated in
@@ -133,6 +138,7 @@ model Organization {
   prepaidSchedules PrepaidSchedule[]
   assetClasses     AssetClass[]
   fixedAssets      FixedAsset[]
+  depreciationMethodChanges DepreciationMethodChange[]
   stockAdjustments StockAdjustment[]
   salesReturns     SalesReturn[]
   purchaseReturns  PurchaseReturn[]
@@ -1888,6 +1894,32 @@ model FixedAsset {
 
   @@unique([organizationId, assetCode])
   @@map("fixed_assets")
+}
+
+// Every time the company changed its depreciation method, and why.
+//
+// Not an audit convenience — this is what the engine reads. The method in
+// force for a month is the toMethod of the latest change effective on or
+// before it, falling back to Organization.depreciationMethod. Reading it per
+// month rather than stamping it onto each asset is what lets a change be
+// dated forward without altering the months in between.
+//
+// reason is required: a change in accounting estimate has to be disclosed.
+model DepreciationMethodChange {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  fromMethod     String   @map("from_method") @db.VarChar(3)
+  toMethod       String   @map("to_method") @db.VarChar(3)
+  // First of the month the new method starts applying from.
+  effectiveMonth DateTime @map("effective_month") @db.Date
+  reason         String   @db.VarChar(500)
+  changedBy      String?  @map("changed_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, effectiveMonth])
+  @@map("depreciation_method_changes")
 }
 
 model FixedAssetDepreciationRun {

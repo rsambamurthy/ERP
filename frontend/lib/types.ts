@@ -607,12 +607,38 @@ export interface DocumentLineInput {
   inUseDate?: string;
   // Schedule II allows a justified departure from the class's default life.
   usefulLifeMonths?: number;
-  // "SLM" or "WDV". Schedule II prescribes lives, not methods. Omitted means
-  // the class's default. WDV needs a residual above zero.
-  method?: string;
+  // NOTE: no method here. The depreciation method is a company policy, not a
+  // per-purchase choice — see DepreciationPolicy below. The useful life is
+  // the opposite: Schedule II is about the life of a particular asset.
+  //
   // Part A paragraph 3(i): a life differing from the PRESCRIBED one — longer
   // or shorter — must be disclosed and justified with technical advice.
   usefulLifeNote?: string;
+}
+
+// The company's depreciation method and every time it changed.
+//
+// Changing it is permitted and prospective: under AS 10 (revised) and
+// Ind AS 16 a change of method is a change in accounting ESTIMATE, so posted
+// charges stand and are never restated. The reason is not optional — a
+// change in estimate is disclosable.
+export interface DepreciationMethodChange {
+  id: string;
+  fromMethod: string;
+  toMethod: string;
+  // "YYYY-MM" — the first month the new method applies to.
+  effectiveMonth: string;
+  reason: string;
+  recordedAt: string;
+}
+
+export interface DepreciationPolicy {
+  currentMethod: string;
+  // "YYYY-MM", or null when nothing has ever been depreciated. A change can
+  // never take effect on or before this month.
+  lastPostedChargeMonth: string | null;
+  earliestEffectiveMonth: string;
+  changes: DepreciationMethodChange[];
 }
 
 // One row of GET /asset-classes — the defaults an asset is created from.

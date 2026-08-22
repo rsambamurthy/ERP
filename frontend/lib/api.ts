@@ -34,6 +34,7 @@ import type {
   RecurringDueRow,
   RecurringGenerateResult,
   AssetClassSummary,
+  DepreciationPolicy,
   PrepaidScheduleSummary,
   PrepaidScheduleDetail,
   PrepaidDueRow,
@@ -1305,6 +1306,27 @@ export function generateRecurringExpenses(body: {
   return request<{ data: RecurringGenerateResult }>("/recurring-expenses/generate", {
     method: "POST", body: JSON.stringify(body),
   });
+}
+
+// ── Depreciation policy ──────────────────────────────────────────────────
+
+export function getDepreciationPolicy() {
+  return request<{ data: DepreciationPolicy }>("/depreciation-policy");
+}
+
+// effectiveMonth is "YYYY-MM". The reason is required: it is what the
+// disclosure of the change in estimate gets written from.
+export function changeDepreciationMethod(body: { toMethod: string; effectiveMonth: string; reason: string }) {
+  return request<{ data: { id: string } }>("/depreciation-policy/change", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+// Only works while the change is still in the future — once a month has been
+// depreciated under it, it cannot be withdrawn.
+export function withdrawDepreciationMethodChange(id: string) {
+  return request<{ data: { id: string } }>(`/depreciation-policy/change/${id}`, { method: "DELETE" });
 }
 
 // ── Asset classes ────────────────────────────────────────────────────────

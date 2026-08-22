@@ -8,6 +8,7 @@ import {
   TRADE_PAYABLES_CODE, CGST_INPUT_CODE, SGST_INPUT_CODE, IGST_INPUT_CODE, CUSTOMS_DUTY_PAYABLE_CODE,
 } from "../lib/billPosting";
 import { isInterState, round2, splitGst } from "../lib/discountGst";
+import { methodInForce } from "../lib/depreciationPolicy";
 import { isSupportedCurrency } from "../lib/currencies";
 import { upload } from "../lib/upload";
 import { extractInvoiceData } from "../lib/invoiceExtraction";
@@ -103,11 +104,12 @@ interface LineInput {
   // "YYYY-MM-DD". When the asset was put to use, which is what Schedule II
   // charges from — not the purchase date. Cannot precede the bill date.
   inUseDate?: string;
-  // Schedule II prescribes lives, not methods: Part A never names one and
-  // Part C's Notes ask only that the method used be disclosed. Omitted means
-  // the class's default. WDV requires a residual value — its rate is
-  // 1 - (residual/cost)^(1/n), which at zero residual is 1.
-  method?: string;
+  // NOTE: there is deliberately no `method` here. The depreciation method is
+  // a company policy (Organization.depreciationMethod and its change
+  // history), not a per-purchase choice — see lib/depreciationPolicy.ts. The
+  // useful life below is the opposite: Schedule II is about the life of a
+  // particular asset, so that one does belong on the line.
+  //
   // Schedule II permits a different life where a company can justify one.
   // Omitted means the class's default.
   usefulLifeMonths?: number;
@@ -536,6 +538,9 @@ router.post("/", canPost, async (req, res) => {
   // type and go back onto the asset without a cast.
   type AssetClassRow = Awaited<ReturnType<typeof prisma.assetClass.findMany>>[number];
   const assetClassById = new Map<string, AssetClassRow>();
+  // Resolved once during validation and reused at creation, so the asset is
+  // stamped with exactly the method the line was checked against.
+  const capitalMethod = new Map<number, string>();
 
   if (capitalIdx.length > 0) {
     if (!billDay) {
@@ -565,7 +570,7 @@ router.post("/", canPost, async (req, res) => {
         itemId: string; quantity: number; lineSubtotal: number;
         capitalise?: boolean; prepaid?: boolean; assetClassId?: string;
         assetName?: string; inUseDate?: string; usefulLifeMonths?: number;
-        method?: string; usefulLifeNote?: string; capitaliseGst?: boolean;
+        usefulLifeNote?: string; capitaliseGst?: boolean; method?: string;
       };
       const item = itemById.get(l.itemId)!;
 
@@ -617,16 +622,19 @@ router.post("/", canPost, async (req, res) => {
         }
       }
 
-      const method = String(l.method ?? cls.defaultMethod).toUpperCase();
-      if (method !== "SLM" && method !== "WDV") {
-        return res.status(400).json({ message: `${item.sku}: depreciation method must be SLM or WDV.` });
-      }
+      // The method is the company's, not this line's — and it is the method
+      // in force in the month the asset is put to use, which is not
+      // necessarily the method in force today: a change may already be dated
+      // forward. Rejecting a line the policy would refuse is the point of
+      // looking it up here rather than at posting time.
+      const method = await methodInForce(organizationId, new Date(`${String(l.inUseDate).slice(0, 7)}-01T00:00:00.000Z`));
+      capitalMethod.set(i, method);
       // fixed_assets_wdv_residual_ck says the same thing. The reason it is
       // said twice is that the consequence of it being wrong — the entire
       // cost written off in the first period — is not something to discover
       // from a constraint violation.
       if (method === "WDV" && !(Number(cls.defaultResidualPct) > 0)) {
-        return res.status(400).json({ message: `${cls.name}: written-down value needs a residual percentage above zero — its rate is derived from the residual, and at zero the whole cost would be written off at once.` });
+        return res.status(400).json({ message: `${cls.name} has no residual percentage, and the company depreciates on written-down value from ${String(l.inUseDate).slice(0, 7)}. That rate is derived from the residual, and at zero the whole cost would be written off at once — give the class a residual, or change the policy.` });
       }
 
       // The deviation is measured against what Schedule II PRESCRIBES, not
@@ -814,7 +822,7 @@ router.post("/", canPost, async (req, res) => {
         const l = computed[i] as {
           itemId: string; quantity: number; lineSubtotal: number;
           assetClassId?: string; assetName?: string; inUseDate?: string;
-          usefulLifeMonths?: number; method?: string; usefulLifeNote?: string;
+          usefulLifeMonths?: number; usefulLifeNote?: string;
         };
         const item = itemById.get(l.itemId)!;
         const cls = assetClassById.get(String(l.assetClassId))!;
@@ -843,7 +851,10 @@ router.post("/", canPost, async (req, res) => {
             gstCapitalised: false,
             purchaseDate: new Date(billDate),
             inUseDate: new Date(`${l.inUseDate}T00:00:00.000Z`),
-            method: String(l.method ?? cls.defaultMethod).toUpperCase(),
+            // A record of what the policy was when this asset was
+            // capitalised. The engine reads the policy per month rather than
+            // this column, because a later change applies to this asset too.
+            method: capitalMethod.get(i) ?? "SLM",
             usefulLifeMonths: Number(l.usefulLifeMonths ?? cls.defaultUsefulLifeMonths),
             // Snapshot, so "does this asset depart from Schedule II" stays
             // answerable after the class is edited.

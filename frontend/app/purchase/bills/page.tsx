@@ -9,12 +9,12 @@ import CurrencyPicker from "@/components/shared/CurrencyPicker";
 import ItemPicker from "@/components/shared/ItemPicker";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import {
-  ApiError, approvePurchaseBill, createPurchaseBill, extractInvoice, getAssetClasses, getBranches, getBusinessPartnerLookup, getGoodsReceiptNotes, getItems,
+  ApiError, approvePurchaseBill, createPurchaseBill, extractInvoice, getAssetClasses, getBranches, getBusinessPartnerLookup, getDepreciationPolicy, getGoodsReceiptNotes, getItems,
   getPurchaseBill, getPurchaseBills, getPurchaseOrder, getPurchaseOrders, lookupCurrencyRate, rejectPurchaseBill, updatePurchaseBillReference,
 } from "@/lib/api";
 import { canApprovePurchaseOrders } from "@/lib/auth";
 import { isInterState, round2, splitGst } from "@/lib/discountGst";
-import type { AssetClassSummary, Branch, BusinessPartnerLookup, DocumentLineInput, ExtractedInvoice, ExtractedInvoiceLine, Item, PurchaseBill, PurchaseBillStatus, PurchaseOrder } from "@/lib/types";
+import type { AssetClassSummary, Branch, BusinessPartnerLookup, DepreciationPolicy, DocumentLineInput, ExtractedInvoice, ExtractedInvoiceLine, Item, PurchaseBill, PurchaseBillStatus, PurchaseOrder } from "@/lib/types";
 import { PURCHASE_BILL_STATUS_LABELS, SUPPORTED_CURRENCIES, currencySymbol } from "@/lib/types";
 
 // Best-effort word-overlap match between an extracted invoice line's free-
@@ -136,6 +136,7 @@ function PurchaseBillsInner() {
   const [vendors, setVendors] = useState<BusinessPartnerLookup[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [assetClasses, setAssetClasses] = useState<AssetClassSummary[]>([]);
+  const [depPolicy, setDepPolicy] = useState<DepreciationPolicy | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -241,6 +242,19 @@ function PurchaseBillsInner() {
   // the same job prepaidHint does. Mirrors the server: residual is a
   // percentage of cost, and the depreciable base is spread evenly over the
   // life in months.
+  // The method that will apply to an asset put to use in a given month —
+  // the company's policy, resolved the same way the server resolves it: the
+  // latest change effective on or before that month, else the current
+  // method. Not a per-line choice, which is why there is no control for it
+  // here; it is set on Accounting > Depreciation Policy.
+  function methodForMonth(ym: string): string {
+    if (!depPolicy) return "SLM";
+    const applicable = depPolicy.changes
+      .filter((c) => c.effectiveMonth <= ym)
+      .sort((a, b) => (a.effectiveMonth < b.effectiveMonth ? 1 : -1))[0];
+    return applicable ? applicable.toMethod : depPolicy.currentMethod;
+  }
+
   function effectiveLife(l: DocumentLineInput, cls: AssetClassSummary): number {
     return Number(l.usefulLifeMonths || cls.defaultUsefulLifeMonths);
   }
@@ -285,11 +299,12 @@ function PurchaseBillsInner() {
       ? ""
       : end.toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
 
-    if (String(l.method || cls.defaultMethod).toUpperCase() === "WDV") {
+    const method = methodForMonth(String(l.inUseDate).slice(0, 7));
+    if (method === "WDV") {
       // The rate is derived from the life and residual rather than
       // prescribed: after `life` months at this rate the balance is exactly
       // the residual, which is the same place straight line lands.
-      if (!(residual > 0)) return "Written-down value needs a residual above zero — this class has none.";
+      if (!(residual > 0)) return "The company depreciates on written-down value, which needs a residual above zero — this class has none.";
       const rate = 1 - Math.pow(residual / amount, 1 / life);
       return `${fmt(amount * rate)} in the first month, declining · ${fmt(residual)} left after ${life} months${endLabel ? ` · ends ${endLabel}` : ""}`;
     }
@@ -337,15 +352,16 @@ function PurchaseBillsInner() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [billsRes, itemsRes, vendorsRes, branchRes, poRes, classRes] = await Promise.all([
+      const [billsRes, itemsRes, vendorsRes, branchRes, poRes, classRes, policyRes] = await Promise.all([
         getPurchaseBills(), getItems(), getBusinessPartnerLookup("VENDOR"), getBranches(), getPurchaseOrders({ status: "APPROVED" }),
-        getAssetClasses(),
+        getAssetClasses(), getDepreciationPolicy(),
       ]);
       setBills(billsRes.data);
       setItems(itemsRes.data);
       setVendors(vendorsRes.data);
       setBranches(branchRes.data);
       setAssetClasses(classRes.data);
+      setDepPolicy(policyRes.data);
       // Only orders with at least one line that's been received but not yet
       // fully billed are worth offering — this is a proxy for "has an open
       // GRN line to bill against" without fetching every order's Goods
@@ -605,7 +621,7 @@ function PurchaseBillsInner() {
           // rejected by the server.
           .map((l) => (canCapitalise && l.capitalise && isServiceLine(l)
             ? l
-            : { ...l, capitalise: undefined, assetClassId: undefined, assetName: undefined, inUseDate: undefined, usefulLifeMonths: undefined, method: undefined, usefulLifeNote: undefined })),
+            : { ...l, capitalise: undefined, assetClassId: undefined, assetName: undefined, inUseDate: undefined, usefulLifeMonths: undefined, usefulLifeNote: undefined })),
         currency, exchangeRate: isForeign ? Number(exchangeRate) : undefined,
         billOfEntryNumber: isForeign ? newBoeNumber || undefined : undefined,
         billOfEntryDate: isForeign ? newBoeDate || undefined : undefined,
@@ -950,7 +966,7 @@ function PurchaseBillsInner() {
                                 disabled={!!line.prepaid}
                                 onChange={(e) => updateLine(i, e.target.checked
                                   ? { capitalise: true, assetClassId: line.assetClassId || "", inUseDate: line.inUseDate || billDate }
-                                  : { capitalise: false, assetClassId: undefined, assetName: undefined, inUseDate: undefined, usefulLifeMonths: undefined, method: undefined, usefulLifeNote: undefined })}
+                                  : { capitalise: false, assetClassId: undefined, assetName: undefined, inUseDate: undefined, usefulLifeMonths: undefined, usefulLifeNote: undefined })}
                               />
                               Capitalise this line
                             </label>
@@ -972,15 +988,7 @@ function PurchaseBillsInner() {
                                   value={line.inUseDate ?? ""}
                                   onChange={(e) => updateLine(i, { inUseDate: e.target.value })}
                                 />
-                                <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                                  <select
-                                    className="ent-fc" style={{ flex: "1 1 90px" }}
-                                    value={line.method ?? assetClassById.get(String(line.assetClassId))?.defaultMethod ?? "SLM"}
-                                    onChange={(e) => updateLine(i, { method: e.target.value })}
-                                  >
-                                    <option value="SLM">Straight line</option>
-                                    <option value="WDV">Written-down value</option>
-                                  </select>
+                                <div style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
                                   <input
                                     type="number" min={1} max={1200} step={1} className="ent-fc" style={{ width: 70 }}
                                     title="Useful life in months"
@@ -988,6 +996,12 @@ function PurchaseBillsInner() {
                                     value={line.usefulLifeMonths ?? assetClassById.get(String(line.assetClassId))?.defaultUsefulLifeMonths ?? ""}
                                     onChange={(e) => updateLine(i, { usefulLifeMonths: Number(e.target.value) })}
                                   />
+                                  {/* Shown, not chosen. The method is the
+                                      company's policy — one method for the
+                                      whole entity, disclosed once. */}
+                                  <span style={{ fontSize: 11.5, color: "var(--color-muted)" }}>
+                                    months · {methodForMonth(String(line.inUseDate).slice(0, 7)) === "WDV" ? "written-down value" : "straight line"}
+                                  </span>
                                 </div>
                                 {lifeDeviation(line) && (
                                   <>
