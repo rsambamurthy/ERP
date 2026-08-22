@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { prisma } from "../db";
 import { authenticate, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
+import { frequencyInForce, isDepreciationMethod } from "../lib/depreciationPolicy";
+import { buildSchedule } from "../lib/depreciationSchedule";
 
 // The fixed asset register.
 //
@@ -170,6 +172,63 @@ router.get("/:id", async (req, res) => {
         journalEntryId: r.journalEntryId,
         generatedAt: r.generatedAt,
       })),
+    },
+  });
+});
+
+// GET /fixed-assets/:id/schedule — the whole life of this asset, period by
+// period.
+//
+// A PROJECTION, not a promise. It is computed from the asset as it stands
+// today at the company's current frequency, so a policy that changes later
+// will change what actually posts. Periods that HAVE posted are marked, and
+// their real figures are returned in place of the projected ones — the two
+// should agree, and where they do not the difference is worth seeing rather
+// than smoothing over.
+router.get("/:id/schedule", async (req, res) => {
+  const organizationId = orgIdOr400(req, res);
+  if (!organizationId) return;
+
+  const a = await prisma.fixedAsset.findFirst({
+    where: { id: req.params.id, organizationId, deletedAt: null },
+    include: { runs: { orderBy: { periodStart: "asc" } } },
+  });
+  if (!a) return res.status(404).json({ message: "Asset not found." });
+
+  const frequency = await frequencyInForce(organizationId);
+  const projected = buildSchedule({
+    grossCost: Number(a.grossCost),
+    residualValue: Number(a.residualValue),
+    usefulLifeMonths: a.usefulLifeMonths,
+    method: isDepreciationMethod(a.method) ? a.method : "SLM",
+    inUseDate: isoDay(a.inUseDate)!,
+    frequency,
+  });
+
+  const postedByStart = new Map(a.runs.map((r) => [isoDay(r.periodStart)!, r]));
+
+  res.json({
+    data: {
+      assetCode: a.assetCode,
+      name: a.name,
+      method: a.method,
+      frequency,
+      usefulLifeMonths: a.usefulLifeMonths,
+      grossCost: Number(a.grossCost),
+      residualValue: Number(a.residualValue),
+      periods: projected.map((p) => {
+        const posted = postedByStart.get(p.periodStart);
+        return {
+          ...p,
+          posted: !!posted,
+          // What actually posted, where it did. Shown instead of the
+          // projection rather than beside it, because the ledger is the
+          // fact and this table is the estimate.
+          amount: posted ? Number(posted.amount) : p.amount,
+          openingWdv: posted ? Number(posted.openingWdv) : p.openingWdv,
+          closingWdv: posted ? Number(posted.closingWdv) : p.closingWdv,
+        };
+      }),
     },
   });
 });

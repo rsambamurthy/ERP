@@ -37,6 +37,7 @@ import type {
   DepreciationPolicy,
   FixedAssetSummary,
   FixedAssetDetail,
+  DepreciationSchedule,
   PrepaidScheduleSummary,
   PrepaidScheduleDetail,
   PrepaidDueRow,
@@ -1325,6 +1326,12 @@ export function getFixedAssets(includeDisposed = false) {
 
 export function getFixedAsset(id: string) {
   return request<{ data: FixedAssetDetail }>(`/fixed-assets/${id}`);
+}
+
+// The asset's whole life, period by period. Projected from where it stands
+// now, with any period already charged showing the ledger instead.
+export function getDepreciationSchedule(id: string) {
+  return request<{ data: DepreciationSchedule }>(`/fixed-assets/${id}/schedule`);
 }
 
 // ── Depreciation policy ──────────────────────────────────────────────────

@@ -941,7 +941,7 @@ function PurchaseBillsInner() {
                     )}
                     {canCapitalise && (
                       <td>
-                        {isServiceLine(line) ? (
+                        {isServiceLine(line) && itemById.get(line.itemId)?.defaultAssetClass ? (
                           <>
                             <label style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
                               <input
@@ -949,32 +949,28 @@ function PurchaseBillsInner() {
                                 checked={!!line.capitalise}
                                 disabled={!!line.prepaid}
                                 onChange={(e) => updateLine(i, e.target.checked
-                                  ? { capitalise: true, assetClassId: line.assetClassId || "", inUseDate: line.inUseDate || billDate }
+                                  ? { capitalise: true, assetClassId: itemById.get(line.itemId)!.defaultAssetClass!.id, inUseDate: line.inUseDate || billDate }
                                   : { capitalise: false, assetClassId: undefined, assetName: undefined, inUseDate: undefined })}
                               />
                               Capitalise this line
                             </label>
+                            {/* No class picker: the class comes from the item,
+                                set once in the Item master. The life and
+                                method come from Configuration > Depreciation.
+                                The only thing genuinely particular to this
+                                purchase is when the asset was put to use. */}
+                            <div style={{ fontSize: 11.5, color: "var(--color-muted)", marginTop: 3 }}>
+                              {itemById.get(line.itemId)!.defaultAssetClass!.name}
+                            </div>
                             {line.capitalise && (
                               <>
-                                <select
-                                  className="ent-fc" style={{ width: "100%", marginTop: 6 }}
-                                  value={line.assetClassId ?? ""}
-                                  onChange={(e) => updateLine(i, { assetClassId: e.target.value })}
-                                >
-                                  <option value="">Asset class…</option>
-                                  {assetClasses.map((c) => (
-                                    <option key={c.id} value={c.id}>{c.name}</option>
-                                  ))}
-                                </select>
                                 <input
                                   type="date" className="ent-fc" style={{ width: "100%", marginTop: 6 }}
                                   min={billDate}
+                                  title="Put to use"
                                   value={line.inUseDate ?? ""}
                                   onChange={(e) => updateLine(i, { inUseDate: e.target.value })}
                                 />
-                                {/* Shown, never chosen. Life belongs to the
-                                    asset class and method to the company —
-                                    both under Configuration > Depreciation. */}
                                 <div style={{ fontSize: 11.5, color: "var(--color-muted)", marginTop: 6 }}>
                                   {assetClassById.get(String(line.assetClassId))?.defaultUsefulLifeMonths ?? "—"} months
                                   {" · "}
@@ -992,7 +988,11 @@ function PurchaseBillsInner() {
                           </>
                         ) : (
                           <span style={{ fontSize: 11.5, color: "var(--color-muted)" }}>
-                            {line.itemId ? "Stock item — not capitalisable" : "—"}
+                            {!line.itemId
+                              ? "\u2014"
+                              : isServiceLine(line)
+                                ? "Set a capital asset class on this item to capitalise it"
+                                : "Stock item \u2014 not capitalisable"}
                           </span>
                         )}
                       </td>

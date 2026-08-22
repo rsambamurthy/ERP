@@ -682,6 +682,38 @@ export interface FixedAssetSummary {
   status: string;
 }
 
+// One period of a projected schedule. Not a posted charge — see
+// DepreciationSchedule.
+export interface DepreciationSchedulePeriod {
+  periodStart: string;
+  periodEnd: string;
+  frequency: string;
+  // Fewer than the days in the period only for the first one, which is
+  // charged pro rata from the date the asset was put to use.
+  daysCharged: number;
+  daysInPeriod: number;
+  openingWdv: number;
+  amount: number;
+  closingWdv: number;
+  // True when this period has actually been charged, in which case the
+  // figures above are the ledger's rather than the projection's.
+  posted: boolean;
+}
+
+// The whole life of an asset, period by period. A projection computed from
+// the asset as it stands and the company's current frequency — a policy
+// change before a period is charged will change it.
+export interface DepreciationSchedule {
+  assetCode: string;
+  name: string;
+  method: string;
+  frequency: string;
+  usefulLifeMonths: number;
+  grossCost: number;
+  residualValue: number;
+  periods: DepreciationSchedulePeriod[];
+}
+
 export interface FixedAssetRun {
   id: string;
   periodStart: string | null;

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import { ApiError, getFixedAsset } from "@/lib/api";
+import DepreciationScheduleModal from "@/components/accounting/DepreciationScheduleModal";
 import type { FixedAssetDetail } from "@/lib/types";
 
 // One asset: where it came from, what it is being depreciated on, and every
@@ -39,6 +40,7 @@ export default function FixedAssetDetailPage() {
   const [a, setA] = useState<FixedAssetDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showSchedule, setShowSchedule] = useState(false);
 
   useEffect(() => {
     if (!params?.id) return;
@@ -86,8 +88,13 @@ export default function FixedAssetDetailPage() {
       <div className="ent-section" style={{ marginBottom: 16 }}>
         <div className="ent-section-hdr" style={{ borderRadius: "6px 6px 0 0" }}>
           <span className="ent-section-title">Position</span>
-          <span className={a.status === "ACTIVE" ? "badge badge-green" : "badge badge-gray"}>
-            {a.status.charAt(0) + a.status.slice(1).toLowerCase().replace(/_/g, " ")}
+          <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span className={a.status === "ACTIVE" ? "badge badge-green" : "badge badge-gray"}>
+              {a.status.charAt(0) + a.status.slice(1).toLowerCase().replace(/_/g, " ")}
+            </span>
+            <button type="button" className="ent-btn-add" onClick={() => setShowSchedule(true)}>
+              Depreciation schedule
+            </button>
           </span>
         </div>
         <div className="ent-form-grid" style={{ padding: 14 }}>
@@ -195,8 +202,13 @@ export default function FixedAssetDetailPage() {
 
       <p style={{ ...muted, marginTop: 12, lineHeight: 1.5 }}>
         This table is what posted, not what is forecast. A period appears only once its journal entry
-        exists, so the register can always be reconciled against the ledger line by line.
+        exists, so the register can always be reconciled against the ledger line by line. Everything
+        still to come is on the <button type="button" className="ent-ia ent-ia-edit" style={{ padding: 0 }} onClick={() => setShowSchedule(true)}>depreciation schedule</button>.
       </p>
+
+      {showSchedule && (
+        <DepreciationScheduleModal assetId={a.id} onClose={() => setShowSchedule(false)} />
+      )}
     </AppShell>
   );
 }

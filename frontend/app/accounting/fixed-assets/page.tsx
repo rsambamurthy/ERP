@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
 import { ApiError, getFixedAssets } from "@/lib/api";
+import DepreciationScheduleModal from "@/components/accounting/DepreciationScheduleModal";
 import type { FixedAssetSummary } from "@/lib/types";
 
 // The fixed asset register.
@@ -41,6 +42,7 @@ export default function FixedAssetsPage() {
   const [search, setSearch] = useState("");
   const [includeDisposed, setIncludeDisposed] = useState(false);
   const [onlyDeviations, setOnlyDeviations] = useState(false);
+  const [scheduleFor, setScheduleFor] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -133,17 +135,18 @@ export default function FixedAssetsPage() {
               <th style={{ textAlign: "right" }}>Accum. dep.</th>
               <th style={{ textAlign: "right" }}>Net block</th>
               <th style={{ width: 110 }}>Status</th>
+              <th style={{ width: 90 }} />
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={9} className="ent-empty">Loading…</td></tr>}
+            {loading && <tr><td colSpan={10} className="ent-empty">Loading…</td></tr>}
             {!loading && rows.length === 0 && (
-              <tr><td colSpan={9} className="ent-empty">
+              <tr><td colSpan={10} className="ent-empty">
                 No assets yet. One is created by ticking &ldquo;Capitalise this line&rdquo; on a Purchase Bill.
               </td></tr>
             )}
             {!loading && rows.length > 0 && visible.length === 0 && (
-              <tr><td colSpan={9} className="ent-empty">Nothing matches.</td></tr>
+              <tr><td colSpan={10} className="ent-empty">Nothing matches.</td></tr>
             )}
             {visible.map((r) => (
               <tr key={r.id}>
@@ -177,6 +180,11 @@ export default function FixedAssetsPage() {
                     {r.status.charAt(0) + r.status.slice(1).toLowerCase().replace(/_/g, " ")}
                   </span>
                 </td>
+                <td style={{ textAlign: "right" }}>
+                  <button type="button" className="ent-ia ent-ia-edit" onClick={() => setScheduleFor(r.id)}>
+                    Schedule
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -188,11 +196,16 @@ export default function FixedAssetsPage() {
                 <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money(totals.accum)}</td>
                 <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money(totals.net)}</td>
                 <td />
+                <td />
               </tr>
             </tfoot>
           )}
         </table>
       </div>
+
+      {scheduleFor && (
+        <DepreciationScheduleModal assetId={scheduleFor} onClose={() => setScheduleFor(null)} />
+      )}
     </AppShell>
   );
 }
