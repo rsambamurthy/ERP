@@ -111,6 +111,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: "prepaid_schedules", label: "Prepaid Schedules", path: "/accounting/prepaid-schedules", dot: "#0d9488", roles: ALL_ROLES },
       { id: "amortization_due", label: "Amortization Due", path: "/accounting/amortization-due", dot: "#e11d48", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "journal.post" },
       { id: "fixed_assets", label: "Fixed Assets", path: "/accounting/fixed-assets", dot: "#9333ea", roles: ALL_ROLES },
+      { id: "depreciation_due", label: "Depreciation Due", path: "/accounting/depreciation-due", dot: "#e11d48", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "journal.post" },
     ],
   },
   {

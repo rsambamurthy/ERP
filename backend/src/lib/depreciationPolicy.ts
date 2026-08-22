@@ -118,6 +118,44 @@ export async function methodInForce(
   return isDepreciationMethod(org?.depreciationMethod) ? org!.depreciationMethod as DepreciationMethod : "SLM";
 }
 
+// The same resolution as methodInForce, but loaded once and answered in
+// memory. A depreciation run asks "what method applied to this class in this
+// period" for every asset and every period it is catching up — hundreds of
+// questions against a table with a handful of rows in it. One read answers
+// them all, and answers them consistently: a change recorded while the run
+// was mid-flight cannot move the method under half of it.
+export async function methodResolver(
+  organizationId: string,
+): Promise<(assetClassId: string | null, month: Date) => DepreciationMethod> {
+  const [changes, org] = await Promise.all([
+    prisma.depreciationMethodChange.findMany({
+      where: { organizationId },
+      orderBy: { effectiveMonth: "desc" },
+      select: { assetClassId: true, effectiveMonth: true, toMethod: true },
+    }),
+    prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { depreciationMethod: true },
+    }),
+  ]);
+
+  const fallback: DepreciationMethod =
+    isDepreciationMethod(org?.depreciationMethod) ? org!.depreciationMethod as DepreciationMethod : "SLM";
+
+  // Already newest-first, so the first row that qualifies is the latest one.
+  return (assetClassId, month) => {
+    if (assetClassId) {
+      const forClass = changes.find(
+        (c) => c.assetClassId === assetClassId && c.effectiveMonth <= month,
+      );
+      if (forClass && isDepreciationMethod(forClass.toMethod)) return forClass.toMethod;
+    }
+    const company = changes.find((c) => c.assetClassId === null && c.effectiveMonth <= month);
+    if (company && isDepreciationMethod(company.toMethod)) return company.toMethod;
+    return fallback;
+  };
+}
+
 // The frequency in force. Unlike the method this has no dated history — a
 // frequency change takes effect from the next unposted period, and the
 // periods already posted carry their own frequency on the run row, so
@@ -135,9 +173,14 @@ export async function frequencyInForce(organizationId: string): Promise<Deprecia
 // those charges are history, and a change in estimate does not reach
 // backwards.
 export async function lastPostedChargeMonth(organizationId: string): Promise<Date | null> {
-  const run = await prisma.fixedAssetDepreciationRun.findFirst({
-    where: { fixedAsset: { organizationId } },
-    orderBy: { periodStart: "desc" },
+  // Read from the run header, not from the charge rows. A run whose charges
+  // all fell on earlier periods writes no charge row at its own period, so
+  // max(period_start) across the charges can lag behind what has actually
+  // been posted — and a method change let in behind it would be reaching
+  // into a period already closed. See migration_040.
+  const run = await prisma.depreciationPeriod.findFirst({
+    where: { organizationId },
+    orderBy: { periodEnd: "desc" },
     select: { periodEnd: true },
   });
   // The END of the last posted period, because a change may not land inside

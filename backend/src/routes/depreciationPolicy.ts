@@ -4,7 +4,7 @@ import { authenticate, requirePermission, requireActiveSubscription, resolveOrgI
 import { logAudit } from "../lib/audit";
 import {
   isDepreciationFrequency, isDepreciationMethod, lastPostedChargeMonth,
-  methodInForce, monthStart,
+  methodInForce, monthStart, periodEndFor, periodStartFor,
 } from "../lib/depreciationPolicy";
 
 // Configuration > Depreciation. Everything about how this company
@@ -148,6 +148,23 @@ router.patch("/", canManageCompany, async (req, res) => {
     if (!isDepreciationFrequency(frequency)) {
       return res.status(400).json({ message: "frequency must be MONTHLY, QUARTERLY, HALF_YEARLY or ANNUAL." });
     }
+
+    // A longer frequency can only start where the posted history stops on one
+    // of its own boundaries. Post April and May monthly, switch to quarterly,
+    // and the next quarterly period is April to June — which overlaps two
+    // periods already charged. Refusing it here is better than letting the
+    // run refuse it later, because here the fix is one more monthly posting
+    // and there it looks like the run is broken.
+    const postedTo = await lastPostedChargeMonth(organizationId);
+    if (postedTo) {
+      const boundary = periodEndFor(periodStartFor(postedTo, frequency), frequency);
+      if (boundary.getTime() !== postedTo.getTime()) {
+        return res.status(409).json({
+          message: `Depreciation is posted up to ${postedTo.toISOString().slice(0, 10)}, which is not where a ${String(frequency).toLowerCase().replace("_", "-")} period ends. Post up to ${boundary.toISOString().slice(0, 10)} at the current frequency first, then change it.`,
+        });
+      }
+    }
+
     data.depreciationFrequency = frequency;
   }
 

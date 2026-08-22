@@ -1888,3 +1888,90 @@ export interface RecurringGenerateResult {
   created: { recurringExpenseId: string; billNumber: string; grandTotal: number }[];
   failed: { recurringExpenseId: string; message: string }[];
 }
+// Depreciation Due — one period, the whole organization, posted in order.
+//
+// Unlike Amortization Due there is no month picker and no per-row selection.
+// A depreciation period is not independent of the one before it: under WDV
+// every charge compounds on the previous closing balance, so the period on
+// offer is always the next one, and it posts whole or not at all.
+
+export interface DepreciationDuePeriod {
+  periodStart: string;
+  periodEnd: string;
+  label: string;
+  months: number;
+}
+
+export interface DepreciationDueSubPeriod {
+  periodStart: string;
+  periodEnd: string;
+  label: string;
+  method: string;
+  // Equal except in an asset's first period, which Schedule II charges pro
+  // rata from the date the asset was put to use.
+  daysCharged: number;
+  daysInPeriod: number;
+  openingWdv: number;
+  amount: number;
+  closingWdv: number;
+}
+
+export interface DepreciationDueAsset {
+  id: string;
+  assetCode: string;
+  name: string;
+  assetClass: { id: string; name: string };
+  branch: { id: string; name: string } | null;
+  depExpenseAccount: { accountCode: string; accountName: string };
+  accumDepAccount: { accountCode: string; accountName: string };
+  method: string;
+  openingWdv: number;
+  amount: number;
+  closingWdv: number;
+  // This charge takes the asset to its residual and ends its life.
+  final: boolean;
+  periods: DepreciationDueSubPeriod[];
+  // More than zero only for an asset capitalised with an in-use date behind
+  // periods already posted — it is charged for all of them at once.
+  catchUpPeriods: number;
+  partFirstPeriod: boolean;
+}
+
+export interface DepreciationBlockedAsset {
+  id: string;
+  assetCode: string;
+  name: string;
+  assetClass: { id: string; name: string };
+  reason: string;
+  message: string;
+}
+
+export interface DepreciationDue {
+  frequency: string;
+  // null when nothing can be offered — an empty register, or a frequency
+  // change that would overlap what is already posted.
+  period: DepreciationDuePeriod | null;
+  today?: string;
+  canPost: boolean;
+  // Why not, when canPost is false.
+  reason: string | null;
+  lastPosted: { periodStart: string; periodEnd: string; label: string } | null;
+  totalAmount: number;
+  assets: DepreciationDueAsset[];
+  blocked: DepreciationBlockedAsset[];
+}
+
+export interface DepreciationPostResult {
+  periodStart: string;
+  periodEnd: string;
+  label: string;
+  assetCount: number;
+  totalAmount: number;
+  journalEntryIds: string[];
+}
+
+export interface DepreciationReverseResult {
+  periodStart: string;
+  runsRemoved: number;
+  journalEntriesRemoved: number;
+}

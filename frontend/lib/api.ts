@@ -81,6 +81,9 @@ import type {
   VendorAddress,
   VendorBankAccount,
   ValuationResponse,
+  DepreciationDue,
+  DepreciationPostResult,
+  DepreciationReverseResult,
 } from "./types";
 import { getToken } from "./auth";
 
@@ -1411,6 +1414,29 @@ export function getPrepaidDue(month: string) {
 // against that schedule's own sub-ledger card.
 export function postPrepaidAmortization(body: { month: string; scheduleIds: string[] }) {
   return request<{ data: PrepaidPostResult }>("/prepaid-schedules/post", {
+    method: "POST", body: JSON.stringify(body),
+  });
+}
+// Depreciation Due. No month parameter: the period on offer is whichever one
+// is next, which the server decides from what has actually been posted.
+export function getDepreciationDue() {
+  return request<{ data: DepreciationDue }>("/depreciation-runs/due");
+}
+
+// One journal entry per branch for the whole period, in one transaction.
+// periodStart is echoed back so a screen left open overnight cannot post a
+// period it was never showing.
+export function postDepreciationRun(body: { periodStart: string }) {
+  return request<{ data: DepreciationPostResult }>("/depreciation-runs/post", {
+    method: "POST", body: JSON.stringify(body),
+  });
+}
+
+// Undoes the latest posted period — deletes its charges and its journal
+// entries. Only the latest, because every period after one reversed would be
+// computed from a closing balance that no longer exists.
+export function reverseDepreciationRun(body: { periodStart: string }) {
+  return request<{ data: DepreciationReverseResult }>("/depreciation-runs/reverse", {
     method: "POST", body: JSON.stringify(body),
   });
 }

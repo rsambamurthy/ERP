@@ -148,6 +148,7 @@ model Organization {
   assetClasses     AssetClass[]
   fixedAssets      FixedAsset[]
   depreciationMethodChanges DepreciationMethodChange[]
+  depreciationPeriods DepreciationPeriod[]
   stockAdjustments StockAdjustment[]
   salesReturns     SalesReturn[]
   purchaseReturns  PurchaseReturn[]
@@ -1960,6 +1961,28 @@ model DepreciationMethodChange {
   // changes in a month, because Postgres treats NULLs as distinct.
   @@index([organizationId, assetClassId, effectiveMonth])
   @@map("depreciation_method_changes")
+}
+
+model DepreciationPeriod {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  // A run is a thing that happened, so it gets a row. Which period has been
+  // posted used to be inferred from max(period_start) across the charge rows,
+  // which is wrong for a run whose charges all landed on EARLIER periods —
+  // see migration_040. Inference replaced by a record.
+  periodStart    DateTime @map("period_start") @db.Date
+  periodEnd      DateTime @map("period_end") @db.Date
+  frequency      String   @db.VarChar(12)
+  totalAmount    Decimal  @default(0) @map("total_amount") @db.Decimal(14, 2)
+  assetCount     Int      @default(0) @map("asset_count")
+  postedBy       String?  @map("posted_by") @db.Uuid
+  postedAt       DateTime @default(now()) @map("posted_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, periodStart], map: "dep_periods_org_start_uq")
+  @@index([organizationId, periodEnd])
+  @@map("depreciation_periods")
 }
 
 model FixedAssetDepreciationRun {
