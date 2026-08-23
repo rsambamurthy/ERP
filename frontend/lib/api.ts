@@ -87,6 +87,8 @@ import type {
   BillOfMaterials,
   ProductionOrderSummary,
   ProductionOrderDetail,
+  StockTransferSummary,
+  StockTransferDetail,
 } from "./types";
 import { getToken } from "./auth";
 
@@ -1517,4 +1519,39 @@ export function cancelProductionOrder(id: string, entryDate?: string) {
   return request<{ data: { writtenOff: number; cancelled: boolean } }>(
     `/production-orders/${id}/cancel`, { method: "POST", body: JSON.stringify({ entryDate }) },
   );
+}
+
+// Stock transfers between branches.
+export function getStockTransfers(status?: string) {
+  const q = status && status !== "ALL" ? `?status=${encodeURIComponent(status)}` : "";
+  return request<{ data: StockTransferSummary[] }>(`/stock-transfers${q}`);
+}
+
+export function getStockTransfer(id: string) {
+  return request<{ data: StockTransferDetail }>(`/stock-transfers/${id}`);
+}
+
+// Creating a transfer dispatches it — there is no draft state. The cost is
+// taken from what the stock is worth at the sending branch, never sent.
+export function createStockTransfer(body: {
+  fromBranchId: string; toBranchId: string; transferDate: string;
+  documentNumber?: string; ewayBillNumber?: string;
+  lines: { itemId: string; quantity: number }[];
+}) {
+  return request<{ data: { id: string; transferNumber: string; total: number } }>("/stock-transfers", {
+    method: "POST", body: JSON.stringify(body),
+  });
+}
+
+export function receiveStockTransfer(id: string, receivedDate?: string) {
+  return request<{ data: { received: boolean; total: number } }>(`/stock-transfers/${id}/receive`, {
+    method: "POST", body: JSON.stringify({ receivedDate }),
+  });
+}
+
+// Brings the goods back to the sending branch. Only while in transit.
+export function cancelStockTransfer(id: string, entryDate?: string) {
+  return request<{ data: { cancelled: boolean; total: number } }>(`/stock-transfers/${id}/cancel`, {
+    method: "POST", body: JSON.stringify({ entryDate }),
+  });
 }

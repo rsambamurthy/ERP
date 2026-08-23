@@ -91,6 +91,7 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: "I",
     items: [
       { id: "stock_adjustments", label: "Stock Adjustments", path: "/inventory/adjustments", dot: "#dc2626", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "inventory.post" },
+      { id: "stock_transfers", label: "Stock Transfers", path: "/inventory/stock-transfers", dot: "#0d9488", roles: ALL_ROLES },
       { id: "stock_ledger", label: "Stock Ledger", path: "/inventory/stock-ledger", dot: "#0891b2", roles: ALL_ROLES },
       { id: "item_valuation", label: "Item Valuation", path: "/inventory/valuation", dot: "#7c3aed", roles: ALL_ROLES },
     ],

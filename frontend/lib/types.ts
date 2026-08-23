@@ -2074,3 +2074,43 @@ export interface ProductionOrderDetail extends ProductionOrderSummary {
   suggestedIssue: SuggestedIssueLine[];
   entries: ProductionEntryView[];
 }
+
+// Stock transfers between branches.
+//
+// Two events, not one: goods dispatched are in transit until received, and
+// 1304 Stock in Transit is where the balance sheet says so. Both journal
+// entries net through it, because a journal entry carries a single branch.
+
+export interface StockTransferLineView {
+  id: string;
+  item: { id: string; sku: string; name: string; uom: string };
+  quantity: number;
+  // What the stock was worth at the sending branch. Never entered — the
+  // receiving branch receives at this cost and nothing is re-valued in
+  // transit.
+  unitCost: number;
+  lineValue: number;
+}
+
+export interface StockTransferSummary {
+  id: string;
+  transferNumber: string;
+  transferDate: string;
+  receivedDate: string | null;
+  fromBranch: { id: string; name: string };
+  toBranch: { id: string; name: string };
+  status: string;
+  // NONE or TAXABLE. Only NONE is written today — a transfer between
+  // branches with different GSTINs is refused rather than posted untaxed.
+  taxTreatment: string;
+  documentNumber: string | null;
+  lineCount: number;
+  totalValue: number;
+}
+
+export interface StockTransferDetail extends Omit<StockTransferSummary, "lineCount"> {
+  ewayBillNumber: string | null;
+  dispatchJournalEntryId: string | null;
+  receiptJournalEntryId: string | null;
+  lines: StockTransferLineView[];
+}
