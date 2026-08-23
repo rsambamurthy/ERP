@@ -1459,6 +1459,11 @@ model BomLine {
   finishedItem  Item         @relation("FinishedItem", fields: [finishedItemId], references: [id])
   componentItem Item         @relation("ComponentItem", fields: [componentItemId], references: [id])
 
+  // A component is listed once for a finished item, not twice — see
+  // migration_041, which also adds the positive-quantity CHECK that Prisma
+  // cannot express.
+  @@unique([finishedItemId, componentItemId], map: "bom_lines_item_component_uq")
+  @@index([organizationId, finishedItemId])
   @@map("bom_lines")
 }
 

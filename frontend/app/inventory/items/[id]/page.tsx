@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import { ApiError, getItem, updateItem, toggleItem, deleteItem } from "@/lib/api";
 import { canManageItems } from "@/lib/auth";
+import BillOfMaterialsPanel from "@/components/inventory/BillOfMaterialsPanel";
 import type { Item } from "@/lib/types";
 
 // Item detail. Deliberately mirrors the Business Partner detail page —
@@ -211,8 +212,16 @@ export default function ItemDetailPage() {
         )}
       </div>
 
+      {/* Only for a finished good, and only for a stock item. A service item
+          has nothing to manufacture, and a raw material that is not itself
+          assembled has no recipe — the flag on the item master is what says
+          which is which. */}
+      {item.isFinishedGood && item.itemKind !== "SERVICE" && (
+        <BillOfMaterialsPanel itemId={item.id} canManage={canManage} />
+      )}
+
       {canManage && !editing && (
-        <div className="ent-section" style={{ padding: 14 }}>
+        <div className="ent-section" style={{ padding: 14, marginTop: 16 }}>
           <div className="ent-section-hdr"><span className="ent-section-title">Delete</span></div>
           <p style={{ ...muted, paddingBottom: 8 }}>
             Only possible while the item has never been used. Once it has any stock movement

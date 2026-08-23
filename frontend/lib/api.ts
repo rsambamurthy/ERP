@@ -84,6 +84,7 @@ import type {
   DepreciationDue,
   DepreciationPostResult,
   DepreciationReverseResult,
+  BillOfMaterials,
 } from "./types";
 import { getToken } from "./auth";
 
@@ -1438,5 +1439,19 @@ export function postDepreciationRun(body: { periodStart: string }) {
 export function reverseDepreciationRun(body: { periodStart: string }) {
   return request<{ data: DepreciationReverseResult }>("/depreciation-runs/reverse", {
     method: "POST", body: JSON.stringify(body),
+  });
+}
+
+// The bill of materials for a finished item.
+export function getBom(itemId: string) {
+  return request<{ data: BillOfMaterials }>(`/items/${itemId}/bom`);
+}
+
+// Replaces the whole recipe rather than editing it line by line — a
+// half-saved bill of materials no longer makes the product. An empty array
+// clears it.
+export function saveBom(itemId: string, lines: { componentItemId: string; qtyPerUnit: number }[]) {
+  return request<{ data: { lines: number } }>(`/items/${itemId}/bom`, {
+    method: "PUT", body: JSON.stringify({ lines }),
   });
 }

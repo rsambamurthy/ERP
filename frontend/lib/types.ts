@@ -1975,3 +1975,38 @@ export interface DepreciationReverseResult {
   runsRemoved: number;
   journalEntriesRemoved: number;
 }
+
+// Bill of materials — what a finished item is made of.
+//
+// A recipe, not an event. It moves no stock and posts nothing; its only job
+// is to be exploded when a production order is opened. The costs below are
+// indicative — read from what the components are carried at today — because
+// what a production order actually charges is whatever the stock is worth on
+// the day it is issued.
+
+export interface BomComponentRef {
+  id: string;
+  sku: string;
+  name: string;
+  uom: string;
+  isActive: boolean;
+}
+
+export interface BomLine {
+  id: string;
+  component: BomComponentRef;
+  qtyPerUnit: number;
+  // What one of the component is carried at today, weighted across branches.
+  // Zero when none is on hand anywhere.
+  unitCost: number;
+  lineCost: number;
+  quantityOnHand: number;
+}
+
+export interface BillOfMaterials {
+  item: { id: string; sku: string; name: string; uom: string; isFinishedGood: boolean };
+  lines: BomLine[];
+  materialCostPerUnit: number;
+  // At least one component has never been priced, so the total understates.
+  incomplete: boolean;
+}
