@@ -85,6 +85,8 @@ import type {
   DepreciationPostResult,
   DepreciationReverseResult,
   BillOfMaterials,
+  ProductionOrderSummary,
+  ProductionOrderDetail,
 } from "./types";
 import { getToken } from "./auth";
 
@@ -1454,4 +1456,65 @@ export function saveBom(itemId: string, lines: { componentItemId: string; qtyPer
   return request<{ data: { lines: number } }>(`/items/${itemId}/bom`, {
     method: "PUT", body: JSON.stringify({ lines }),
   });
+}
+
+// Production orders.
+export function getProductionOrders(status?: string) {
+  const q = status && status !== "ALL" ? `?status=${encodeURIComponent(status)}` : "";
+  return request<{ data: ProductionOrderSummary[] }>(`/production-orders${q}`);
+}
+
+export function getProductionOrder(id: string) {
+  return request<{ data: ProductionOrderDetail }>(`/production-orders/${id}`);
+}
+
+export function createProductionOrder(body: {
+  branchId: string; orderDate: string; finishedItemId: string;
+  plannedQuantity: number; notes?: string;
+}) {
+  return request<{ data: { id: string; orderNumber: string } }>("/production-orders", {
+    method: "POST", body: JSON.stringify(body),
+  });
+}
+
+// Material out of stock and into work in progress. The cost is whatever the
+// stock is actually worth on the day — never sent from the screen.
+export function issueProductionMaterial(id: string, body: {
+  entryDate: string; lines: { itemId: string; quantity: number }[]; narration?: string;
+}) {
+  return request<{ data: { entryId: string; total: number } }>(`/production-orders/${id}/issue`, {
+    method: "POST", body: JSON.stringify(body),
+  });
+}
+
+// Cost of conversion — labour, power, factory overhead — absorbed out of an
+// expense head into WIP, which is what AS 2 requires.
+export function addProductionCost(id: string, body: {
+  entryDate: string; lines: { accountId: string; amount: number }[]; narration?: string;
+}) {
+  return request<{ data: { entryId: string; total: number } }>(`/production-orders/${id}/cost`, {
+    method: "POST", body: JSON.stringify(body),
+  });
+}
+
+// `final` absorbs the whole remaining WIP balance into this receipt and
+// closes the order — how ordinary process loss is treated.
+export function receiveProductionOutput(id: string, body: {
+  entryDate: string; quantity: number; final?: boolean; narration?: string;
+}) {
+  return request<{ data: { entryId: string; absorbed: number; unitCost: number; completed: boolean } }>(
+    `/production-orders/${id}/receive`, { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export function closeProductionOrder(id: string) {
+  return request<{ data: { completed: boolean; receivedQuantity: number } }>(
+    `/production-orders/${id}/close`, { method: "POST", body: "{}" },
+  );
+}
+
+export function cancelProductionOrder(id: string, entryDate?: string) {
+  return request<{ data: { writtenOff: number; cancelled: boolean } }>(
+    `/production-orders/${id}/cancel`, { method: "POST", body: JSON.stringify({ entryDate }) },
+  );
 }

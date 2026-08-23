@@ -11,7 +11,7 @@ interface ReceiveArgs {
   quantity: number;
   unitCost: number;
   costingMethod: string; // "WEIGHTED_AVG" | "FIFO"
-  movementType: "PURCHASE" | "ADJUSTMENT_IN" | "SALES_RETURN_IN";
+  movementType: "PURCHASE" | "ADJUSTMENT_IN" | "SALES_RETURN_IN" | "PRODUCTION_IN" | "TRANSFER_IN";
   referenceType: string;
   referenceId: string;
   movementDate: Date;
@@ -65,7 +65,7 @@ interface ConsumeArgs {
   itemId: string;
   quantity: number;
   costingMethod: string;
-  movementType: "SALE" | "ADJUSTMENT_OUT";
+  movementType: "SALE" | "ADJUSTMENT_OUT" | "PRODUCTION_OUT" | "TRANSFER_OUT";
   referenceType: string;
   referenceId: string;
   movementDate: Date;

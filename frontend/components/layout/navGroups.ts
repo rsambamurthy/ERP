@@ -96,6 +96,14 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    id: "manufacturing",
+    label: "Manufacturing",
+    icon: "M",
+    items: [
+      { id: "production_orders", label: "Production Orders", path: "/manufacturing/production-orders", dot: "#ea580c", roles: ALL_ROLES },
+    ],
+  },
+  {
     id: "accounting",
     label: "Accounting",
     icon: "A",

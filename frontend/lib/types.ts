@@ -2010,3 +2010,67 @@ export interface BillOfMaterials {
   // At least one component has never been priced, so the total understates.
   incomplete: boolean;
 }
+
+// Production orders — raw material in, finished goods out.
+//
+// The WIP balance and the quantity received are computed by the server from
+// the order's postings, never stored. The finished good's unit cost is
+// likewise derived: WIP absorbed divided by quantity received.
+
+export interface ProductionEntryLineView {
+  id: string;
+  item: { id: string; sku: string; name: string; uom: string } | null;
+  account: { id: string; accountCode: string; accountName: string } | null;
+  quantity: number | null;
+  unitCost: number | null;
+  lineValue: number;
+}
+
+export interface ProductionEntryView {
+  id: string;
+  // ISSUE, COST, RECEIPT or WRITEOFF.
+  entryType: string;
+  entryDate: string;
+  totalValue: number;
+  narration: string | null;
+  journalEntryId: string;
+  lines: ProductionEntryLineView[];
+}
+
+export interface ProductionPosition {
+  issued: number;
+  costed: number;
+  absorbed: number;
+  writtenOff: number;
+  wipBalance: number;
+  receivedQuantity: number;
+}
+
+export interface ProductionOrderSummary extends ProductionPosition {
+  id: string;
+  orderNumber: string;
+  orderDate: string;
+  finishedItem: { id: string; sku: string; name: string; uom: string };
+  branch: { id: string; name: string } | null;
+  plannedQuantity: number;
+  status: string;
+  unitCostSoFar: number | null;
+}
+
+export interface SuggestedIssueLine {
+  itemId: string;
+  sku: string;
+  name: string;
+  uom: string;
+  isActive: boolean;
+  qtyPerUnit: number;
+  // The bill of materials exploded for the planned quantity. A suggestion —
+  // corrected on the issue against what was actually taken to the floor.
+  quantity: number;
+}
+
+export interface ProductionOrderDetail extends ProductionOrderSummary {
+  notes: string | null;
+  suggestedIssue: SuggestedIssueLine[];
+  entries: ProductionEntryView[];
+}

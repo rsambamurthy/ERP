@@ -149,6 +149,7 @@ model Organization {
   fixedAssets      FixedAsset[]
   depreciationMethodChanges DepreciationMethodChange[]
   depreciationPeriods DepreciationPeriod[]
+  productionOrders ProductionOrder[]
   stockAdjustments StockAdjustment[]
   salesReturns     SalesReturn[]
   purchaseReturns  PurchaseReturn[]
@@ -264,6 +265,7 @@ model Branch {
   orgUsers       OrgUser[]
   itemStocks     ItemStock[]
   journalEntries JournalEntry[]
+  productionOrders ProductionOrder[]
   stockLots      StockLot[]
   stockMovements StockMovement[]
   salesInvoices  SalesInvoice[]
@@ -331,6 +333,7 @@ model Account {
   fixedAssetsCost      FixedAsset[] @relation("FixedAssetCost")
   fixedAssetsAccumDep  FixedAsset[] @relation("FixedAssetAccumDep")
   fixedAssetsExpense   FixedAsset[] @relation("FixedAssetExpense")
+  productionEntryLines ProductionEntryLine[] @relation("ProductionLineAccount")
 
   @@unique([organizationId, accountCode])
   @@map("accounts")
@@ -578,6 +581,8 @@ model Item {
   itemStocks           ItemStock[]
   bomLinesAsFinished   BomLine[]       @relation("FinishedItem")
   bomLinesAsComponent  BomLine[]       @relation("ComponentItem")
+  productionOrders     ProductionOrder[]     @relation("ProducedItem")
+  productionEntryLines ProductionEntryLine[] @relation("ProductionLineItem")
   stockLots            StockLot[]
   stockMovements       StockMovement[]
   salesInvoiceLines    SalesInvoiceLine[]
@@ -1465,6 +1470,79 @@ model BomLine {
   @@unique([finishedItemId, componentItemId], map: "bom_lines_item_component_uq")
   @@index([organizationId, finishedItemId])
   @@map("bom_lines")
+}
+
+model ProductionOrder {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  // Where the job runs. Components are consumed and output received here,
+  // and the journal entries carry this branch.
+  branchId        String   @map("branch_id") @db.Uuid
+  orderNumber     String   @map("order_number") @db.VarChar(30)
+  orderDate       DateTime @map("order_date") @db.Date
+  finishedItemId  String   @map("finished_item_id") @db.Uuid
+  plannedQuantity Decimal  @map("planned_quantity") @db.Decimal(14, 4)
+  status          String   @default("OPEN") @db.VarChar(20)
+  notes           String?  @db.VarChar(255)
+  createdBy       String?  @map("created_by") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  organization Organization      @relation(fields: [organizationId], references: [id])
+  branch       Branch            @relation(fields: [branchId], references: [id])
+  finishedItem Item              @relation("ProducedItem", fields: [finishedItemId], references: [id])
+  entries      ProductionEntry[]
+
+  // The WIP balance and the quantity received are NOT columns. Both are
+  // summed from the entries, for the same reason accumulated depreciation is
+  // summed from the runs: a stored total is a second version of the truth
+  // that can drift from the ledger with nothing to notice.
+  @@unique([organizationId, orderNumber], map: "prod_orders_number_uq")
+  @@index([organizationId, status, orderDate])
+  @@map("production_orders")
+}
+
+model ProductionEntry {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productionOrderId String   @map("production_order_id") @db.Uuid
+  // ISSUE, COST, RECEIPT or WRITEOFF — see migration_042.
+  entryType         String   @map("entry_type") @db.VarChar(10)
+  entryDate         DateTime @map("entry_date") @db.Date
+  totalValue        Decimal  @default(0) @map("total_value") @db.Decimal(14, 2)
+  // A scalar rather than a relation, the same convention the depreciation
+  // runs use: nothing navigates from a JournalEntry back to a production
+  // entry, and modelling it would put an unused field on JournalEntry.
+  journalEntryId    String   @unique @map("journal_entry_id") @db.Uuid
+  narration         String?  @db.VarChar(255)
+  createdBy         String?  @map("created_by") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  productionOrder ProductionOrder       @relation(fields: [productionOrderId], references: [id])
+  lines           ProductionEntryLine[]
+
+  @@index([productionOrderId, entryDate])
+  @@map("production_entries")
+}
+
+model ProductionEntryLine {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productionEntryId String   @map("production_entry_id") @db.Uuid
+  // Exactly one of these two, enforced by prod_lines_target_ck. An ISSUE or
+  // RECEIPT names an item and carries a quantity; a COST names the expense
+  // account being absorbed and carries none.
+  itemId            String?  @map("item_id") @db.Uuid
+  accountId         String?  @map("account_id") @db.Uuid
+  quantity          Decimal? @db.Decimal(14, 4)
+  // Derived, never entered: returned by consumeStock on an issue, computed
+  // by absorption on a receipt.
+  unitCost          Decimal? @map("unit_cost") @db.Decimal(14, 4)
+  lineValue         Decimal  @map("line_value") @db.Decimal(14, 2)
+
+  productionEntry ProductionEntry @relation(fields: [productionEntryId], references: [id])
+  item            Item?           @relation("ProductionLineItem", fields: [itemId], references: [id])
+  account         Account?        @relation("ProductionLineAccount", fields: [accountId], references: [id])
+
+  @@index([productionEntryId])
+  @@map("production_entry_lines")
 }
 
 model BusinessPartner {
