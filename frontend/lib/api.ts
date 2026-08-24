@@ -89,6 +89,7 @@ import type {
   ProductionOrderDetail,
   StockTransferSummary,
   StockTransferDetail,
+  TransferSeries,
 } from "./types";
 import { getToken } from "./auth";
 
@@ -1538,20 +1539,44 @@ export function createStockTransfer(body: {
   documentNumber?: string; ewayBillNumber?: string;
   lines: { itemId: string; quantity: number }[];
 }) {
-  return request<{ data: { id: string; transferNumber: string; total: number } }>("/stock-transfers", {
-    method: "POST", body: JSON.stringify(body),
-  });
+  return request<{
+    data: {
+      id: string; transferNumber: string; total: number;
+      // The tax invoice number on a taxable transfer, allocated server-side
+      // from the sending branch's series; the challan reference otherwise.
+      documentNumber: string | null;
+      taxTreatment: string; taxTotal: number;
+    };
+  }>("/stock-transfers", { method: "POST", body: JSON.stringify(body) });
+}
+
+// The tax-invoice numbering series, per branch, for one financial year.
+// Without one a branch cannot send a taxable transfer at all.
+export function getTransferSeries(financialYear?: string) {
+  const q = financialYear ? `?financialYear=${encodeURIComponent(financialYear)}` : "";
+  return request<{ data: TransferSeries }>(`/stock-transfers/series${q}`);
+}
+
+// Sets the prefix only. The running number is deliberately not settable:
+// moving it backwards would re-issue a number already on a document.
+export function setTransferSeries(body: { branchId: string; financialYear?: string; prefix: string }) {
+  return request<{ data: { branchId: string; financialYear: string; prefix: string; nextNumber: number } }>(
+    "/stock-transfers/series", { method: "PUT", body: JSON.stringify(body) },
+  );
 }
 
 export function receiveStockTransfer(id: string, receivedDate?: string) {
-  return request<{ data: { received: boolean; total: number } }>(`/stock-transfers/${id}/receive`, {
+  return request<{ data: { received: boolean; total: number; taxTotal: number } }>(`/stock-transfers/${id}/receive`, {
     method: "POST", body: JSON.stringify({ receivedDate }),
   });
 }
 
 // Brings the goods back to the sending branch. Only while in transit.
 export function cancelStockTransfer(id: string, entryDate?: string) {
-  return request<{ data: { cancelled: boolean; total: number } }>(`/stock-transfers/${id}/cancel`, {
-    method: "POST", body: JSON.stringify({ entryDate }),
-  });
+  return request<{
+    // creditNoteNeeded: the ledger reversal is done, but an invoice that has
+    // already been issued is undone by a credit note under section 34, and
+    // nothing here issues one.
+    data: { cancelled: boolean; total: number; taxTotal: number; creditNoteNeeded: boolean };
+  }>(`/stock-transfers/${id}/cancel`, { method: "POST", body: JSON.stringify({ entryDate }) });
 }

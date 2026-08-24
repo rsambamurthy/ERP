@@ -1,3 +1,27 @@
+$ErrorActionPreference = 'Stop'
+$repo = $PSScriptRoot
+if (-not $repo) { $repo = (Get-Location).Path }
+Write-Host 'Phase D-c: the transfer screen...' -ForegroundColor Cyan
+
+# This script is pure ASCII. Every non-ASCII character travels as ~U+XXXX~
+# and is decoded below, so it behaves identically whether PowerShell reads it
+# as UTF-8 or as Windows-1252. No byte-order mark needed.
+$decoder = [Text.RegularExpressions.MatchEvaluator] {
+  param($m)
+  [char]::ConvertFromUtf32([Convert]::ToInt32($m.Groups[1].Value, 16))
+}
+function Decode($s) {
+  return [Text.RegularExpressions.Regex]::Replace($s, '~U\+([0-9A-Fa-f]{4,6})~', $decoder)
+}
+
+function Set-FileText($rel, $text) {
+  $p = Join-Path $repo $rel
+  $dir = Split-Path $p -Parent
+  if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  [IO.File]::WriteAllText($p, (Decode $text).Replace([string][char]13, ''), (New-Object Text.UTF8Encoding $false))
+  Write-Host "  wrote  $rel"
+}
+$f0 = @'
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
@@ -27,14 +51,14 @@ import { VALUATION_BASIS_LABEL } from "@/lib/types";
 // 1304 Stock in Transit.
 //
 // Different GSTINs: section 25(4) makes them distinct persons, so this IS a
-// supply — a tax invoice under section 31 / Rule 46, GST on a Rule 28 value,
+// supply ~U+2014~ a tax invoice under section 31 / Rule 46, GST on a Rule 28 value,
 // and three journal entries because two registrations keep two trial
 // balances. The tax is computed on cost, because the second proviso to Rule
 // 28 deems the invoice value to be open market value wherever the receiving
 // branch can claim full input tax credit.
 //
 // Which one applies is decided by the two branches' GSTINs and nothing else,
-// so the screen can say so the moment both are picked — before anything is
+// so the screen can say so the moment both are picked ~U+2014~ before anything is
 // submitted. Everything that would make the server REFUSE a taxable dispatch
 // (no state code, no invoice series, a branch that cannot claim full credit)
 // is checked here too, for the same reason: a lorry should not be loaded
@@ -76,7 +100,7 @@ export default function StockTransfersPage() {
   const [detail, setDetail] = useState<StockTransferDetail | null>(null);
 
   const [creating, setCreating] = useState(false);
-  // The invoice-numbering panel. Loaded on demand — most sessions never
+  // The invoice-numbering panel. Loaded on demand ~U+2014~ most sessions never
   // touch it, and a branch's prefix is set once a year at most.
   const [series, setSeries] = useState<TransferSeries | null>(null);
   const [showSeries, setShowSeries] = useState(false);
@@ -169,7 +193,7 @@ export default function StockTransfersPage() {
   const from = branches.find((b) => b.id === form.fromBranchId);
   const to = branches.find((b) => b.id === form.toBranchId);
 
-  // Equal GSTINs — including both blank, which is one unregistered person —
+  // Equal GSTINs ~U+2014~ including both blank, which is one unregistered person ~U+2014~
   // is one registration, so nothing is supplied to anybody. Anything else is
   // two distinct persons under section 25(4), and a supply.
   const taxable = !!from && !!to
@@ -188,20 +212,20 @@ export default function StockTransfersPage() {
       blockers.push(
         `${to.name} is marked as not able to claim full input tax credit. The second proviso to Rule 28 does not `
         + "apply to it, so the tax stops being revenue-neutral and becomes a cost that has to be capitalised into "
-        + "that branch's stock — which is not built. Change the branch, or its ITC setting if that marking is wrong.",
+        + "that branch's stock ~U+2014~ which is not built. Change the branch, or its ITC setting if that marking is wrong.",
       );
     }
     if (!from.stateCode || !to.stateCode) {
       blockers.push(
         `${!from.stateCode ? from.name : to.name} has no GST state code, so this cannot be split into CGST+SGST or `
-        + "IGST. Set it on the branch — this is your own registration, and guessing would put the tax under the "
+        + "IGST. Set it on the branch ~U+2014~ this is your own registration, and guessing would put the tax under the "
         + "wrong heads on a real return.",
       );
     }
     if (series && !fromSeries?.configured) {
       blockers.push(
         `${from.name} has no tax-invoice series for ${series.financialYear}. Rule 46(b) wants a consecutive serial `
-        + "number and there is none to take — set the prefix under Invoice numbering.",
+        + "number and there is none to take ~U+2014~ set the prefix under Invoice numbering.",
       );
     }
   }
@@ -217,7 +241,7 @@ export default function StockTransfersPage() {
         <h1>Stock Transfers</h1>
         <p>
           Goods moving from one branch to another. Dispatched stock sits in 1304 Stock in Transit until the
-          receiving branch confirms it — which is where it actually is. Between branches on different GSTINs
+          receiving branch confirms it ~U+2014~ which is where it actually is. Between branches on different GSTINs
           it is a taxable supply and a tax invoice is raised; on the same GSTIN it is a delivery challan.
         </p>
       </div>
@@ -230,7 +254,7 @@ export default function StockTransfersPage() {
           <option value="CANCELLED">Cancelled</option>
           <option value="ALL">All</option>
         </select>
-        <span style={muted}>{loading ? "Loading…" : `${rows.length} transfer${rows.length === 1 ? "" : "s"}`}</span>
+        <span style={muted}>{loading ? "Loading~U+2026~" : `${rows.length} transfer${rows.length === 1 ? "" : "s"}`}</span>
         <div style={{ flex: 1 }} />
         {canPost && !showSeries && (
           <button className="ent-ia ent-ia-edit" onClick={openSeries}>Invoice numbering</button>
@@ -249,24 +273,24 @@ export default function StockTransfersPage() {
       )}
 
       {/* Invoice numbering. A branch cannot send a taxable transfer without a
-          series, so this is not an advanced setting tucked away somewhere —
+          series, so this is not an advanced setting tucked away somewhere ~U+2014~
           it is one click from the screen that needs it. */}
       {showSeries && (
         <div className="ent-section" style={{ marginBottom: 16 }}>
           <div className="ent-section-hdr">
             <span className="ent-section-title">
-              Tax invoice numbering{series ? ` — ${series.financialYear}` : ""}
+              Tax invoice numbering{series ? ` ~U+2014~ ${series.financialYear}` : ""}
             </span>
             <button className="ent-ia ent-ia-edit" onClick={() => setShowSeries(false)}>Close</button>
           </div>
           <div style={{ padding: 14 }}>
             <p style={{ ...muted, marginTop: 0 }}>
               A branch transfer between different GSTINs needs a tax invoice with a consecutive serial number under
-              Rule 46(b), and two branches are distinct persons under section 25(4) — so the series belongs to the
+              Rule 46(b), and two branches are distinct persons under section 25(4) ~U+2014~ so the series belongs to the
               sending branch, not the company. The running number is not editable: moving it backwards would
               re-issue a number that has already been on a document.
             </p>
-            {!series && <p style={muted}>Loading…</p>}
+            {!series && <p style={muted}>Loading~U+2026~</p>}
             {series && (
               <table style={{ width: "100%" }}>
                 <thead>
@@ -287,7 +311,7 @@ export default function StockTransfersPage() {
                         <td>
                           {b.name}
                           {b.itcEligibility !== "FULL" && (
-                            <div style={muted}>Cannot claim full ITC — transfers into it are refused</div>
+                            <div style={muted}>Cannot claim full ITC ~U+2014~ transfers into it are refused</div>
                           )}
                           {!b.stateCode && <div style={muted}>No GST state code set</div>}
                         </td>
@@ -303,7 +327,7 @@ export default function StockTransfersPage() {
                             </span>
                           )}
                         </td>
-                        <td style={num}>{b.nextNumber ?? "—"}</td>
+                        <td style={num}>{b.nextNumber ?? "~U+2014~"}</td>
                         <td style={{ textAlign: "right" }}>
                           <button className="ent-ia ent-ia-edit" disabled={busy || !changed || !draftPrefix.trim()}
                             onClick={() => run(async () => {
@@ -336,7 +360,7 @@ export default function StockTransfersPage() {
               <div className="ent-fg">
                 <span className="ent-fl">From</span>
                 <select className="ent-fc" value={form.fromBranchId} onChange={(e) => setForm((f) => ({ ...f, fromBranchId: e.target.value }))}>
-                  <option value="">Pick a branch…</option>
+                  <option value="">Pick a branch~U+2026~</option>
                   {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                 </select>
                 {from && <span style={muted}>GSTIN {from.gstin || "not set"}</span>}
@@ -344,7 +368,7 @@ export default function StockTransfersPage() {
               <div className="ent-fg">
                 <span className="ent-fl">To</span>
                 <select className="ent-fc" value={form.toBranchId} onChange={(e) => setForm((f) => ({ ...f, toBranchId: e.target.value }))}>
-                  <option value="">Pick a branch…</option>
+                  <option value="">Pick a branch~U+2026~</option>
                   {branches.filter((b) => b.id !== form.fromBranchId).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                 </select>
                 {to && <span style={muted}>GSTIN {to.gstin || "not set"}</span>}
@@ -364,7 +388,7 @@ export default function StockTransfersPage() {
                 <span className="ent-fl">E-way bill no.</span>
                 <input type="text" className="ent-fc" maxLength={20} value={form.ewayBillNumber}
                   onChange={(e) => setForm((f) => ({ ...f, ewayBillNumber: e.target.value }))} />
-                <span style={muted}>Needed above ₹50,000 under Rule 138; intra-state limits vary by state.</span>
+                <span style={muted}>Needed above ~U+20B9~50,000 under Rule 138; intra-state limits vary by state.</span>
               </div>
             </div>
 
@@ -378,7 +402,7 @@ export default function StockTransfersPage() {
                   <strong>{from?.name}</strong> and <strong>{to?.name}</strong> have different GSTINs, so under
                   section 25(4) they are distinct persons and this is a <strong>taxable supply</strong>. A tax
                   invoice will be raised{fromSeries?.prefix ? <> from <code>{fromSeries.prefix}</code></> : null}
-                  {" "}and {interState ? "IGST" : "CGST + SGST"} charged on the value of the goods at cost — the
+                  {" "}and {interState ? "IGST" : "CGST + SGST"} charged on the value of the goods at cost ~U+2014~ the
                   second proviso to Rule 28 deems that to be the open market value, because {to?.name} can claim it
                   all back as input tax credit.
                 </p>
@@ -405,8 +429,8 @@ export default function StockTransfersPage() {
                     <td>
                       <select className="ent-fc" value={d.itemId}
                         onChange={(e) => setDraft((r) => r.map((x, j) => j === i ? { ...x, itemId: e.target.value } : x))}>
-                        <option value="">Pick an item…</option>
-                        {items.map((it) => <option key={it.id} value={it.id}>{it.sku} — {it.name}</option>)}
+                        <option value="">Pick an item~U+2026~</option>
+                        {items.map((it) => <option key={it.id} value={it.id}>{it.sku} ~U+2014~ {it.name}</option>)}
                       </select>
                     </td>
                     <td>
@@ -442,11 +466,11 @@ export default function StockTransfersPage() {
                   });
                   setCreating(false);
                   return r.data.taxTreatment === "TAXABLE"
-                    ? `${r.data.transferNumber} dispatched on tax invoice ${r.data.documentNumber} — `
+                    ? `${r.data.transferNumber} dispatched on tax invoice ${r.data.documentNumber} ~U+2014~ `
                       + `${money(r.data.total)} of goods plus ${money(r.data.taxTotal)} tax.`
-                    : `${r.data.transferNumber} dispatched — ${money(r.data.total)} into stock in transit.`;
+                    : `${r.data.transferNumber} dispatched ~U+2014~ ${money(r.data.total)} into stock in transit.`;
                 })}>
-                {busy ? "Dispatching…" : "Dispatch"}
+                {busy ? "Dispatching~U+2026~" : "Dispatch"}
               </button>
               <button className="ent-btn-cancel" onClick={() => { setCreating(false); setError(null); }}>Cancel</button>
             </div>
@@ -468,17 +492,17 @@ export default function StockTransfersPage() {
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={7} className="ent-empty">Loading…</td></tr>}
+            {loading && <tr><td colSpan={7} className="ent-empty">Loading~U+2026~</td></tr>}
             {!loading && rows.length === 0 && <tr><td colSpan={7} className="ent-empty">No transfers.</td></tr>}
             {!loading && rows.map((t) => (
-              // Fragment carries the key, not the rows inside it — a row and
+              // Fragment carries the key, not the rows inside it ~U+2014~ a row and
               // its expanded detail are two <tr> for one transfer.
               <Fragment key={t.id}>
                 <tr>
                   <td style={{ fontWeight: 500 }}>{t.transferNumber}</td>
                   <td>{t.transferDate}</td>
                   <td>
-                    {t.fromBranch.name} → {t.toBranch.name}
+                    {t.fromBranch.name} ~U+2192~ {t.toBranch.name}
                     {/* A challan and a tax invoice are different documents;
                         calling both "challan" would be wrong on the one that
                         carries GST. */}
@@ -504,12 +528,12 @@ export default function StockTransfersPage() {
                 {expanded === t.id && (
                   <tr>
                     <td colSpan={7} style={{ background: "#fafcff" }}>
-                      {!detail && <p style={muted}>Loading…</p>}
+                      {!detail && <p style={muted}>Loading~U+2026~</p>}
                       {detail && (
                         <div style={{ padding: "4px 0 8px" }}>
                           {detail.taxTreatment === "TAXABLE" && (
                             <p style={{ ...muted, marginTop: 0 }}>
-                              Tax invoice <strong>{detail.documentNumber}</strong> — {detail.fromBranch.gstin} to{" "}
+                              Tax invoice <strong>{detail.documentNumber}</strong> ~U+2014~ {detail.fromBranch.gstin} to{" "}
                               {detail.toBranch.gstin}. Valued under{" "}
                               {VALUATION_BASIS_LABEL[detail.lines[0]?.valuationBasis ?? "SECOND_PROVISO"]}.
                             </p>
@@ -531,16 +555,16 @@ export default function StockTransfersPage() {
                             <tbody>
                               {detail.lines.map((l) => (
                                 <tr key={l.id}>
-                                  <td>{l.item.sku} — {l.item.name}</td>
+                                  <td>{l.item.sku} ~U+2014~ {l.item.name}</td>
                                   <td style={num}>{l.quantity} {l.item.uom}</td>
                                   <td style={num}>{money(l.unitCost)}</td>
                                   <td style={num}>{money(l.lineValue)}</td>
                                   {detail.taxTreatment === "TAXABLE" && <>
-                                    <td style={num}>{l.item.hsnCode ?? "—"}</td>
+                                    <td style={num}>{l.item.hsnCode ?? "~U+2014~"}</td>
                                     <td style={num}>{l.gstRate ?? 0}%</td>
                                     <td style={num}>
                                       {money((l.cgst ?? 0) + (l.sgst ?? 0) + (l.igst ?? 0))}
-                                      {/* Which heads, not just how much — a
+                                      {/* Which heads, not just how much ~U+2014~ a
                                           wrong split is a filing error even
                                           when the total is right. */}
                                       <div style={muted}>
@@ -570,9 +594,9 @@ export default function StockTransfersPage() {
                                 onClick={() => run(async () => {
                                   const r = await receiveStockTransfer(detail.id, today());
                                   return r.data.taxTotal > 0
-                                    ? `${detail.transferNumber} received at ${detail.toBranch.name} — `
+                                    ? `${detail.transferNumber} received at ${detail.toBranch.name} ~U+2014~ `
                                       + `${money(r.data.total)} of goods and ${money(r.data.taxTotal)} input tax credit.`
-                                    : `${detail.transferNumber} received at ${detail.toBranch.name} — ${money(r.data.total)}.`;
+                                    : `${detail.transferNumber} received at ${detail.toBranch.name} ~U+2014~ ${money(r.data.total)}.`;
                                 })}>
                                 Receive at {detail.toBranch.name}
                               </button>
@@ -595,9 +619,9 @@ export default function StockTransfersPage() {
                                   void run(async () => {
                                     const r = await cancelStockTransfer(detail.id, today());
                                     return r.data.creditNoteNeeded
-                                      ? `${detail.transferNumber} cancelled — ${money(r.data.total)} returned to `
+                                      ? `${detail.transferNumber} cancelled ~U+2014~ ${money(r.data.total)} returned to `
                                         + `${detail.fromBranch.name}. Raise a credit note for invoice ${detail.documentNumber}.`
-                                      : `${detail.transferNumber} cancelled — ${money(r.data.total)} returned to ${detail.fromBranch.name}.`;
+                                      : `${detail.transferNumber} cancelled ~U+2014~ ${money(r.data.total)} returned to ${detail.fromBranch.name}.`;
                                   });
                                 }}>
                                 Cancel and return
@@ -607,7 +631,7 @@ export default function StockTransfersPage() {
                           {detail.status === "RECEIVED" && (
                             <p style={{ ...muted, marginTop: 10 }}>
                               Received at {detail.toBranch.name} on {detail.receivedDate}. To move it back, raise a
-                              transfer the other way — cancelling now would take stock off a branch that is holding it.
+                              transfer the other way ~U+2014~ cancelling now would take stock off a branch that is holding it.
                             </p>
                           )}
                         </div>
@@ -623,3 +647,7 @@ export default function StockTransfersPage() {
     </AppShell>
   );
 }
+'@
+Set-FileText 'frontend/app/inventory/stock-transfers/page.tsx' $f0
+Write-Host ''
+Write-Host 'Done.' -ForegroundColor Green

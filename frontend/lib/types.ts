@@ -1384,6 +1384,10 @@ export interface Branch {
   // Compared against the counterparty's stateCode at Sales/Purchase
   // posting time to decide CGST+SGST vs IGST.
   stateCode: string | null;
+  // Whether this branch can claim FULL input tax credit on what it receives.
+  // Defaults to FULL, which is what makes valuing a branch transfer into it
+  // at cost legal under the second proviso to Rule 28.
+  itcEligibility: ItcEligibility;
   phone: string | null;
   email: string | null;
   address: unknown;
@@ -2081,15 +2085,46 @@ export interface ProductionOrderDetail extends ProductionOrderSummary {
 // 1304 Stock in Transit is where the balance sheet says so. Both journal
 // entries net through it, because a journal entry carries a single branch.
 
+// Which step of Rule 28 justifies a taxable line's value. Only
+// SECOND_PROVISO is written today: where the receiving branch can claim full
+// input tax credit, the proviso DEEMS the invoice value to be open market
+// value, and the value declared is cost. The rest of the hierarchy is named
+// because a line into a branch that cannot claim full credit would need it.
+export type ValuationBasis =
+  | "SECOND_PROVISO" | "OMV" | "NINETY_PCT" | "LIKE_KIND" | "RULE_30";
+
+export const VALUATION_BASIS_LABEL: Record<ValuationBasis, string> = {
+  SECOND_PROVISO: "Rule 28, 2nd proviso (invoice value = OMV)",
+  OMV: "Rule 28(1)(a) open market value",
+  NINETY_PCT: "Rule 28, 1st proviso (90% of onward price)",
+  LIKE_KIND: "Rule 28(1)(b) like kind and quality",
+  RULE_30: "Rule 30 (110% of cost)",
+};
+
+// Whether a branch can claim full input tax credit on what it receives.
+// FULL is what makes the second proviso available and a transfer at cost
+// legal; the others mean the tax would be a cost to that branch, which is
+// not built — a taxable transfer into one is refused.
+export type ItcEligibility = "FULL" | "RESTRICTED" | "PROPORTIONATE";
+
 export interface StockTransferLineView {
   id: string;
-  item: { id: string; sku: string; name: string; uom: string };
+  item: { id: string; sku: string; name: string; uom: string; hsnCode: string | null };
   quantity: number;
   // What the stock was worth at the sending branch. Never entered — the
   // receiving branch receives at this cost and nothing is re-valued in
   // transit.
   unitCost: number;
   lineValue: number;
+  // Null on an untaxed transfer, which is not a supply and carries no tax.
+  // taxableValue equals lineValue under the second proviso by design; it is
+  // a separate figure because under any other basis it would not be.
+  taxableValue: number | null;
+  valuationBasis: ValuationBasis;
+  gstRate: number | null;
+  cgst: number | null;
+  sgst: number | null;
+  igst: number | null;
 }
 
 export interface StockTransferSummary {
@@ -2100,17 +2135,54 @@ export interface StockTransferSummary {
   fromBranch: { id: string; name: string };
   toBranch: { id: string; name: string };
   status: string;
-  // NONE or TAXABLE. Only NONE is written today — a transfer between
-  // branches with different GSTINs is refused rather than posted untaxed.
+  // NONE for a same-GSTIN move (one legal person, delivery challan under
+  // Rule 55). TAXABLE where the GSTINs differ, which section 25(4) makes
+  // distinct persons — a supply needing a tax invoice and GST.
   taxTreatment: string;
+  // The Rule 55 challan reference on an untaxed transfer; the section 31 /
+  // Rule 46 tax invoice number, allocated from the branch's series, on a
+  // taxable one.
   documentNumber: string | null;
   lineCount: number;
+  // Goods at cost. Never includes tax — stock moves at cost end to end.
   totalValue: number;
+  taxTotal: number;
+  // What the receiving branch owes: goods at cost plus the tax. Equals
+  // totalValue on an untaxed transfer, where nothing is owed to anybody.
+  invoiceTotal: number;
 }
 
 export interface StockTransferDetail extends Omit<StockTransferSummary, "lineCount"> {
+  fromBranch: { id: string; name: string; gstin: string | null };
+  toBranch: { id: string; name: string; gstin: string | null };
+  // The receiving branch's ITC posture, frozen at dispatch. Read from here
+  // rather than the live branch, so reclassifying a branch never restates a
+  // transfer already made.
+  toBranchItcEligibility: ItcEligibility;
   ewayBillNumber: string | null;
   dispatchJournalEntryId: string | null;
   receiptJournalEntryId: string | null;
+  // Only a taxable transfer has a third entry: the sending branch converting
+  // its stock-in-transit into a receivable when the goods land.
+  transitClearingJournalEntryId: string | null;
   lines: StockTransferLineView[];
+}
+
+// One branch's tax-invoice numbering for a financial year.
+export interface TransferSeriesRow {
+  branchId: string;
+  name: string;
+  gstin: string | null;
+  stateCode: string | null;
+  itcEligibility: ItcEligibility;
+  prefix: string | null;
+  nextNumber: number | null;
+  // False means this branch cannot send a taxable transfer at all — Rule
+  // 46(b) wants a consecutive serial number and there is none to take.
+  configured: boolean;
+}
+
+export interface TransferSeries {
+  financialYear: string;
+  branches: TransferSeriesRow[];
 }
