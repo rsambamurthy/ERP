@@ -135,6 +135,32 @@ router.get("/gstr1/export", async (req, res) => {
       ],
       rows: report.creditNotes.map((r) => [r.noteNumber, r.noteDate, r.originalInvoiceNumber, r.gstin, r.receiverName, r.placeOfSupply, r.rate, r.taxableValue, r.cgst, r.sgst, r.igst]),
     },
+    {
+      // NOT a GSTR-1 table — an exception list. These branch-transfer
+      // invoices were issued and then cancelled, so they are deliberately
+      // absent from B2B above, which leaves a hole in a serial number series
+      // that Rule 46(b) requires to be consecutive. Section 34 undoes an
+      // issued invoice with a credit note, and this system does not raise
+      // one. Anyone filing from the workbook rather than the screen needs to
+      // see them, which is the whole reason the sheet exists even when it is
+      // usually empty.
+      name: "Cancelled Transfers",
+      columns: [
+        { header: "Transfer", width: 14 },
+        { header: "Invoice Number (issued)", width: 24 },
+        { header: "Invoice Date", width: 14 },
+        { header: "Receiving GSTIN", width: 20 },
+        { header: "Receiving Branch", width: 26 },
+        { header: "Taxable Value", width: 16, numFmt: "#,##0.00" },
+        { header: "Tax", width: 14, numFmt: "#,##0.00" },
+        { header: "Action needed", width: 40 },
+      ],
+      rows: report.cancelledTransfers.map((r) => [
+        r.transferNumber, r.invoiceNumber, r.invoiceDate, r.toGstin, r.toBranchName,
+        r.taxableValue, r.taxAmount,
+        "Raise a credit note under section 34 — not reported above",
+      ]),
+    },
   ]);
 
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");

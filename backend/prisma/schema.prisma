@@ -1577,6 +1577,19 @@ model StockTransfer {
   // frozen for the same reason taxTreatment is. The route reads THIS, never
   // the live branch row, once a transfer exists.
   toBranchItcEligibility String    @default("FULL") @map("to_branch_itc_eligibility") @db.VarChar(20)
+  // Who the counterparty was and where the supply took place, frozen at
+  // dispatch. A taxable transfer is reported in the sending branch's GSTR-1
+  // with the receiving branch as a B2B counterparty, and all of that
+  // identity otherwise lives on the branches table and would be read live —
+  // so correcting a branch's GSTIN would restate periods already filed.
+  // Exactly the defect migration_031 fixed for sales invoices; see
+  // migration_047. Null on an untaxed transfer, which is not a supply and
+  // appears in no return.
+  fromGstin              String?   @map("from_gstin") @db.VarChar(15)
+  fromStateCode          String?   @map("from_state_code") @db.VarChar(2)
+  toGstin                String?   @map("to_gstin") @db.VarChar(15)
+  toStateCode            String?   @map("to_state_code") @db.VarChar(2)
+  toBranchName           String?   @map("to_branch_name") @db.VarChar(200)
   // Rule 55 delivery challan number on an untaxed transfer; the section 31 /
   // Rule 46 TAX INVOICE number on a taxable one, allocated from
   // DocumentNumberSeries for the sending branch.
@@ -1633,6 +1646,13 @@ model StockTransferLine {
   // transfer can carry a bought-in item with a known market price alongside
   // a manufactured one that has none.
   valuationBasis  String   @default("SECOND_PROVISO") @map("valuation_basis") @db.VarChar(20)
+  // What was supplied, frozen at dispatch — the classification half of the
+  // same defect migration_047 fixed for the counterparty. GSTR-1's HSN
+  // summary reported these from the item master, so correcting an HSN
+  // restated a filed period. See migration_048.
+  hsnCode         String?  @map("hsn_code") @db.VarChar(10)
+  itemName        String?  @map("item_name") @db.VarChar(200)
+  uom             String?  @db.VarChar(20)
   gstRate         Decimal? @map("gst_rate") @db.Decimal(5, 2)
   cgst            Decimal? @db.Decimal(14, 2)
   sgst            Decimal? @db.Decimal(14, 2)
