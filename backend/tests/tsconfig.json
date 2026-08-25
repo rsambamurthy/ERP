@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // The parent pins rootDir to src and lib to ES2020, both of which are
+    // right for the server and wrong here: these files live outside src, and
+    // the runner uses global fetch (Node 18+) plus a few ES2021 conveniences.
+    // Nothing here is ever compiled into dist — the parent's include list is
+    // src/**/*.ts, so `npm run build` and the Railway deploy never see it.
+    "rootDir": "..",
+    "lib": ["ES2022"],
+    "target": "ES2022",
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"]
+}

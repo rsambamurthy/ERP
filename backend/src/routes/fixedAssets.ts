@@ -40,13 +40,17 @@ router.get("/", async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
 
+  // RETURNED belongs here too. An asset sent back to the vendor is gone in
+  // exactly the way a disposed one is, and leaving it on the register would
+  // overstate the gross block by something the company does not own.
   const includeDisposed = String(req.query.includeDisposed ?? "") === "true";
+  const GONE = ["DISPOSED", "RETURNED"];
 
   const assets = await prisma.fixedAsset.findMany({
     where: {
       organizationId,
       deletedAt: null,
-      ...(includeDisposed ? {} : { status: { not: "DISPOSED" } }),
+      ...(includeDisposed ? {} : { status: { notIn: GONE } }),
     },
     include: {
       assetClass: { select: { id: true, name: true } },
@@ -93,9 +97,15 @@ router.get("/", async (req, res) => {
 });
 
 // GET /fixed-assets/:id — one asset, with every charge posted against it.
+const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
 router.get("/:id", async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
+  // An id that is not a uuid reaches Prisma as one anyway and comes back as
+  // P2023, which the error handler turns into a 500 with a stack trace. It is
+  // a client sending a bad URL, not a server fault.
+  if (!UUID.test(req.params.id)) return res.status(404).json({ message: "Fixed asset not found." });
 
   const a = await prisma.fixedAsset.findFirst({
     where: { id: req.params.id, organizationId, deletedAt: null },
@@ -188,6 +198,10 @@ router.get("/:id", async (req, res) => {
 router.get("/:id/schedule", async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
+  // An id that is not a uuid reaches Prisma as one anyway and comes back as
+  // P2023, which the error handler turns into a 500 with a stack trace. It is
+  // a client sending a bad URL, not a server fault.
+  if (!UUID.test(req.params.id)) return res.status(404).json({ message: "Fixed asset not found." });
 
   const a = await prisma.fixedAsset.findFirst({
     where: { id: req.params.id, organizationId, deletedAt: null },

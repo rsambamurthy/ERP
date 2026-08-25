@@ -1,0 +1,1879 @@
+[
+ {
+  "key": "DEP-01.1",
+  "caseId": "DEP-01",
+  "caseTitle": "Capitalise a laptop from a purchase bill",
+  "action": "Create a Purchase Bill (not linked to a Purchase Order).",
+  "je": [
+   {
+    "code": "1405",
+    "name": "Computers & Equipment (asset card)",
+    "debit": 120000,
+    "credit": 0
+   },
+   {
+    "code": "1102",
+    "name": "CGST Input Credit",
+    "debit": 10800,
+    "credit": 0
+   },
+   {
+    "code": "1103",
+    "name": "SGST Input Credit",
+    "debit": 10800,
+    "credit": 0
+   },
+   {
+    "code": "2001",
+    "name": "Accounts Payable (Sundar Systems)",
+    "debit": 0,
+    "credit": 141600
+   }
+  ],
+  "phase": 1,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN}}",
+   "billDate": "2026-04-01",
+   "branchId": "{{BR_A_D07}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_LAP_A}}",
+     "quantity": 1,
+     "rate": 120000,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_1}}",
+     "assetName": "Laptop 14in - Finance",
+     "inUseDate": "2026-04-01"
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "billId": "data.id"
+  },
+  "asserts": [
+   "journal purchase_bill {{billId}}"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-01.2",
+  "caseId": "DEP-01",
+  "caseTitle": "Capitalise a laptop from a purchase bill",
+  "action": "Open Fixed Assets and find the new asset.",
+  "phase": 1,
+  "login": "A",
+  "method": "GET",
+  "path": "/fixed-assets",
+  "status": 200,
+  "capture": {
+   "assetId": "data[name=Laptop 14in - Finance].id",
+   "assetCode": "data[name=Laptop 14in - Finance].assetCode"
+  },
+  "asserts": [
+   "field data[id={{assetId}}].grossCost = 120000.00",
+   "field data[id={{assetId}}].residualValue = 6000.00",
+   "field data[id={{assetId}}].usefulLifeMonths = 60",
+   "field data[id={{assetId}}].method = SLM",
+   "field data[id={{assetId}}].inUseDate = 2026-04-01"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-01.3",
+  "caseId": "DEP-01",
+  "caseTitle": "Capitalise a laptop from a purchase bill",
+  "action": "Check the asset's own sub-ledger card.",
+  "phase": 1,
+  "login": "A",
+  "method": "GET",
+  "path": "/journal",
+  "status": 200,
+  "asserts": [
+   "manual: drill into the 1405 sub-ledger card in the UI. The API assertion in step 1 already proves the line carries the asset's businessPartnerId."
+  ],
+  "auto": "PARTIAL"
+ },
+ {
+  "key": "DEP-02.1",
+  "caseId": "DEP-02",
+  "caseTitle": "Line under the capitalisation threshold is expensed",
+  "action": "Create a Purchase Bill with a small capital-by-nature line.",
+  "je": [
+   {
+    "code": "4008",
+    "name": "Administrative (the item's expense head)",
+    "debit": 4500,
+    "credit": 0
+   },
+   {
+    "code": "1102",
+    "name": "CGST Input Credit",
+    "debit": 405,
+    "credit": 0
+   },
+   {
+    "code": "1103",
+    "name": "SGST Input Credit",
+    "debit": 405,
+    "credit": 0
+   },
+   {
+    "code": "2001",
+    "name": "Accounts Payable",
+    "debit": 0,
+    "credit": 5310
+   }
+  ],
+  "phase": 1,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN}}",
+   "billDate": "2026-04-02",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_LAP_A}}",
+     "quantity": 1,
+     "rate": 4500,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_1}}",
+     "assetName": "Laptop - below threshold",
+     "inUseDate": "2026-04-02"
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "billId": "data.id"
+  },
+  "asserts": [
+   "journal purchase_bill {{billId}}"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-02.2",
+  "caseId": "DEP-02",
+  "caseTitle": "Line under the capitalisation threshold is expensed",
+  "action": "Search Fixed Assets for anything dated 02-Apr-2026.",
+  "phase": 1,
+  "login": "A",
+  "method": "GET",
+  "path": "/fixed-assets",
+  "status": 200,
+  "asserts": [
+   "field count(data[name=Laptop - below threshold]) = 0"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-03.1",
+  "caseId": "DEP-03",
+  "caseTitle": "A stock item cannot be capitalised",
+  "action": "Create a Purchase Bill and tick capitalise on a stock line.",
+  "phase": 1,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN}}",
+   "billDate": "2026-04-03",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_BRG_A}}",
+     "quantity": 1,
+     "rate": 50000,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_1}}",
+     "assetName": "Bearing",
+     "inUseDate": "2026-04-03"
+    }
+   ]
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"Only a non-stock item can be capitalised\""
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-04.1",
+  "caseId": "DEP-04",
+  "caseTitle": "A line is either prepaid or capitalised, not both",
+  "action": "Create a Purchase Bill with both flags set on one line.",
+  "phase": 1,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN}}",
+   "billDate": "2026-04-04",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_LAP_A}}",
+     "quantity": 1,
+     "rate": 60000,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_1}}",
+     "assetName": "Laptop",
+     "inUseDate": "2026-04-04",
+     "prepaid": true,
+     "prepaidStartMonth": "2026-04",
+     "prepaidMonths": 12
+    }
+   ]
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"either prepaid or capitalised\""
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-05.1",
+  "caseId": "DEP-05",
+  "caseTitle": "Capitalising GST is refused (not yet supported)",
+  "action": "Create a Purchase Bill and ask for the GST to go into the asset's cost.",
+  "phase": 1,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN}}",
+   "billDate": "2026-04-05",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_LAP_A}}",
+     "quantity": 1,
+     "rate": 60000,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_1}}",
+     "assetName": "Laptop",
+     "inUseDate": "2026-04-05",
+     "capitaliseGst": true
+    }
+   ]
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"Capitalising GST\""
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-06.1",
+  "caseId": "DEP-06",
+  "caseTitle": "Capitalising on a foreign-currency bill is refused",
+  "action": "Create a USD Purchase Bill with a capital line.",
+  "phase": 1,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_USD}}",
+   "billDate": "2026-04-06",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_LAP_A}}",
+     "quantity": 1,
+     "rate": 1500,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_1}}",
+     "assetName": "Laptop",
+     "inUseDate": "2026-04-06",
+     "rateFc": 1500
+    }
+   ],
+   "currency": "USD",
+   "exchangeRate": 84
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"foreign-currency bill\""
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-07.1",
+  "caseId": "DEP-07",
+  "caseTitle": "SLM monthly — three periods",
+  "action": "Open Depreciation > Due, on or after 01-May-2026.",
+  "phase": 2,
+  "login": "A",
+  "method": "GET",
+  "path": "/depreciation-runs/due",
+  "status": 200,
+  "asserts": [
+   "field data.period.periodStart = 2026-04-01",
+   "field data.frequency = MONTHLY",
+   "field data.assets[id={{DEP-01.assetId}}].amount = 1900.00"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-07.2",
+  "caseId": "DEP-07",
+  "caseTitle": "SLM monthly — three periods",
+  "action": "Post April 2026.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 1900,
+    "credit": 0
+   },
+   {
+    "code": "1455",
+    "name": "Accumulated Depreciation - Computers (asset card)",
+    "debit": 0,
+    "credit": 1900
+   }
+  ],
+  "phase": 2,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-04-01"
+  },
+  "status": 200,
+  "asserts": [
+   "journal depreciation_run period=2026-04-01 branch={{BR_A_D07}}"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-07.3",
+  "caseId": "DEP-07",
+  "caseTitle": "SLM monthly — three periods",
+  "action": "Post May 2026.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 1900,
+    "credit": 0
+   },
+   {
+    "code": "1455",
+    "name": "Accumulated Depreciation - Computers (asset card)",
+    "debit": 0,
+    "credit": 1900
+   }
+  ],
+  "phase": 3,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-05-01"
+  },
+  "status": 200,
+  "asserts": [
+   "journal depreciation_run period=2026-05-01 branch={{BR_A_D07}}"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-07.4",
+  "caseId": "DEP-07",
+  "caseTitle": "SLM monthly — three periods",
+  "action": "Post June 2026.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 1900,
+    "credit": 0
+   },
+   {
+    "code": "1455",
+    "name": "Accumulated Depreciation - Computers (asset card)",
+    "debit": 0,
+    "credit": 1900
+   }
+  ],
+  "phase": 4,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-06-01"
+  },
+  "status": 200,
+  "asserts": [
+   "journal depreciation_run period=2026-06-01 branch={{BR_A_D07}}"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-07.5",
+  "caseId": "DEP-07",
+  "caseTitle": "SLM monthly — three periods",
+  "action": "Open the asset's depreciation schedule.",
+  "phase": 4,
+  "login": "A",
+  "method": "GET",
+  "path": "/fixed-assets/{{DEP-01.assetId}}/schedule",
+  "status": 200,
+  "asserts": [
+   "field count(data.periods[posted=true]) = 3",
+   "field data.periods[2].closingWdv = 114300.00",
+   "field data.periods[0].amount = 1900.00"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-08.1",
+  "caseId": "DEP-08",
+  "caseTitle": "SLM part month — pro-rata on days",
+  "action": "Capitalise via a Purchase Bill.",
+  "je": [
+   {
+    "code": "1405",
+    "name": "Computers & Equipment (asset card)",
+    "debit": 120000,
+    "credit": 0
+   },
+   {
+    "code": "1102",
+    "name": "CGST Input Credit",
+    "debit": 10800,
+    "credit": 0
+   },
+   {
+    "code": "1103",
+    "name": "SGST Input Credit",
+    "debit": 10800,
+    "credit": 0
+   },
+   {
+    "code": "2001",
+    "name": "Accounts Payable",
+    "debit": 0,
+    "credit": 141600
+   }
+  ],
+  "phase": 1,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN}}",
+   "billDate": "2026-04-16",
+   "branchId": "{{BR_A_D08}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_LAP_A}}",
+     "quantity": 1,
+     "rate": 120000,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_1}}",
+     "assetName": "Laptop 14in - part month",
+     "inUseDate": "2026-04-16"
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "billId": "data.id",
+   "assetId": "GET /fixed-assets :: data[name=Laptop 14in - part month].id"
+  },
+  "asserts": [
+   "journal purchase_bill {{billId}}"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-08.2",
+  "caseId": "DEP-08",
+  "caseTitle": "SLM part month — pro-rata on days",
+  "action": "Post April 2026 and read this asset's line.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 950,
+    "credit": 0
+   },
+   {
+    "code": "1455",
+    "name": "Accumulated Depreciation - Computers (asset card)",
+    "debit": 0,
+    "credit": 950
+   }
+  ],
+  "phase": 2,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-04-01"
+  },
+  "status": 200,
+  "asserts": [
+   "GET /fixed-assets/{{DEP-08.assetId}}/schedule :: field data.periods[0].daysCharged = 15",
+   "GET /fixed-assets/{{DEP-08.assetId}}/schedule :: field data.periods[0].daysInPeriod = 30",
+   "GET /fixed-assets/{{DEP-08.assetId}}/schedule :: field data.periods[0].amount = 950.00",
+   "journal depreciation_run period=2026-04-01 branch={{BR_A_D08}}"
+  ],
+  "auto": "YES",
+  "note": "Run this INSTEAD of DEP-07.2 - one post covers every branch. Assert both branches' figures from the one call."
+ },
+ {
+  "key": "DEP-08.3",
+  "caseId": "DEP-08",
+  "caseTitle": "SLM part month — pro-rata on days",
+  "action": "Post May 2026.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 1900,
+    "credit": 0
+   },
+   {
+    "code": "1455",
+    "name": "Accumulated Depreciation - Computers (asset card)",
+    "debit": 0,
+    "credit": 1900
+   }
+  ],
+  "phase": 3,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-05-01"
+  },
+  "status": 200,
+  "asserts": [
+   "journal depreciation_run period=2026-05-01 branch={{BR_A_D08}}"
+  ],
+  "auto": "YES",
+  "note": "Same posting as DEP-07.3."
+ },
+ {
+  "key": "DEP-09.1",
+  "caseId": "DEP-09",
+  "caseTitle": "WDV monthly — three periods",
+  "action": "Capitalise via a Purchase Bill.",
+  "je": [
+   {
+    "code": "1405",
+    "name": "Computers & Equipment (asset card)",
+    "debit": 100000,
+    "credit": 0
+   },
+   {
+    "code": "1102",
+    "name": "CGST Input Credit",
+    "debit": 9000,
+    "credit": 0
+   },
+   {
+    "code": "1103",
+    "name": "SGST Input Credit",
+    "debit": 9000,
+    "credit": 0
+   },
+   {
+    "code": "2001",
+    "name": "Accounts Payable",
+    "debit": 0,
+    "credit": 118000
+   }
+  ],
+  "phase": 1,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN}}",
+   "billDate": "2026-04-01",
+   "branchId": "{{BR_A_D09}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_LAP_A}}",
+     "quantity": 1,
+     "rate": 100000,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_2}}",
+     "assetName": "Laptop - WDV test",
+     "inUseDate": "2026-04-01"
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "billId": "data.id"
+  },
+  "asserts": [
+   "journal purchase_bill {{billId}}"
+  ],
+  "auto": "YES",
+  "note": "AC-2 must already be on WDV - see Setup 5b."
+ },
+ {
+  "key": "DEP-09.2",
+  "caseId": "DEP-09",
+  "caseTitle": "WDV monthly — three periods",
+  "action": "Post April 2026.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 7984.65,
+    "credit": 0
+   },
+   {
+    "code": "1455",
+    "name": "Accumulated Depreciation - Computers (asset card)",
+    "debit": 0,
+    "credit": 7984.65
+   }
+  ],
+  "phase": 2,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-04-01"
+  },
+  "status": 200,
+  "asserts": [
+   "journal depreciation_run period=2026-04-01 branch={{BR_A_D09}}"
+  ],
+  "auto": "YES",
+  "note": "Same posting as DEP-07.2."
+ },
+ {
+  "key": "DEP-09.3",
+  "caseId": "DEP-09",
+  "caseTitle": "WDV monthly — three periods",
+  "action": "Post May 2026.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 7347.1,
+    "credit": 0
+   },
+   {
+    "code": "1455",
+    "name": "Accumulated Depreciation - Computers (asset card)",
+    "debit": 0,
+    "credit": 7347.1
+   }
+  ],
+  "phase": 3,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-05-01"
+  },
+  "status": 200,
+  "asserts": [
+   "journal depreciation_run period=2026-05-01 branch={{BR_A_D09}}"
+  ],
+  "auto": "YES",
+  "note": "Same posting as DEP-07.3."
+ },
+ {
+  "key": "DEP-09.4",
+  "caseId": "DEP-09",
+  "caseTitle": "WDV monthly — three periods",
+  "action": "Post June 2026.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 6760.46,
+    "credit": 0
+   },
+   {
+    "code": "1455",
+    "name": "Accumulated Depreciation - Computers (asset card)",
+    "debit": 0,
+    "credit": 6760.46
+   }
+  ],
+  "phase": 4,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-06-01"
+  },
+  "status": 200,
+  "asserts": [
+   "journal depreciation_run period=2026-06-01 branch={{BR_A_D09}}"
+  ],
+  "auto": "YES",
+  "note": "Same posting as DEP-07.4."
+ },
+ {
+  "key": "DEP-10.1",
+  "caseId": "DEP-10",
+  "caseTitle": "Catch-up — an asset added late picks up every period it missed",
+  "action": "Capitalise an asset BACKDATED into an already-posted period.",
+  "je": [
+   {
+    "code": "1405",
+    "name": "Computers & Equipment (asset card)",
+    "debit": 120000,
+    "credit": 0
+   },
+   {
+    "code": "1102",
+    "name": "CGST Input Credit",
+    "debit": 10800,
+    "credit": 0
+   },
+   {
+    "code": "1103",
+    "name": "SGST Input Credit",
+    "debit": 10800,
+    "credit": 0
+   },
+   {
+    "code": "2001",
+    "name": "Accounts Payable",
+    "debit": 0,
+    "credit": 141600
+   }
+  ],
+  "phase": 5,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN}}",
+   "billDate": "2026-04-01",
+   "branchId": "{{BR_A_D10}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_LAP_A}}",
+     "quantity": 1,
+     "rate": 120000,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_1}}",
+     "assetName": "Laptop - backdated",
+     "inUseDate": "2026-04-01"
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "billId": "data.id",
+   "assetId": "GET /fixed-assets :: data[name=Laptop - backdated].id"
+  },
+  "asserts": [
+   "journal purchase_bill {{billId}}"
+  ],
+  "auto": "YES",
+  "note": "MUST run only after DEP-07.4 has posted June."
+ },
+ {
+  "key": "DEP-10.2",
+  "caseId": "DEP-10",
+  "caseTitle": "Catch-up — an asset added late picks up every period it missed",
+  "action": "Open Depreciation > Due on or after 01-Aug-2026.",
+  "phase": 5,
+  "login": "A",
+  "method": "GET",
+  "path": "/depreciation-runs/due",
+  "status": 200,
+  "asserts": [
+   "field data.period.periodStart = 2026-07-01",
+   "field data.assets[branch.id={{BR_A_D10}}].amount = 7600.00",
+   "field count(data.assets[branch.id={{BR_A_D10}}].periods) = 4"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-10.3",
+  "caseId": "DEP-10",
+  "caseTitle": "Catch-up — an asset added late picks up every period it missed",
+  "action": "Post July 2026.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 7600,
+    "credit": 0
+   },
+   {
+    "code": "1455",
+    "name": "Accumulated Depreciation - Computers (asset card)",
+    "debit": 0,
+    "credit": 7600
+   }
+  ],
+  "phase": 5,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-07-01"
+  },
+  "status": 200,
+  "asserts": [
+   "journal depreciation_run period=2026-07-01 branch={{BR_A_D10}}"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-10.4",
+  "caseId": "DEP-10",
+  "caseTitle": "Catch-up — an asset added late picks up every period it missed",
+  "action": "Check the asset's schedule.",
+  "phase": 5,
+  "login": "A",
+  "method": "GET",
+  "path": "/fixed-assets/{{DEP-10.assetId}}/schedule",
+  "status": 200,
+  "asserts": [
+   "field count(data.periods[posted=true]) = 4",
+   "field data.periods[0].periodStart = 2026-04-01",
+   "field data.periods[3].closingWdv = 112400.00",
+   "sql \"SELECT count(DISTINCT journal_entry_id) FROM fixed_asset_depreciation_runs WHERE fixed_asset_id={{DEP-10.assetId}}\" = 1"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-11.1",
+  "caseId": "DEP-11",
+  "caseTitle": "Quarterly frequency",
+  "action": "Capitalise via a Purchase Bill in ORG-B.",
+  "phase": 1,
+  "login": "B",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN_B}}",
+   "billDate": "2026-04-01",
+   "branchId": "{{BR_B_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_NONSTOCK_B}}",
+     "quantity": 1,
+     "rate": 120000,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_1B}}",
+     "assetName": "Office equipment - quarterly",
+     "inUseDate": "2026-04-01"
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "billId": "data.id"
+  },
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-11.2",
+  "caseId": "DEP-11",
+  "caseTitle": "Quarterly frequency",
+  "action": "Open Depreciation > Due on or after 01-Jul-2026.",
+  "phase": 2,
+  "login": "B",
+  "method": "GET",
+  "path": "/depreciation-runs/due",
+  "status": 200,
+  "asserts": [
+   "field data.frequency = QUARTERLY",
+   "field data.period.periodStart = 2026-04-01",
+   "field data.period.periodEnd = 2026-06-30",
+   "field data.period.months = 3",
+   "field data.totalAmount = 5700.00"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-11.3",
+  "caseId": "DEP-11",
+  "caseTitle": "Quarterly frequency",
+  "action": "Post the quarter.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 5700,
+    "credit": 0
+   },
+   {
+    "code": "1455",
+    "name": "Accumulated Depreciation - Computers (asset card)",
+    "debit": 0,
+    "credit": 5700
+   }
+  ],
+  "phase": 2,
+  "login": "B",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-04-01"
+  },
+  "status": 200,
+  "asserts": [
+   "journal depreciation_run period=2026-04-01"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-11.4",
+  "caseId": "DEP-11",
+  "caseTitle": "Quarterly frequency",
+  "action": "Post the next quarter on or after 01-Oct-2026.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 5700,
+    "credit": 0
+   },
+   {
+    "code": "1455",
+    "name": "Accumulated Depreciation - Computers (asset card)",
+    "debit": 0,
+    "credit": 5700
+   }
+  ],
+  "phase": 5,
+  "login": "B",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-07-01"
+  },
+  "status": 200,
+  "asserts": [
+   "journal depreciation_run period=2026-07-01"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-12.1",
+  "caseId": "DEP-12",
+  "caseTitle": "Blocked — asset not yet in use",
+  "action": "Capitalise with in-use date after the period being posted.",
+  "phase": 1,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN}}",
+   "billDate": "2026-04-01",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_LAP_A}}",
+     "quantity": 1,
+     "rate": 60000,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_1}}",
+     "assetName": "Laptop - future use",
+     "inUseDate": "2026-09-01"
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "billId": "data.id",
+   "assetId": "GET /fixed-assets :: data[name=Laptop - future use].id"
+  },
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-12.2",
+  "caseId": "DEP-12",
+  "caseTitle": "Blocked — asset not yet in use",
+  "action": "Open Depreciation > Due for a period before September.",
+  "phase": 2,
+  "login": "A",
+  "method": "GET",
+  "path": "/depreciation-runs/due",
+  "status": 200,
+  "asserts": [
+   "field count(data.assets[id={{DEP-12.assetId}}]) = 0",
+   "field count(data.blocked[id={{DEP-12.assetId}}]) = 0"
+  ],
+  "auto": "YES",
+  "note": "Absent from BOTH lists. NOT_YET_IN_USE is deliberately silent."
+ },
+ {
+  "key": "DEP-12.3",
+  "caseId": "DEP-12",
+  "caseTitle": "Blocked — asset not yet in use",
+  "action": "Post September 2026 (after the earlier months are posted).",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 950,
+    "credit": 0
+   },
+   {
+    "code": "1455",
+    "name": "Accumulated Depreciation - Computers (asset card)",
+    "debit": 0,
+    "credit": 950
+   }
+  ],
+  "phase": 6,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": [
+    "2026-09-01"
+   ]
+  },
+  "status": 200,
+  "asserts": [
+   "journal depreciation_run period=2026-09-01 branch={{BR_A_CHN}}"
+  ],
+  "auto": "YES",
+  "needsPeriod": "2026-08-01"
+ },
+ {
+  "key": "DEP-13.1",
+  "caseId": "DEP-13",
+  "caseTitle": "Blocked — WDV with no residual value",
+  "action": "Try to capitalise against AC-6.",
+  "phase": 1,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN}}",
+   "billDate": "2026-04-01",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_LAP_A}}",
+     "quantity": 1,
+     "rate": 60000,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_6}}",
+     "assetName": "WDV no-residual test",
+     "inUseDate": "2026-04-01"
+    }
+   ]
+  },
+  "status": 400,
+  "auto": "YES",
+  "asserts": [
+   "error contains \"has no residual percentage\""
+  ]
+ },
+ {
+  "key": "DEP-13.2",
+  "caseId": "DEP-13",
+  "caseTitle": "Blocked — WDV with no residual value",
+  "action": "Check that nothing was left behind.",
+  "phase": 2,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT count(*) FROM fixed_assets WHERE organization_id={{ORG_A}} AND name='WDV no-residual test'\" = 0"
+  ],
+  "auto": "YES",
+  "note": "The refusal must leave nothing behind - no asset, and so no journal entry either."
+ },
+ {
+  "key": "DEP-13.3",
+  "caseId": "DEP-13",
+  "caseTitle": "Blocked — WDV with no residual value",
+  "action": "The run-time block, for the record.",
+  "phase": 4,
+  "login": "A",
+  "asserts": [
+   "manual: the run-time WDV_NEEDS_RESIDUAL block needs an asset capitalised under SLM and then moved to WDV by a later policy change. Not reachable from this seed; covered by inspection."
+  ],
+  "auto": "NO"
+ },
+ {
+  "key": "DEP-14.1",
+  "caseId": "DEP-14",
+  "caseTitle": "End of life — the last period is a balancing figure",
+  "action": "Capitalise a short-life asset.",
+  "je": [
+   {
+    "code": "1404",
+    "name": "Vehicles (asset card)",
+    "debit": 12000,
+    "credit": 0
+   },
+   {
+    "code": "1102",
+    "name": "CGST Input Credit",
+    "debit": 1080,
+    "credit": 0
+   },
+   {
+    "code": "1103",
+    "name": "SGST Input Credit",
+    "debit": 1080,
+    "credit": 0
+   },
+   {
+    "code": "2001",
+    "name": "Accounts Payable",
+    "debit": 0,
+    "credit": 14160
+   }
+  ],
+  "phase": 1,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN}}",
+   "billDate": "2026-04-01",
+   "branchId": "{{BR_A_D14}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_LAP_A}}",
+     "quantity": 1,
+     "rate": 12000,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_3}}",
+     "assetName": "Short-life test",
+     "inUseDate": "2026-04-01"
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "billId": "data.id",
+   "assetId": "GET /fixed-assets :: data[name=Short-life test].id"
+  },
+  "asserts": [
+   "journal purchase_bill {{billId}}"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-14.2",
+  "caseId": "DEP-14",
+  "caseTitle": "End of life — the last period is a balancing figure",
+  "action": "Post April 2026.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 3600,
+    "credit": 0
+   },
+   {
+    "code": "1454",
+    "name": "Accumulated Depreciation - Vehicles (asset card)",
+    "debit": 0,
+    "credit": 3600
+   }
+  ],
+  "phase": 2,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-04-01"
+  },
+  "status": 200,
+  "asserts": [
+   "journal depreciation_run period=2026-04-01 branch={{BR_A_D14}}"
+  ],
+  "auto": "YES",
+  "note": "Same posting as DEP-07.2."
+ },
+ {
+  "key": "DEP-14.3",
+  "caseId": "DEP-14",
+  "caseTitle": "End of life — the last period is a balancing figure",
+  "action": "Post May 2026.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 3600,
+    "credit": 0
+   },
+   {
+    "code": "1454",
+    "name": "Accumulated Depreciation - Vehicles (asset card)",
+    "debit": 0,
+    "credit": 3600
+   }
+  ],
+  "phase": 3,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-05-01"
+  },
+  "status": 200,
+  "asserts": [
+   "journal depreciation_run period=2026-05-01 branch={{BR_A_D14}}"
+  ],
+  "auto": "YES",
+  "note": "Same posting as DEP-07.3."
+ },
+ {
+  "key": "DEP-14.4",
+  "caseId": "DEP-14",
+  "caseTitle": "End of life — the last period is a balancing figure",
+  "action": "Post June 2026 — the last period.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 3600,
+    "credit": 0
+   },
+   {
+    "code": "1454",
+    "name": "Accumulated Depreciation - Vehicles (asset card)",
+    "debit": 0,
+    "credit": 3600
+   }
+  ],
+  "phase": 4,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-06-01"
+  },
+  "status": 200,
+  "asserts": [
+   "GET /fixed-assets/{{DEP-14.assetId}}/schedule :: field data.periods[2].closingWdv = 1200.00",
+   "GET /fixed-assets :: field data[id={{DEP-14.assetId}}].status = FULLY_DEPRECIATED",
+   "GET /depreciation-runs/due :: field data.blocked[id={{DEP-14.assetId}}].reason = FULLY_DEPRECIATED",
+   "journal depreciation_run period=2026-06-01 branch={{BR_A_D14}}"
+  ],
+  "auto": "YES",
+  "note": "Same posting as DEP-07.4."
+ },
+ {
+  "key": "DEP-14.5",
+  "caseId": "DEP-14",
+  "caseTitle": "End of life — the last period is a balancing figure",
+  "action": "Open Depreciation > Due after July is posted.",
+  "phase": 5,
+  "login": "A",
+  "method": "GET",
+  "path": "/depreciation-runs/due",
+  "status": 200,
+  "asserts": [
+   "field count(data.assets[id={{DEP-14.assetId}}]) = 0",
+   "field count(data.blocked[id={{DEP-14.assetId}}]) = 0"
+  ],
+  "auto": "YES",
+  "note": "The other half of show-it-once: July is posted by now, so the asset that finished in June is in NEITHER list and stays that way."
+ },
+ {
+  "key": "DEP-15.1",
+  "caseId": "DEP-15",
+  "caseTitle": "Awkward division — seven months, and it still lands exactly on residual",
+  "action": "Capitalise.",
+  "phase": 1,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN}}",
+   "billDate": "2026-04-01",
+   "branchId": "{{BR_A_D15}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_LAP_A}}",
+     "quantity": 1,
+     "rate": 10000,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_4}}",
+     "assetName": "Seven-month test",
+     "inUseDate": "2026-04-01"
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "billId": "data.id",
+   "assetId": "GET /fixed-assets :: data[name=Seven-month test].id"
+  },
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-15.2",
+  "caseId": "DEP-15",
+  "caseTitle": "Awkward division — seven months, and it still lands exactly on residual",
+  "action": "Post April through October 2026, one period at a time, and record each charge.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation (7 entries, one per month)",
+    "debit": 9000,
+    "credit": 0
+   },
+   {
+    "code": "1454",
+    "name": "Accumulated Depreciation - Vehicles (asset card)",
+    "debit": 0,
+    "credit": 9000
+   }
+  ],
+  "phase": 6,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": [
+    "2026-08-01",
+    "2026-09-01",
+    "2026-10-01"
+   ]
+  },
+  "status": 200,
+  "asserts": [
+   "GET /fixed-assets/{{DEP-15.assetId}}/schedule :: field sum(data.runs[].amount) = 9000.00"
+  ],
+  "auto": "YES",
+  "note": "Posts the tail of the calendar (Apr-Jul are posted by other cases). Expected per-month: 1285.71, 1285.72, 1285.71, 1285.71, 1285.72, 1285.71, 1285.72."
+ },
+ {
+  "key": "DEP-15.3",
+  "caseId": "DEP-15",
+  "caseTitle": "Awkward division — seven months, and it still lands exactly on residual",
+  "action": "Confirm the closing carrying amount.",
+  "phase": 7,
+  "login": "A",
+  "method": "GET",
+  "path": "/fixed-assets/{{DEP-15.assetId}}/schedule",
+  "status": 200,
+  "asserts": [
+   "field data.periods[6].closingWdv = 1000.00",
+   "field sum(data.periods[].amount) = 9000.00"
+  ],
+  "auto": "YES",
+  "needsPeriod": "2026-10-01"
+ },
+ {
+  "key": "DEP-16.1",
+  "caseId": "DEP-16",
+  "caseTitle": "Method changed mid-life by policy",
+  "action": "Capitalise against AC-5.",
+  "phase": 1,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN}}",
+   "billDate": "2026-04-01",
+   "branchId": "{{BR_A_D16}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_LAP_A}}",
+     "quantity": 1,
+     "rate": 100000,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_5}}",
+     "assetName": "Method-change test",
+     "inUseDate": "2026-04-01"
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "billId": "data.id",
+   "assetId": "GET /fixed-assets :: data[name=Method-change test].id"
+  },
+  "asserts": [
+   "GET /fixed-assets/{{assetId}} :: field data.method = SLM"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-16.2",
+  "caseId": "DEP-16",
+  "caseTitle": "Method changed mid-life by policy",
+  "action": "Post April 2026.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 2638.89,
+    "credit": 0
+   },
+   {
+    "code": "1452",
+    "name": "Accumulated Depreciation - Plant & Machinery (asset card)",
+    "debit": 0,
+    "credit": 2638.89
+   }
+  ],
+  "phase": 2,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-04-01"
+  },
+  "status": 200,
+  "asserts": [
+   "journal depreciation_run period=2026-04-01 branch={{BR_A_D16}}"
+  ],
+  "auto": "YES",
+  "note": "Same posting as DEP-07.2."
+ },
+ {
+  "key": "DEP-16.3",
+  "caseId": "DEP-16",
+  "caseTitle": "Method changed mid-life by policy",
+  "action": "Post May 2026.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 2638.89,
+    "credit": 0
+   },
+   {
+    "code": "1452",
+    "name": "Accumulated Depreciation - Plant & Machinery (asset card)",
+    "debit": 0,
+    "credit": 2638.89
+   }
+  ],
+  "phase": 3,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-05-01"
+  },
+  "status": 200,
+  "asserts": [
+   "journal depreciation_run period=2026-05-01 branch={{BR_A_D16}}"
+  ],
+  "auto": "YES",
+  "note": "Same posting as DEP-07.3."
+ },
+ {
+  "key": "DEP-16.4",
+  "caseId": "DEP-16",
+  "caseTitle": "Method changed mid-life by policy",
+  "action": "Post June 2026 — the first period under the new policy.",
+  "je": [
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation",
+    "debit": 7850.41,
+    "credit": 0
+   },
+   {
+    "code": "1452",
+    "name": "Accumulated Depreciation - Plant & Machinery (asset card)",
+    "debit": 0,
+    "credit": 7850.41
+   }
+  ],
+  "phase": 4,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-06-01"
+  },
+  "status": 200,
+  "asserts": [
+   "GET /fixed-assets/{{DEP-16.assetId}}/schedule :: field data.periods[2].amount = 7850.41",
+   "journal depreciation_run period=2026-06-01 branch={{BR_A_D16}}"
+  ],
+  "auto": "YES",
+  "note": "The AC-5 policy change effective 2026-06 must be posted first - see Setup 5b."
+ },
+ {
+  "key": "DEP-17.1",
+  "caseId": "DEP-17",
+  "caseTitle": "A period cannot be posted twice",
+  "action": "Try to post April 2026 again.",
+  "phase": 7,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-04-01"
+  },
+  "status": 409,
+  "asserts": [
+   "error contains \"not the one on screen\""
+  ],
+  "auto": "YES",
+  "note": "Run after April is already posted."
+ },
+ {
+  "key": "DEP-17.2",
+  "caseId": "DEP-17",
+  "caseTitle": "A period cannot be posted twice",
+  "action": "Try to post a period that is not over yet.",
+  "phase": 7,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "{{CURRENT_MONTH_START}}"
+  },
+  "status": 409,
+  "asserts": [
+   "error contains \"is not over yet\""
+  ],
+  "auto": "YES",
+  "note": "{{CURRENT_MONTH_START}} is a built-in the runner binds to the first day of the current month."
+ },
+ {
+  "key": "DEP-17.3",
+  "caseId": "DEP-17",
+  "caseTitle": "A period cannot be posted twice",
+  "action": "Try to skip a period.",
+  "phase": 7,
+  "login": "A",
+  "method": "POST",
+  "path": "/depreciation-runs/post",
+  "body": {
+   "periodStart": "2026-06-01"
+  },
+  "status": 409,
+  "asserts": [
+   "error contains \"period due\""
+  ],
+  "auto": "YES",
+  "note": "Run while May is unposted."
+ },
+ {
+  "key": "DEP-17.4",
+  "caseId": "DEP-17",
+  "caseTitle": "A period cannot be posted twice",
+  "action": "Count the journal entries and depreciation_periods rows for April.",
+  "phase": 7,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT count(*) FROM depreciation_periods WHERE organization_id={{ORG_A}} AND period_start='2026-04-01'\" = 1"
+  ],
+  "auto": "YES",
+  "note": "Direct database check - no endpoint exposes this."
+ },
+ {
+  "key": "DEP-18.1",
+  "caseId": "DEP-18",
+  "caseTitle": "One P&L line per expense head, one balance-sheet line per asset",
+  "action": "Post April 2026 and open the BR-A-CHN journal entry.",
+  "phase": 7,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT count(*) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.reference_type='depreciation_run' AND e.entry_date='2026-04-30' AND e.branch_id={{BR_A_D07}} AND a.account_code='4020'\" = 1",
+   "sql \"SELECT count(DISTINCT l.business_partner_id) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id WHERE e.reference_type='depreciation_run' AND e.entry_date='2026-04-30' AND e.organization_id={{ORG_A}} AND l.credit>0\" >= 3"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-18.2",
+  "caseId": "DEP-18",
+  "caseTitle": "One P&L line per expense head, one balance-sheet line per asset",
+  "action": "Confirm the entry is per branch, not per organisation.",
+  "phase": 7,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT count(DISTINCT branch_id) FROM journal_entries WHERE reference_type='depreciation_run' AND entry_date='2026-04-30'\" >= 2"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-18.3",
+  "caseId": "DEP-18",
+  "caseTitle": "One P&L line per expense head, one balance-sheet line per asset",
+  "action": "Add the debits and credits across every entry from that run.",
+  "phase": 7,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT sum(debit)-sum(credit) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id WHERE e.reference_type='depreciation_run'\" = 0"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-19.1",
+  "caseId": "DEP-19",
+  "caseTitle": "The register reconciles to the ledger",
+  "action": "Total the register.",
+  "phase": 7,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT coalesce(sum(r.amount),0) FROM fixed_asset_depreciation_runs r JOIN journal_entries e ON e.id=r.journal_entry_id WHERE e.organization_id={{ORG_A}} AND e.entry_date<='2026-07-31'\" capture regTotal"
+  ],
+  "auto": "YES",
+  "note": "Totalled by the date the charge POSTED, not by the period it belongs to. A catch-up run charges April-June in a July-dated entry, so the two bases differ by design and only one of them can reconcile to the ledger."
+ },
+ {
+  "key": "DEP-19.2",
+  "caseId": "DEP-19",
+  "caseTitle": "The register reconciles to the ledger",
+  "action": "Total the ledger.",
+  "phase": 7,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT coalesce(sum(l.credit-l.debit),0) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND e.entry_date<='2026-07-31' AND a.account_code IN ('1451','1452','1454','1455')\" = {{regTotal}}"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-19.3",
+  "caseId": "DEP-19",
+  "caseTitle": "The register reconciles to the ledger",
+  "action": "Total the expense.",
+  "phase": 7,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT coalesce(sum(l.debit-l.credit),0) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND e.entry_date<='2026-07-31' AND a.account_code='4020'\" = {{regTotal}}"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-19.4",
+  "caseId": "DEP-19",
+  "caseTitle": "The register reconciles to the ledger",
+  "action": "Check each asset card individually.",
+  "phase": 7,
+  "login": "A",
+  "asserts": [
+   "manual: per-card drill-down is a UI check. The DEP-18.1 assertion on distinct business_partner_id is the automated proxy."
+  ],
+  "auto": "PARTIAL"
+ },
+ {
+  "key": "DEP-20.1",
+  "caseId": "DEP-20",
+  "caseTitle": "Editing an asset class does not restate assets already capitalised",
+  "action": "Edit asset class AC-1.",
+  "phase": 7,
+  "login": "A",
+  "method": "PATCH",
+  "path": "/depreciation-policy/classes/{{AC_1}}",
+  "body": {
+   "usefulLifeMonths": 84,
+   "lifePolicyNote": "Test - life extended after capitalisation."
+  },
+  "status": 200,
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-20.2",
+  "caseId": "DEP-20",
+  "caseTitle": "Editing an asset class does not restate assets already capitalised",
+  "action": "Re-open the DEP-07 asset.",
+  "phase": 7,
+  "login": "A",
+  "method": "GET",
+  "path": "/fixed-assets/{{DEP-01.assetId}}",
+  "status": 200,
+  "asserts": [
+   "field data.usefulLifeMonths = 60"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-20.3",
+  "caseId": "DEP-20",
+  "caseTitle": "Editing an asset class does not restate assets already capitalised",
+  "action": "Open the asset's depreciation schedule and read the May row.",
+  "phase": 7,
+  "login": "A",
+  "asserts": [
+   "GET /fixed-assets/{{DEP-01.assetId}}/schedule :: field data.periods[1].periodStart = 2026-05-01",
+   "GET /fixed-assets/{{DEP-01.assetId}}/schedule :: field data.periods[1].amount = 1900.00"
+  ],
+  "auto": "YES",
+  "note": "60 months, not 84: the life on an asset is fixed at capitalisation."
+ },
+ {
+  "key": "DEP-20.4",
+  "caseId": "DEP-20",
+  "caseTitle": "Editing an asset class does not restate assets already capitalised",
+  "action": "Capitalise a NEW asset against AC-1 and check it.",
+  "phase": 7,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN}}",
+   "billDate": "2026-05-02",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_LAP_A}}",
+     "quantity": 1,
+     "rate": 120000,
+     "taxRate": 18,
+     "capitalise": true,
+     "assetClassId": "{{AC_1}}",
+     "assetName": "Laptop - after class edit",
+     "inUseDate": "2026-05-02"
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "assetId": "GET /fixed-assets :: data[name=Laptop - after class edit].id"
+  },
+  "asserts": [
+   "GET /fixed-assets/{{assetId}} :: field data.usefulLifeMonths = 84"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-21.0",
+  "caseId": "DEP-21",
+  "caseTitle": "Purchase return of a capitalised line — a rescission, not a disposal",
+  "action": "(setup lookup for the step that follows)",
+  "phase": 7,
+  "login": "A",
+  "method": "GET",
+  "path": "/purchase-returns/bill/{{DEP-01.billId}}/lines",
+  "status": 200,
+  "capture": {
+   "billLineId": "data.lines[0].id"
+  },
+  "auto": "YES"
+ },
+ {
+  "key": "DEP-21.1",
+  "caseId": "DEP-21",
+  "caseTitle": "Purchase return of a capitalised line — a rescission, not a disposal",
+  "action": "Raise a Purchase Return against the DEP-01 bill for the capitalised laptop.",
+  "phase": 7,
+  "login": "A",
+  "method": "POST",
+  "path": "/purchase-returns",
+  "body": {
+   "purchaseBillId": "{{DEP-01.billId}}",
+   "returnDate": "2026-04-20",
+   "branchId": "{{BR_A_D07}}",
+   "lines": [
+    {
+     "purchaseBillLineId": "{{DEP-21.billLineId}}",
+     "quantity": 1
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "returnId": "data.id"
+  },
+  "auto": "YES",
+  "note": "Full line only: one asset was created for the line, so half of it cannot come back.",
+  "asserts": [
+   "field data.grandTotal = 141600.00",
+   "sql \"SELECT coalesce(sum(l.debit-l.credit),0) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND e.reference_type='purchase_return'\" = 0"
+  ]
+ },
+ {
+  "key": "DEP-21.2",
+  "caseId": "DEP-21",
+  "caseTitle": "Purchase return of a capitalised line — a rescission, not a disposal",
+  "action": "Read the journal entry that was written.",
+  "je": [
+   {
+    "code": "2001",
+    "name": "Accounts Payable (Sundar Systems)",
+    "debit": 141600,
+    "credit": 0
+   },
+   {
+    "code": "1405",
+    "name": "Computers & Equipment (asset card) - cost reversed",
+    "debit": 0,
+    "credit": 120000
+   },
+   {
+    "code": "1102",
+    "name": "CGST Input Credit reversed",
+    "debit": 0,
+    "credit": 10800
+   },
+   {
+    "code": "1103",
+    "name": "SGST Input Credit reversed",
+    "debit": 0,
+    "credit": 10800
+   },
+   {
+    "code": "1455",
+    "name": "Accumulated Depreciation - depreciation reversed",
+    "debit": 7600,
+    "credit": 0
+   },
+   {
+    "code": "4020",
+    "name": "Depreciation & Amortisation - reversed",
+    "debit": 0,
+    "credit": 7600
+   }
+  ],
+  "phase": 7,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT a.account_code FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND e.reference_type='purchase_return' AND l.credit>0 AND a.account_type='ASSET'\" = 1405",
+   "sql \"SELECT coalesce(sum(l.debit),0) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND e.reference_type='purchase_return' AND a.account_code='1455'\" = 7600.00",
+   "sql \"SELECT coalesce(sum(l.credit),0) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND e.reference_type='purchase_return' AND a.account_code='4020'\" = 7600.00"
+  ],
+  "auto": "YES",
+  "note": "RESCISSION, not disposal: the purchase is undone, so no gain is booked and the depreciation charged in error comes back out."
+ },
+ {
+  "key": "DEP-21.3",
+  "caseId": "DEP-21",
+  "caseTitle": "Purchase return of a capitalised line — a rescission, not a disposal",
+  "action": "Open Depreciation > Due and look for the returned asset.",
+  "phase": 7,
+  "login": "A",
+  "method": "GET",
+  "path": "/depreciation-runs/due",
+  "status": 200,
+  "asserts": [
+   "field count(data.assets[id={{DEP-01.assetId}}]) = 0",
+   "field count(data.blocked[id={{DEP-01.assetId}}]) = 0",
+   "GET /fixed-assets :: field count(data[id={{DEP-01.assetId}}]) = 0",
+   "sql \"SELECT status FROM fixed_assets WHERE id={{DEP-01.assetId}}\" = RETURNED"
+  ],
+  "auto": "YES",
+  "note": "RETURNED, not DISPOSED - an auditor reading the disposals schedule should not find a disposal that never happened."
+ }
+]

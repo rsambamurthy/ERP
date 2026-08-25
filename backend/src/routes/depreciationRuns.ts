@@ -78,7 +78,13 @@ type LoadedAsset = Awaited<ReturnType<typeof loadAssets>>[number];
 
 async function loadAssets(organizationId: string) {
   return prisma.fixedAsset.findMany({
-    where: { organizationId, deletedAt: null, status: "ACTIVE" },
+    // FULLY_DEPRECIATED is loaded too, so that an asset which has just
+    // finished can be SHOWN once - see the blocked filter below. DISPOSED and
+    // RETURNED are gone for good and never come back.
+    where: {
+      organizationId, deletedAt: null,
+      status: { in: ["ACTIVE", "FULLY_DEPRECIATED"] },
+    },
     select: {
       id: true, assetCode: true, name: true, branchId: true,
       assetClassId: true, businessPartnerId: true,
@@ -213,7 +219,21 @@ async function prepareRun(organizationId: string): Promise<RunPlan> {
     }
     // NOT_YET_IN_USE is the ordinary case for an asset bought after this
     // period — not an exception worth reporting.
-    if (why && why !== "NOT_YET_IN_USE") blocked.push({ asset: a, reason: why });
+    if (!why || why === "NOT_YET_IN_USE") return;
+    // FULLY_DEPRECIATED is shown ONCE and then never again. The month a
+    // charge drops is exactly the month someone asks why it dropped, so the
+    // asset that stopped is worth a line on that run; every month afterwards
+    // it would be noise, and the register already carries it at residual.
+    //
+    // "Finished last period" is exact and frequency-agnostic: the period
+    // before this one always ends the day before this one starts.
+    if (why === "FULLY_DEPRECIATED") {
+      const lastCharge = a.runs.reduce<Date | null>(
+        (m, r) => (!m || r.periodEnd > m ? r.periodEnd : m), null);
+      const dayBefore = new Date(target.getTime() - 86400000);
+      if (!lastCharge || lastCharge.getTime() !== dayBefore.getTime()) return;
+    }
+    blocked.push({ asset: a, reason: why });
   });
 
   return {
@@ -383,6 +403,13 @@ router.post("/post", canPost, async (req, res) => {
         },
       });
 
+      // Accumulated across every branch and written ONCE at the end. Doing
+      // these per branch multiplied the statement count by the number of
+      // branches for no benefit — they carry the branch's journalEntryId in
+      // the row, so nothing about them needs a per-branch round trip.
+      const runRows: any[] = [];
+      const finishedAssetIds: string[] = [];
+
       for (const [branchId, lines] of byBranch) {
         const journalEntry = await tx.journalEntry.create({
           data: {
@@ -422,11 +449,10 @@ router.post("/post", canPost, async (req, res) => {
           ],
         });
 
-        await tx.fixedAssetDepreciationRun.createMany({
-          // One row per period, not per posting: an asset caught up over four
-          // months writes four rows, each at its own true period, all pointing
-          // at this one entry.
-          data: lines.flatMap((l) => l.charges.map((c) => ({
+        // One row per period, not per posting: an asset caught up over four
+        // months writes four rows, each at its own true period, all pointing
+        // at this one entry.
+        runRows.push(...lines.flatMap((l) => l.charges.map((c) => ({
             fixedAssetId: l.asset.id,
             periodStart: c.periodStart,
             periodEnd: c.periodEnd,
@@ -440,20 +466,24 @@ router.post("/post", canPost, async (req, res) => {
             // the charge arose, and this one arose from the ordinary run.
             runType: "MONTHLY",
             generatedBy: userId,
-          }))),
-        });
+          }))));
 
         // Retiring an asset that has reached its residual, so it stops
         // appearing in every future run only to be reported as blocked.
-        const finished = lines.filter((l) => l.charges[l.charges.length - 1].final).map((l) => l.asset.id);
-        if (finished.length > 0) {
-          await tx.fixedAsset.updateMany({
-            where: { id: { in: finished } },
-            data: { status: "FULLY_DEPRECIATED" },
-          });
-        }
+        finishedAssetIds.push(
+          ...lines.filter((l) => l.charges[l.charges.length - 1].final).map((l) => l.asset.id));
 
         created.push(journalEntry.id);
+      }
+
+      if (runRows.length > 0) {
+        await tx.fixedAssetDepreciationRun.createMany({ data: runRows });
+      }
+      if (finishedAssetIds.length > 0) {
+        await tx.fixedAsset.updateMany({
+          where: { id: { in: finishedAssetIds } },
+          data: { status: "FULLY_DEPRECIATED" },
+        });
       }
 
       return created;

@@ -8,7 +8,10 @@
     "start": "node dist/index.js",
     "postinstall": "prisma generate",
     "prisma:seed": "ts-node prisma/seed.ts",
-    "create-admin": "ts-node scripts/create-admin.ts"
+    "create-admin": "ts-node scripts/create-admin.ts",
+    "test:dep": "ts-node tests/runCases.ts",
+    "test:dep:dry": "ts-node tests/runCases.ts --dry",
+    "test:seed": "ts-node tests/seed.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
