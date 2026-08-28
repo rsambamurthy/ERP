@@ -154,6 +154,14 @@ interface ReturnToVendorArgs {
 // FIFO, prefers depleting the lot(s) this exact bill created (the literal
 // units being sent back) before falling back to oldest-first for any
 // shortfall — e.g. if some of this bill's own stock already sold through.
+function round4(n: number): number {
+  return Math.round((n + Number.EPSILON) * 10000) / 10000;
+}
+
+function round2(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
 export async function returnStockToVendor(tx: Tx, args: ReturnToVendorArgs) {
   const { organizationId, branchId, itemId, quantity, unitCost, costingMethod, referenceType, referenceId, originalPurchaseBillId, movementDate, narration } = args;
 
@@ -163,9 +171,28 @@ export async function returnStockToVendor(tx: Tx, args: ReturnToVendorArgs) {
     throw new InsufficientStockError(`Only ${onHand} in stock at this branch — cannot return ${quantity} to the vendor.`);
   }
 
+  // THE AVERAGE MOVES. consumeStock leaves it alone because consumption takes
+  // stock out AT the average, so the character of what remains is unchanged.
+  // A vendor return takes it out at the BILL RATE, which is not the average,
+  // and removing value at any other rate must change the average of the
+  // remainder.
+  //
+  // Leaving it alone was a silent reconciliation break: the journal credited
+  // the bill rate while the valuation report moved by quantity x the OLD
+  // average, and the two drifted apart by the difference on every return.
+  const remainingQty = round4(onHand - quantity);
+  const residualValue = round2(onHand * Number(stock?.averageCost ?? 0) - quantity * unitCost);
   await tx.itemStock.update({
     where: { itemId_branchId: { itemId, branchId } },
-    data: { quantityOnHand: onHand - quantity }, // averageCost unchanged, same convention as consumeStock
+    data: {
+      quantityOnHand: remainingQty,
+      // Returning above the average against nearly-exhausted stock can drive
+      // the residual negative. That is real arithmetic, not a meaningful unit
+      // cost, so hold at zero rather than publish a negative average.
+      averageCost: remainingQty > 0.0001 && residualValue > 0
+        ? round4(residualValue / remainingQty)
+        : 0,
+    },
   });
 
   if (costingMethod === "FIFO") {

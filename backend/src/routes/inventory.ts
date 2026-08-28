@@ -16,10 +16,13 @@ function orgIdOr400(req: import("express").Request, res: import("express").Respo
 
 // GET /inventory/stock-ledger?itemId=&branchId=&from=&to= — running
 // quantity balance for one item, same shape as /journal/ledger for an
-// account: opening qty (from Item.openingQuantity, scoped to this branch
-// only if this is the item's opening branch — approximated here as "if no
-// branch filter, opening applies once"), then every StockMovement in date
-// order.
+// account: the quantity brought forward into the window, then every
+// StockMovement inside it in date order.
+//
+// Brought-forward is COMPUTED from the movements before `from`, under the
+// same branch filter and the same in/out signs as the rows - not read from
+// Item.openingQuantity, which is a per-item column that knows nothing about
+// either. See the note on INWARD below.
 router.get("/stock-ledger", async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
@@ -42,11 +45,44 @@ router.get("/stock-ledger", async (req, res) => {
     orderBy: [{ movementDate: "asc" }, { createdAt: "asc" }],
   });
 
-  const openingQuantity = Number(item.openingQuantity ?? 0);
+  // EVERY receipt, not two of them. Ten movement types exist and this listed
+  // PURCHASE and ADJUSTMENT_IN, so TRANSFER_IN, SALES_RETURN_IN and
+  // PRODUCTION_IN - all receipts - were signed negative and subtracted from
+  // the running balance. On the report an auditor reads to trace an item, a
+  // branch receiving a transfer showed stock going OUT.
+  const INWARD = new Set([
+    "PURCHASE", "ADJUSTMENT_IN", "TRANSFER_IN", "SALES_RETURN_IN", "PRODUCTION_IN",
+  ]);
+
+  // BROUGHT FORWARD, computed. This used to seed the running balance from
+  // item.openingQuantity, which is wrong three ways at once: that column is on
+  // the ITEM with no branch, so a branch-filtered ledger opened with stock
+  // held somewhere else; it ignores the from/to window, so a May-onwards
+  // ledger opened at the item's creation quantity rather than the balance at
+  // 30 April; and creating an item with an opening balance already writes an
+  // ADJUSTMENT_IN movement, so on the owning branch the quantity was counted
+  // twice - once as the opening figure and again as the movement below it.
+  //
+  // What an opening balance means on a stock ledger is the balance carried
+  // into the window being shown. So compute it: everything before `from`, for
+  // this branch if one was asked for. With no `from` there is nothing before
+  // the window and it opens at nil.
+  const earlier = from
+    ? await prisma.stockMovement.findMany({
+        where: {
+          itemId: String(itemId), organizationId,
+          ...(branchId ? { branchId: String(branchId) } : {}),
+          movementDate: { lt: new Date(String(from)) },
+        },
+        select: { movementType: true, quantity: true },
+      })
+    : [];
+  const openingQuantity = earlier.reduce(
+    (t, m) => t + (INWARD.has(m.movementType) ? Number(m.quantity) : -Number(m.quantity)), 0);
   let balance = openingQuantity;
   const rows = movements.map((m) => {
     const qty = Number(m.quantity);
-    const inward = m.movementType === "PURCHASE" || m.movementType === "ADJUSTMENT_IN";
+    const inward = INWARD.has(m.movementType);
     balance += inward ? qty : -qty;
     return {
       date: m.movementDate,

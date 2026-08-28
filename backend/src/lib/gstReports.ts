@@ -282,17 +282,36 @@ export async function computeGstr1(
   // Every identity field here is the SNAPSHOT taken at dispatch
   // (migration_047), never the branch master. Re-registering a branch must
   // not restate a filed period.
+  // TWO PERIODS, NOT ONE. A transfer's INVOICE belongs to the return for the
+  // month it was issued - the supply happened, section 34 does not un-happen
+  // it - and its CREDIT NOTE belongs to the return for the month the note was
+  // issued, which may be a later one. So a transfer is in scope here if
+  // EITHER date falls in the window, and each contributes only its own half.
   const transfers = await prisma.stockTransfer.findMany({
     where: {
       organizationId, taxTreatment: "TAXABLE",
-      transferDate: { gte: from, lte: to },
       ...(branchId ? { fromBranchId: branchId } : {}),
+      OR: [
+        { transferDate: { gte: from, lte: to } },
+        { creditNoteDate: { gte: from, lte: to } },
+      ],
     },
     include: { lines: { include: { item: true } } },
     orderBy: { transferDate: "asc" },
   });
 
   const cancelledTransfers: Gstr1CancelledTransferRow[] = [];
+  // Branch-transfer invoices are domestic B2B supplies and belong in the
+  // invoice-value total alongside sales invoices. Accumulated INSIDE the loop
+  // below, at the point a transfer is about to be pushed into b2b, so exactly
+  // the documents reported as supplies are the documents counted here. It was
+  // a filter over `transfers` until credit notes existed, and that filter said
+  // `status !== "CANCELLED"` - which stopped being the same question the
+  // moment a cancelled-and-credited transfer began appearing in 4A. The
+  // invoice-value total would then have omitted a document whose taxable value
+  // and tax it was carrying, and the two would have disagreed by exactly the
+  // gross value of every credited invoice in the period.
+  let transferInvoiceValue = 0;
 
   for (const tr of transfers) {
     // Checked BEFORE the line loop, not after. The HSN summary is written
@@ -304,8 +323,19 @@ export async function computeGstr1(
     if (tr.status !== "CANCELLED" && (!tr.toGstin || !tr.documentNumber)) continue;
 
     const byRate = new Map<number, RateAcc>();
+    const noteByRate = new Map<number, RateAcc>();
     let taxableTotal = 0;
     let taxTotal = 0;
+    const invoiceInPeriod = tr.transferDate >= from && tr.transferDate <= to;
+    const noteInPeriod = !!tr.creditNoteDate
+      && tr.creditNoteDate >= from && tr.creditNoteDate <= to;
+    // A cancellation from BEFORE migration_052 has no note, so nothing has
+    // undone its invoice. It stays out of the supply tables exactly as every
+    // cancelled transfer used to, and is listed for manual treatment instead.
+    // One WITH a note is an ordinary supply that was later credited, and
+    // belongs in 4A like any other.
+    const orphanedCancellation = tr.status === "CANCELLED" && !tr.creditNoteNumber;
+    const countsAsSupply = invoiceInPeriod && !orphanedCancellation;
 
     for (const line of tr.lines) {
       const rate = Number(line.gstRate ?? 0);
@@ -314,7 +344,17 @@ export async function computeGstr1(
       taxableTotal = round2(taxableTotal + taxable);
       taxTotal = round2(taxTotal + cg + sg + ig);
 
-      if (tr.status === "CANCELLED") continue;
+      // The note side, accumulated in the same pass because it reverses the
+      // same lines at the same rates.
+      if (noteInPeriod) {
+        noteByRate.set(rate, addRateAcc(noteByRate.get(rate) ?? emptyRateAcc(), taxable, cg, sg, ig));
+      }
+
+      // The supply is reported in the period of the INVOICE, whether or not
+      // it was later cancelled. What undoes it is the credit note below, in
+      // the period that note was issued - which is how section 34 works and
+      // why a cancelled transfer is no longer simply dropped.
+      if (!countsAsSupply) continue;
       byRate.set(rate, addRateAcc(byRate.get(rate) ?? emptyRateAcc(), taxable, cg, sg, ig));
 
       // The HSN summary counts every outward supply, a branch transfer
@@ -342,9 +382,33 @@ export async function computeGstr1(
     }
 
     if (tr.status === "CANCELLED") {
-      // Left out of the supply tables — it did not happen — but surfaced,
-      // because the invoice number was issued and a credit note is owed.
-      if (tr.documentNumber) {
+      if (noteInPeriod && tr.documentNumber) {
+        // TABLE 9B. Section 34(1): the invoice stands in the period it was
+        // issued and a credit note reduces the period the NOTE was issued in.
+        // Where both fall in one month the two net to nothing and the return
+        // reads exactly as it did when a cancellation was simply dropped;
+        // where they straddle a month end the supply is declared in the first
+        // and reversed in the second, which is the case the old treatment got
+        // wrong by understating the dispatch month.
+        for (const [rate, acc] of noteByRate) {
+          creditNotes.push({
+            noteNumber: tr.creditNoteNumber!,
+            noteDate: tr.creditNoteDate!.toISOString().slice(0, 10),
+            originalInvoiceNumber: tr.documentNumber,
+            gstin: tr.toGstin,
+            receiverName: tr.toBranchName ?? "—",
+            placeOfSupply: tr.toStateCode ?? "—",
+            rate,
+            ...acc,
+          });
+        }
+      } else if (!tr.creditNoteNumber && invoiceInPeriod && tr.documentNumber) {
+        // NO NOTE AT ALL - a cancellation from before migration_052. The
+        // invoice went out and nothing has undone it, so it is left out of
+        // the supply tables and surfaced here instead, exactly as every
+        // cancelled transfer used to be. Somebody has to raise a note by
+        // hand; this is the report saying which one, and it empties itself
+        // as the old rows age out of the periods anybody still files.
         cancelledTransfers.push({
           transferNumber: tr.transferNumber,
           invoiceNumber: tr.documentNumber,
@@ -355,7 +419,11 @@ export async function computeGstr1(
           taxAmount: taxTotal,
         });
       }
-      continue;
+      // A credited supply falls through to the B2B push below; an orphaned
+      // one, or one in scope only because its NOTE lands in this period, does
+      // not - byRate is empty in the second case anyway, and skipping is
+      // clearer than relying on that.
+      if (!countsAsSupply) continue;
     }
 
     // Redundant at runtime — the guard at the top of the loop already
@@ -364,6 +432,8 @@ export async function computeGstr1(
     // branch's `continue`, and asserting with `!` would silence a nullability
     // the compiler is right about rather than proving it wrong.
     if (!tr.toGstin || !tr.documentNumber) continue;
+
+    transferInvoiceValue = round2(transferInvoiceValue + taxableTotal + taxTotal);
 
     for (const [rate, acc] of byRate) {
       b2b.push({
@@ -385,15 +455,6 @@ export async function computeGstr1(
   const b2c = [...b2cMap.values()].sort((a, b) => a.placeOfSupply.localeCompare(b.placeOfSupply) || a.rate - b.rate);
   const hsn = [...hsnMap.values()].sort((a, b) => a.hsnCode.localeCompare(b.hsnCode) || a.rate - b.rate);
 
-  // Branch-transfer invoices are domestic B2B supplies and belong in the
-  // invoice-value total alongside sales invoices. Cancelled ones do not:
-  // they are listed separately and are not being reported as supplies.
-  const transferInvoiceValue = round2(
-    transfers
-      .filter((tr) => tr.status !== "CANCELLED" && tr.toGstin && tr.documentNumber)
-      .reduce((s, tr) => s + tr.lines.reduce(
-        (ls, l) => ls + Number(l.taxableValue ?? 0) + Number(l.cgst ?? 0) + Number(l.sgst ?? 0) + Number(l.igst ?? 0), 0), 0)
-  );
   // Domestic-only — exports get their own exportsTotal below, the same
   // separation the real GSTR-1 return has between the main taxable-value
   // summary and Table 6A.
@@ -532,16 +593,32 @@ export async function computeGstr3b(
   // expected, and the commonest question somebody will ask about these
   // figures.
   //
-  // CANCELLED transfers are excluded from both. The supply did not happen,
-  // and the ledger reversal says so. Where the invoice had already gone out
-  // this understates the period by design: an issued invoice is properly
-  // undone by a credit note under section 34, which this system does not
-  // raise — computeGstr1's cancelledTransfers list is what flags the ones
-  // needing manual treatment.
+  // A CANCELLED transfer is now in the outward figure for the month it was
+  // DISPATCHED, and its credit note reduces the month the NOTE was issued in.
+  // Section 34 does not un-happen a supply; it credits it. Where both fall in
+  // one month the two net to nothing and this reads exactly as it did when a
+  // cancellation was simply dropped from both — where they straddle a month
+  // end, the old treatment understated the dispatch month by the whole value
+  // of an invoice that had genuinely gone out.
+  //
+  // A cancellation from before migration_052 has no note. It is excluded here
+  // rather than left declared-and-never-credited, which keeps every existing
+  // period reading as it always did; computeGstr1's cancelledTransfers list
+  // is what flags those for manual treatment.
   const dispatched = await prisma.stockTransfer.findMany({
     where: {
-      organizationId, taxTreatment: "TAXABLE", status: { not: "CANCELLED" },
+      organizationId, taxTreatment: "TAXABLE",
       transferDate: { gte: from, lte: to },
+      ...(branchId ? { fromBranchId: branchId } : {}),
+      OR: [{ status: { not: "CANCELLED" } }, { creditNoteNumber: { not: null } }],
+    },
+    include: { lines: true },
+  });
+  // The reversal, in the period of the note.
+  const credited = await prisma.stockTransfer.findMany({
+    where: {
+      organizationId, taxTreatment: "TAXABLE", status: "CANCELLED",
+      creditNoteDate: { gte: from, lte: to },
       ...(branchId ? { fromBranchId: branchId } : {}),
     },
     include: { lines: true },
@@ -562,13 +639,14 @@ export async function computeGstr3b(
     ), acc), emptyRateAcc());
   }
   const trOut = transferTotals(dispatched);
+  const trCredit = transferTotals(credited);
   const trItc = transferTotals(receivedIn);
 
   const outward = sectionTotal({
-    taxableValue: round2(Number(invAgg._sum.subtotal ?? 0) - Number(invAgg._sum.discountTotal ?? 0) - retOut.taxableValue + trOut.taxableValue),
-    cgst: round2(Number(invAgg._sum.cgstTotal ?? 0) - retOut.cgst + trOut.cgst),
-    sgst: round2(Number(invAgg._sum.sgstTotal ?? 0) - retOut.sgst + trOut.sgst),
-    igst: round2(Number(invAgg._sum.igstTotal ?? 0) - retOut.igst + trOut.igst),
+    taxableValue: round2(Number(invAgg._sum.subtotal ?? 0) - Number(invAgg._sum.discountTotal ?? 0) - retOut.taxableValue + trOut.taxableValue - trCredit.taxableValue),
+    cgst: round2(Number(invAgg._sum.cgstTotal ?? 0) - retOut.cgst + trOut.cgst - trCredit.cgst),
+    sgst: round2(Number(invAgg._sum.sgstTotal ?? 0) - retOut.sgst + trOut.sgst - trCredit.sgst),
+    igst: round2(Number(invAgg._sum.igstTotal ?? 0) - retOut.igst + trOut.igst - trCredit.igst),
   });
   const itc = sectionTotal({
     taxableValue: round2(Number(billAgg._sum.subtotal ?? 0) - retItc.taxableValue + trItc.taxableValue),

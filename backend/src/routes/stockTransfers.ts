@@ -262,6 +262,49 @@ async function withTransferNumberRetry<T>(
   throw lastErr;
 }
 
+// CN-nnnn, counted per organisation the same way TR-nnnn is, and for the same
+// reason: computed inside the transaction so each attempt sees the committed
+// count. Section 34(1) undoes an issued invoice with a credit note, which is
+// itself a numbered document reported in Table 9B of the return for the month
+// it was issued — so it needs a number of its own, not a reference to the
+// invoice it reverses.
+//
+// SalesReturn.returnNumber is already this scheme, and GSTR-1 already files
+// that number as the credit note for a sales return. Following it rather than
+// configuring a second series means a cancellation can never be refused
+// because nobody set a prefix up, which would be a new way for the one
+// operation that exists to undo a mistake to fail.
+const CREDIT_NOTE_ATTEMPTS = 4;
+
+function isCreditNoteCollision(err: unknown): boolean {
+  const e = err as { code?: string; meta?: { target?: unknown } };
+  if (e?.code !== "P2002") return false;
+  const target = e.meta?.target;
+  const asText = Array.isArray(target) ? target.join(",") : String(target ?? "");
+  return asText.includes("credit_note_number") || asText.includes("creditNoteNumber");
+}
+
+async function withCreditNoteRetry<T>(
+  organizationId: string,
+  run: (tx: Tx, creditNoteNumber: string) => Promise<T>
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < CREDIT_NOTE_ATTEMPTS; attempt++) {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const count = await tx.stockTransfer.count({
+          where: { organizationId, creditNoteNumber: { not: null } },
+        });
+        return run(tx, `CN-${String(count + 1).padStart(4, "0")}`);
+      });
+    } catch (err) {
+      if (!isCreditNoteCollision(err)) throw err;
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
 async function loadTransfer(organizationId: string, id: string) {
   return prisma.stockTransfer.findFirst({
     where: { id, organizationId },
@@ -1146,7 +1189,12 @@ router.post("/:id/cancel", canPost, async (req, res) => {
   const label = t.documentNumber ? `${t.transferNumber} / ${t.documentNumber}` : t.transferNumber;
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
+    // A credit note is raised only where an INVOICE went out. An untaxed
+    // challan is not a supply, has no invoice, and appears in no return, so
+    // there is nothing for a note to undo - the ledger reversal is the whole
+    // of it, and the transaction runs unwrapped.
+    const needsNote = taxable && !!t.documentNumber;
+    const runCancel = async (tx: Tx, creditNoteNumber: string | null) => {
       const journalEntry = await tx.journalEntry.create({
         data: {
           organizationId, branchId: t.fromBranchId, entryDate,
@@ -1219,7 +1267,15 @@ router.post("/:id/cancel", canPost, async (req, res) => {
       // returned to the sender, creating stock out of nothing.
       const claimed = await tx.stockTransfer.updateMany({
         where: { id: t.id, status: "DISPATCHED" },
-        data: { status: "CANCELLED", receiptJournalEntryId: journalEntry.id },
+        data: {
+          status: "CANCELLED", receiptJournalEntryId: journalEntry.id,
+          // Written in the SAME updateMany as the status, so the note and the
+          // cancellation it documents commit together or not at all. The
+          // note's date is the cancellation date, which is deliberately not
+          // the transfer date: the supply falls in the period of the invoice
+          // and the note may fall in the next one.
+          ...(creditNoteNumber ? { creditNoteNumber, creditNoteDate: entryDate } : {}),
+        },
       });
       if (claimed.count === 0) {
         throw Object.assign(
@@ -1228,13 +1284,17 @@ router.post("/:id/cancel", canPost, async (req, res) => {
         );
       }
 
-      return { cancelled: true, total: costTotal, taxTotal, creditNoteNeeded: taxable && !!t.documentNumber };
-    });
+      return { cancelled: true, total: costTotal, taxTotal, creditNoteNumber };
+    };
+
+    const result = needsNote
+      ? await withCreditNoteRetry(organizationId, (tx, n) => runCancel(tx, n))
+      : await prisma.$transaction((tx) => runCancel(tx, null));
 
     logAudit({
       organizationId, actorUserId: req.user!.userId,
       action: "UPDATE", entityType: "stock_transfer", entityId: t.id,
-      summary: `${t.transferNumber} cancelled — ${result.total.toFixed(2)} returned to ${t.fromBranch.name}${result.creditNoteNeeded ? ` (invoice ${t.documentNumber} needs a credit note under s.34)` : ""}`,
+      summary: `${t.transferNumber} cancelled — ${result.total.toFixed(2)} returned to ${t.fromBranch.name}${result.creditNoteNumber ? ` (credit note ${result.creditNoteNumber} against invoice ${t.documentNumber})` : ""}`,
     });
 
     res.json({ data: result });

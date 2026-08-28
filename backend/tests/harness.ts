@@ -18,13 +18,24 @@ import { orgCreds } from "./testOrgs";
 
 export const prisma = new PrismaClient();
 
+// DEP unless told otherwise, so every command that worked yesterday still does.
+const MODULE = (
+  process.argv.find((a) => a.startsWith("--module="))?.split("=")[1] ??
+  process.env.TEST_MODULE ?? "DEP").toUpperCase();
+
 export const CONFIG = {
   baseUrl: process.env.TEST_BASE_URL ?? "http://localhost:4000",
   workbook: process.env.TEST_WORKBOOK ?? "tests/SmartERP-Test-Scenarios.xlsx",
   outWorkbook: process.env.TEST_WORKBOOK_OUT ?? "tests/SmartERP-Test-Results.xlsx",
+  // WHICH MODULE. `--module=STK` on the command line, or TEST_MODULE. The
+  // cases file and the results file follow from it, so adding a module means
+  // adding a <module>Cases.json and nothing else.
+  module: MODULE,
   // Used when the workbook is absent — same steps, no formatting.
-  casesJson: process.env.TEST_CASES_JSON ?? "tests/depCases.json",
-  outJson: process.env.TEST_RESULTS_JSON ?? "tests/SmartERP-Test-Results.json",
+  casesJson: process.env.TEST_CASES_JSON ?? `tests/${MODULE.toLowerCase()}Cases.json`,
+  outJson: process.env.TEST_RESULTS_JSON ??
+    (MODULE === "DEP" ? "tests/SmartERP-Test-Results.json"
+                      : `tests/SmartERP-Test-Results-${MODULE}.json`),
   // Two logins because the pack spans two organisations, and organizationId
   // is taken from the token — not from the request — for anyone who is not a
   // platform admin. See middleware/auth.ts resolveOrgId.
@@ -139,6 +150,15 @@ export const FIXTURE_SPECS: Record<string, FixtureSpec> = {
   ITM_PUMP_A:     { org: "A", kind: "item", match: "PUMP-5HP" },
   ITM_SVC_A:      { org: "A", kind: "item", match: "INST-SVC" },
   ITM_NONSTOCK_B: { org: "B", kind: "item", match: "LAP-14" },
+  ITM_BRG_B:      { org: "B", kind: "item", match: "BRG-6205" },
+  // Branch-transfer fixtures. The seed named these for what they are for:
+  // P1 moves under one GSTIN, P3 between two registrations in one state, P2
+  // across a state line, and the gasket has no HSN so a taxable transfer of
+  // it must be refused while an untaxed one must not.
+  ITM_P1_B:       { org: "B", kind: "item", match: "PUMP-P1" },
+  ITM_P2_B:       { org: "B", kind: "item", match: "PUMP-P2" },
+  ITM_P3_B:       { org: "B", kind: "item", match: "PUMP-P3" },
+  ITM_GSK_B:      { org: "B", kind: "item", match: "GASKET-NH" },
 
   VENDOR_TN:  { org: "A", kind: "partner", match: "Sundar Systems" },
   // The same name, resolved in ORG-B. A business partner id belongs to one
@@ -149,7 +169,17 @@ export const FIXTURE_SPECS: Record<string, FixtureSpec> = {
   VENDOR_USD: { org: "A", kind: "partner", match: "Overseas Supplies Inc" },
   CUST_TN:    { org: "A", kind: "partner", match: "Anand Traders" },
 
-  ACC_4008: { org: "A", kind: "account", match: "4008" },
+  CUST_TN_B:  { org: "B", kind: "partner", match: "Anand Traders" },
+
+  ACC_4008:   { org: "A", kind: "account", match: "4008" },
+  ACC_1201_A: { org: "A", kind: "account", match: "1201" },
+  // Cost of conversion, for the production COST posting. Both arrive with
+  // migration_051; before it, the only expense head an organisation had was
+  // 4008 Administrative, which is the one AS 2 excludes from the cost of
+  // inventories. A run against an organisation provisioned before that
+  // migration will fail to resolve these, and that failure is the point.
+  ACC_4004_A: { org: "A", kind: "account", match: "4004" },
+  ACC_4005_A: { org: "A", kind: "account", match: "4005" },
   ORG_A:    { org: "A", kind: "org", match: "" },
   ORG_B:    { org: "B", kind: "org", match: "" },
 };

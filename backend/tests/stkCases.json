@@ -1,0 +1,2922 @@
+[
+ {
+  "key": "STK-01.1",
+  "caseId": "STK-01",
+  "caseTitle": "Opening balance at item creation moves stock but NOT the ledger",
+  "action": "Create an item with an opening balance.",
+  "phase": 1,
+  "login": "A",
+  "method": "POST",
+  "path": "/items",
+  "body": {
+   "sku": "OPEN-TEST",
+   "name": "Opening balance test",
+   "itemKind": "STOCK",
+   "stockAccountId": "{{ACC_1201_A}}",
+   "hsnCode": "84821010",
+   "taxRate": 18,
+   "openingQuantity": 10,
+   "openingCost": 500,
+   "openingBranchId": "{{BR_A_CHN}}",
+   "openingDate": "2026-04-01"
+  },
+  "status": 201,
+  "capture": {
+   "itemId": "data.id"
+  },
+  "asserts": [
+   "GET /inventory/valuation :: field data.rows[item.sku=OPEN-TEST].quantityOnHand = 10",
+   "GET /inventory/valuation :: field data.rows[item.sku=OPEN-TEST].value = 5000.00"
+  ],
+  "auto": "YES",
+  "note": "The movement written is ADJUSTMENT_IN with referenceType item_opening_balance - NOT PURCHASE, which is what the scenario used to say."
+ },
+ {
+  "key": "STK-01.2",
+  "caseId": "STK-01",
+  "caseTitle": "Opening balance at item creation moves stock but NOT the ledger",
+  "action": "Look for the journal entry that should have accompanied it.",
+  "phase": 1,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT count(*) FROM journal_entries WHERE organization_id={{ORG_A}} AND reference_type='item_opening_balance'\" = 1"
+  ],
+  "auto": "YES",
+  "note": "Was the first defect this batch found: items.ts called receiveStock and posted nothing, so 5,000.00 of stock existed with no ledger balance behind it. Fixed - postOpeningStock() now runs inside the same transaction as the receipt, on the single-item path AND the bulk-upload path."
+ },
+ {
+  "key": "STK-01.3",
+  "caseId": "STK-01",
+  "caseTitle": "Opening balance at item creation moves stock but NOT the ledger",
+  "action": "Quantify it against account 1201.",
+  "phase": 1,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN business_partners p ON p.id=l.business_partner_id WHERE e.organization_id={{ORG_A}} AND p.bp_type='ITEM' AND p.name='Opening balance test'\" = 5000.00"
+  ],
+  "auto": "YES",
+  "note": "The item card under 1201 carries 10 x 500.00. This is the debit half of the entry above, on the item's own sub-ledger card, exactly as a Stock Adjustment IN would post it."
+ },
+ {
+  "key": "STK-01.4",
+  "caseId": "STK-01",
+  "caseTitle": "Opening balance at item creation moves stock but NOT the ledger",
+  "action": "Check the credit half landed in equity, not in income.",
+  "phase": 1,
+  "login": "A",
+  "je": [
+   {
+    "code": "1201",
+    "name": "Inventory (OPEN-TEST card)",
+    "debit": 5000,
+    "credit": 0
+   },
+   {
+    "code": "3003",
+    "name": "Opening Balance Equity",
+    "debit": 0,
+    "credit": 5000
+   }
+  ],
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='3003'\" = -5000.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id WHERE e.organization_id={{ORG_A}} AND e.reference_type='item_opening_balance'\" = 0"
+  ],
+  "auto": "YES",
+  "note": "3003 is credited, so the balance reads -5,000.00 under sum(debit-credit). The account did not exist until migration_050 - coa_templates carried no EQUITY rows at all, which is also why no organisation could draw a balance sheet. Crediting 4002 Inventory Adjustments instead would have reported every rupee of opening stock as first-year profit. Second assert: the entry balances."
+ },
+ {
+  "key": "STK-07.1",
+  "caseId": "STK-07",
+  "caseTitle": "A service item has no stock to adjust",
+  "action": "Try to put a service item on a Stock Adjustment.",
+  "phase": 1,
+  "login": "A",
+  "method": "POST",
+  "path": "/stock-adjustments",
+  "body": {
+   "adjustmentDate": "2026-04-01",
+   "branchId": "{{BR_A_CHN}}",
+   "narration": "Service on an adjustment",
+   "lines": [
+    {
+     "itemId": "{{ITM_SVC_A}}",
+     "direction": "IN",
+     "quantity": 1,
+     "unitCost": 1000
+    }
+   ]
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"invalid for this organization\""
+  ],
+  "auto": "YES",
+  "note": "The route filters to itemKind STOCK, so the API refuses it too - not just the picker. The other half of this scenario - issuing a service item to a production order - is STK-13.2, which lives in phase 12 because it needs an order to exist first."
+ },
+ {
+  "key": "STK-02.1",
+  "caseId": "STK-02",
+  "caseTitle": "Inward stock adjustment - found stock",
+  "action": "Post a Stock Adjustment, direction IN.",
+  "phase": 2,
+  "login": "A",
+  "je": [
+   {
+    "code": "1201",
+    "name": "Inventory (BRG-6205 card)",
+    "debit": 20000,
+    "credit": 0
+   },
+   {
+    "code": "4002",
+    "name": "Inventory Adjustments",
+    "debit": 0,
+    "credit": 20000
+   }
+  ],
+  "method": "POST",
+  "path": "/stock-adjustments",
+  "body": {
+   "adjustmentDate": "2026-04-01",
+   "branchId": "{{BR_A_CHN}}",
+   "narration": "Opening stock",
+   "lines": [
+    {
+     "itemId": "{{ITM_BRG_A}}",
+     "direction": "IN",
+     "quantity": 100,
+     "unitCost": 200
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "adjId": "data.id"
+  },
+  "asserts": [
+   "journal stock_adjustment {{adjId}}",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].quantityOnHand = 100",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].value = 20000.00",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].averageCost = 200.00"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "STK-02.2",
+  "caseId": "STK-02",
+  "caseTitle": "Inward stock adjustment - found stock",
+  "action": "Check the item's sub-ledger card under 1201.",
+  "phase": 2,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN business_partners p ON p.id=l.business_partner_id WHERE e.organization_id={{ORG_A}} AND p.bp_type='ITEM' AND p.name='Bearing 6205' AND l.account_id IN (SELECT id FROM accounts WHERE organization_id={{ORG_A}} AND account_code='1201')\" = 20000.00"
+  ],
+  "auto": "YES",
+  "note": "1201 is a control account with one card per item."
+ },
+ {
+  "key": "STK-03.1",
+  "caseId": "STK-03",
+  "caseTitle": "Purchase bill recomputes the weighted average",
+  "action": "Create a Purchase Bill (not PO-linked).",
+  "phase": 3,
+  "login": "A",
+  "je": [
+   {
+    "code": "1201",
+    "name": "Inventory (BRG-6205 card)",
+    "debit": 13000,
+    "credit": 0
+   },
+   {
+    "code": "1102",
+    "name": "CGST Input Credit",
+    "debit": 1170,
+    "credit": 0
+   },
+   {
+    "code": "1103",
+    "name": "SGST Input Credit",
+    "debit": 1170,
+    "credit": 0
+   },
+   {
+    "code": "2001",
+    "name": "Accounts Payable (vendor)",
+    "debit": 0,
+    "credit": 15340
+   }
+  ],
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN}}",
+   "billDate": "2026-04-05",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_BRG_A}}",
+     "quantity": 50,
+     "rate": 260,
+     "taxRate": 18
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "billId": "data.id"
+  },
+  "asserts": [
+   "journal purchase_bill {{billId}}"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "STK-03.2",
+  "caseId": "STK-03",
+  "caseTitle": "Purchase bill recomputes the weighted average",
+  "action": "Confirm the average moved and nothing was restated.",
+  "phase": 3,
+  "login": "A",
+  "asserts": [
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].quantityOnHand = 150",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].averageCost = 220.00",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].value = 33000.00"
+  ],
+  "auto": "YES",
+  "note": "(100 x 200 + 50 x 260) / 150 = 220.00. The 20,000.00 already in the ledger is untouched."
+ },
+ {
+  "key": "STK-04.1",
+  "caseId": "STK-04",
+  "caseTitle": "Sale takes cost out at the weighted average, not at the sale price",
+  "action": "Raise a Sales Invoice.",
+  "phase": 4,
+  "login": "A",
+  "je": [
+   {
+    "code": "1005",
+    "name": "Accounts Receivable (customer)",
+    "debit": 28320,
+    "credit": 0
+   },
+   {
+    "code": "5001",
+    "name": "Sales Revenue",
+    "debit": 0,
+    "credit": 24000
+   },
+   {
+    "code": "2102",
+    "name": "CGST Output Payable",
+    "debit": 0,
+    "credit": 2160
+   },
+   {
+    "code": "2103",
+    "name": "SGST Output Payable",
+    "debit": 0,
+    "credit": 2160
+   },
+   {
+    "code": "4001",
+    "name": "Cost of Goods Sold",
+    "debit": 13200,
+    "credit": 0
+   },
+   {
+    "code": "1201",
+    "name": "Inventory (BRG-6205 card)",
+    "debit": 0,
+    "credit": 13200
+   }
+  ],
+  "method": "POST",
+  "path": "/sales-invoices",
+  "body": {
+   "businessPartnerId": "{{CUST_TN}}",
+   "invoiceDate": "2026-04-10",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_BRG_A}}",
+     "quantity": 60,
+     "rate": 400,
+     "taxRate": 18
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "invId": "data.id"
+  },
+  "asserts": [
+   "journal sales_invoice {{invId}}"
+  ],
+  "auto": "YES",
+  "note": "ONE entry carries both halves: the revenue side and the cost side. COGS is 60 x 220.00 = 13,200.00 - the cost the engine consumed, never the invoice rate."
+ },
+ {
+  "key": "STK-04.2",
+  "caseId": "STK-04",
+  "caseTitle": "Sale takes cost out at the weighted average, not at the sale price",
+  "action": "Confirm consumption did not move the average.",
+  "phase": 4,
+  "login": "A",
+  "asserts": [
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].quantityOnHand = 90",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].averageCost = 220.00",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].value = 19800.00"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "STK-04.3",
+  "caseId": "STK-04",
+  "caseTitle": "Sale takes cost out at the weighted average, not at the sale price",
+  "action": "Check gross margin.",
+  "phase": 4,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(CASE WHEN a.account_code='5001' THEN l.credit-l.debit WHEN a.account_code='4001' THEN l.debit-l.credit END),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND e.reference_type='sales_invoice'\" = 37200.00"
+  ],
+  "auto": "YES",
+  "note": "Revenue 24,000.00 plus COGS 13,200.00 read as positives sums to 37,200.00; the margin is 10,800.00. If COGS ever equals the sale value the costing engine has been bypassed."
+ },
+ {
+  "key": "STK-05.1",
+  "caseId": "STK-05",
+  "caseTitle": "Outward stock adjustment - shrinkage, costed by the engine",
+  "action": "Post a Stock Adjustment, direction OUT, with NO unit cost.",
+  "phase": 5,
+  "login": "A",
+  "je": [
+   {
+    "code": "4002",
+    "name": "Inventory Adjustments",
+    "debit": 2200,
+    "credit": 0
+   },
+   {
+    "code": "1201",
+    "name": "Inventory (BRG-6205 card)",
+    "debit": 0,
+    "credit": 2200
+   }
+  ],
+  "method": "POST",
+  "path": "/stock-adjustments",
+  "body": {
+   "adjustmentDate": "2026-04-15",
+   "branchId": "{{BR_A_CHN}}",
+   "narration": "Physical count shortfall",
+   "lines": [
+    {
+     "itemId": "{{ITM_BRG_A}}",
+     "direction": "OUT",
+     "quantity": 10
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "adjId": "data.id"
+  },
+  "asserts": [
+   "journal stock_adjustment {{adjId}}",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].quantityOnHand = 80",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].value = 17600.00"
+  ],
+  "auto": "YES",
+  "note": "10 x 220.00 = 2,200.00, costed by the engine. An operator who could supply a cost on an OUT line could make a write-off say anything."
+ },
+ {
+  "key": "STK-05.2",
+  "caseId": "STK-05",
+  "caseTitle": "Outward stock adjustment - shrinkage, costed by the engine",
+  "action": "Post one document with an IN line and an OUT line together.",
+  "phase": 5,
+  "login": "A",
+  "je": [
+   {
+    "code": "1201",
+    "name": "Inventory - IN leg",
+    "debit": 1500,
+    "credit": 0
+   },
+   {
+    "code": "4002",
+    "name": "Inventory Adjustments - write-off",
+    "debit": 1123.53,
+    "credit": 0
+   },
+   {
+    "code": "1201",
+    "name": "Inventory - OUT leg",
+    "debit": 0,
+    "credit": 1123.53
+   },
+   {
+    "code": "4002",
+    "name": "Inventory Adjustments - found stock",
+    "debit": 0,
+    "credit": 1500
+   }
+  ],
+  "method": "POST",
+  "path": "/stock-adjustments",
+  "body": {
+   "adjustmentDate": "2026-04-16",
+   "branchId": "{{BR_A_CHN}}",
+   "narration": "Recount",
+   "lines": [
+    {
+     "itemId": "{{ITM_BRG_A}}",
+     "direction": "IN",
+     "quantity": 5,
+     "unitCost": 300
+    },
+    {
+     "itemId": "{{ITM_BRG_A}}",
+     "direction": "OUT",
+     "quantity": 5
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "adjId2": "data.id"
+  },
+  "asserts": [
+   "journal stock_adjustment {{adjId2}}",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].quantityOnHand = 80",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].value = 17976.47"
+  ],
+  "auto": "YES",
+  "note": "The IN is processed first, so the OUT consumes at the NEW average: (80x220 + 5x300)/85 = 224.7059, and 5 x that is 1,123.53. The entry carries BOTH a debit and a credit to 4002 - gross, not netted."
+ },
+ {
+  "key": "STK-06.1",
+  "caseId": "STK-06",
+  "caseTitle": "Cannot take out more than is on hand",
+  "action": "Post a Stock Adjustment OUT for more than the balance.",
+  "phase": 6,
+  "login": "A",
+  "method": "POST",
+  "path": "/stock-adjustments",
+  "body": {
+   "adjustmentDate": "2026-04-17",
+   "branchId": "{{BR_A_CHN}}",
+   "narration": "Over-issue",
+   "lines": [
+    {
+     "itemId": "{{ITM_BRG_A}}",
+     "direction": "OUT",
+     "quantity": 200
+    }
+   ]
+  },
+  "status": 409,
+  "asserts": [
+   "error contains \"in stock at this branch\""
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "STK-06.2",
+  "caseId": "STK-06",
+  "caseTitle": "Cannot take out more than is on hand",
+  "action": "Confirm nothing at all was written.",
+  "phase": 6,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT count(*) FROM stock_movements WHERE organization_id={{ORG_A}} AND movement_date='2026-04-17'\" = 0",
+   "sql \"SELECT count(*) FROM journal_entries WHERE organization_id={{ORG_A}} AND entry_date='2026-04-17'\" = 0"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "STK-06.3",
+  "caseId": "STK-06",
+  "caseTitle": "Cannot take out more than is on hand",
+  "action": "Post a two-line document where the SECOND line fails.",
+  "phase": 6,
+  "login": "A",
+  "method": "POST",
+  "path": "/stock-adjustments",
+  "body": {
+   "adjustmentDate": "2026-04-18",
+   "branchId": "{{BR_A_CHN}}",
+   "narration": "Line 2 fails",
+   "lines": [
+    {
+     "itemId": "{{ITM_BRG_A}}",
+     "direction": "IN",
+     "quantity": 10,
+     "unitCost": 250
+    },
+    {
+     "itemId": "{{ITM_BRG_A}}",
+     "direction": "OUT",
+     "quantity": 500
+    }
+   ]
+  },
+  "status": 409,
+  "asserts": [
+   "error contains \"in stock at this branch\"",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].quantityOnHand = 80",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].value = 17976.47"
+  ],
+  "auto": "YES",
+  "note": "Line 1 must be rolled back with line 2. If the quantity reads 90 the document was not one transaction."
+ },
+ {
+  "key": "STK-10.1",
+  "caseId": "STK-10",
+  "caseTitle": "Material issued to a production order leaves stock and enters WIP",
+  "action": "Bring castings into stock, so there is something to issue.",
+  "phase": 10,
+  "login": "A",
+  "je": [
+   {
+    "code": "1301",
+    "name": "Raw Materials (CAST-5HP card)",
+    "debit": 45000,
+    "credit": 0
+   },
+   {
+    "code": "4002",
+    "name": "Inventory Adjustments",
+    "debit": 0,
+    "credit": 45000
+   }
+  ],
+  "method": "POST",
+  "path": "/stock-adjustments",
+  "body": {
+   "adjustmentDate": "2026-05-01",
+   "branchId": "{{BR_A_CHN}}",
+   "narration": "Castings received",
+   "lines": [
+    {
+     "itemId": "{{ITM_CAST_A}}",
+     "direction": "IN",
+     "quantity": 100,
+     "unitCost": 450
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "adjCast": "data.id"
+  },
+  "asserts": [
+   "journal stock_adjustment {{adjCast}}",
+   "GET /inventory/valuation :: field data.rows[item.sku=CAST-5HP].quantityOnHand = 100",
+   "GET /inventory/valuation :: field data.rows[item.sku=CAST-5HP].averageCost = 450.00"
+  ],
+  "auto": "YES",
+  "note": "CAST-5HP sits on 1301 Raw Materials, not 1201 - the manufacturing chart splits inventory three ways, and 1301 / 1302 / 1303 are what make a production order explicable on the balance sheet."
+ },
+ {
+  "key": "STK-10.2",
+  "caseId": "STK-10",
+  "caseTitle": "Material issued to a production order leaves stock and enters WIP",
+  "action": "Open a production order for 10 pumps.",
+  "phase": 10,
+  "login": "A",
+  "method": "POST",
+  "path": "/production-orders",
+  "body": {
+   "branchId": "{{BR_A_CHN}}",
+   "orderDate": "2026-05-02",
+   "finishedItemId": "{{ITM_PUMP_A}}",
+   "plannedQuantity": 10,
+   "notes": "Batch 1 of the 5HP run"
+  },
+  "status": 201,
+  "capture": {
+   "poId": "data.id",
+   "poNumber": "data.orderNumber"
+  },
+  "asserts": [
+   "field data.orderNumber = PO-0001"
+  ],
+  "auto": "YES",
+  "note": "Creating the order posts NOTHING. It is a container for the postings that follow, which is why its own step has no expected ledger."
+ },
+ {
+  "key": "STK-10.3",
+  "caseId": "STK-10",
+  "caseTitle": "Material issued to a production order leaves stock and enters WIP",
+  "action": "Issue 20 castings to the order.",
+  "phase": 10,
+  "login": "A",
+  "je": [
+   {
+    "code": "1302",
+    "name": "Work in Progress",
+    "debit": 9000,
+    "credit": 0
+   },
+   {
+    "code": "1301",
+    "name": "Raw Materials (CAST-5HP card)",
+    "debit": 0,
+    "credit": 9000
+   }
+  ],
+  "method": "POST",
+  "path": "/production-orders/{{STK-10.poId}}/issue",
+  "body": {
+   "entryDate": "2026-05-03",
+   "lines": [
+    {
+     "itemId": "{{ITM_CAST_A}}",
+     "quantity": 20
+    }
+   ],
+   "narration": "First draw"
+  },
+  "status": 200,
+  "capture": {
+   "issueId": "data.entryId"
+  },
+  "asserts": [
+   "field data.total = 9000.00",
+   "journal production_issue {{issueId}}"
+  ],
+  "auto": "YES",
+  "note": "20 x 450.00. The 9,000.00 is NOT in the request - the request names a quantity and consumeStock decides what it cost. Send a rate on an issue line and there is nowhere for it to go."
+ },
+ {
+  "key": "STK-10.4",
+  "caseId": "STK-10",
+  "caseTitle": "Material issued to a production order leaves stock and enters WIP",
+  "action": "The stock left, and the same value is now in 1302.",
+  "phase": 10,
+  "login": "A",
+  "asserts": [
+   "GET /inventory/valuation :: field data.rows[item.sku=CAST-5HP].quantityOnHand = 80",
+   "GET /inventory/valuation :: field data.rows[item.sku=CAST-5HP].value = 36000.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='1302'\" = 9000.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN business_partners p ON p.id=l.business_partner_id WHERE e.organization_id={{ORG_A}} AND p.bp_type='ITEM' AND p.name='Casting, 5HP pump body' AND l.account_id IN (SELECT id FROM accounts WHERE organization_id={{ORG_A}} AND account_code='1301')\" = 36000.00"
+  ],
+  "auto": "YES",
+  "note": "Value moved sideways, not away: 45,000.00 was on the CAST card under 1301, 9,000.00 of it is now in 1302, and 36,000.00 remains. Nothing entered or left the business."
+ },
+ {
+  "key": "STK-10.5",
+  "caseId": "STK-10",
+  "caseTitle": "Material issued to a production order leaves stock and enters WIP",
+  "action": "Read the order's own position.",
+  "phase": 10,
+  "login": "A",
+  "method": "GET",
+  "path": "/production-orders/{{STK-10.poId}}",
+  "status": 200,
+  "asserts": [
+   "field data.status = OPEN",
+   "field data.issued = 9000",
+   "field data.costed = 0",
+   "field data.absorbed = 0",
+   "field data.wipBalance = 9000",
+   "field data.receivedQuantity = 0"
+  ],
+  "auto": "YES",
+  "note": "None of these is stored. positionOf() sums them from the postings every time, the same way accumulated depreciation is summed from the runs rather than held on the asset - so the order cannot disagree with its own entries."
+ },
+ {
+  "key": "STK-11.0",
+  "caseId": "STK-11",
+  "caseTitle": "Cost of conversion is capitalised into inventory, out of the right head",
+  "action": "Check the organisation has somewhere correct to absorb labour from.",
+  "phase": 10,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT count(*) FROM accounts WHERE organization_id={{ORG_A}} AND account_code IN ('4004','4005')\" = 2"
+  ],
+  "auto": "YES",
+  "note": "The defect this batch opened with. productionOrders.ts insists a cost line names a plain EXPENSE account, and the chart had four expense heads: 4003 Abnormal Production Loss (which by definition cannot be absorbed), 4020 Depreciation, 4021 Loss on Disposal, and 4008 Administrative. So every production order had to take its labour out of Administrative - the one head AS 2 names as EXCLUDED from the cost of inventories. The route was right and the chart could not feed it. migration_051 adds 4004 Direct Labour and 4005 Production Overheads."
+ },
+ {
+  "key": "STK-11.1",
+  "caseId": "STK-11",
+  "caseTitle": "Cost of conversion is capitalised into inventory, out of the right head",
+  "action": "Absorb labour and factory overhead into the order.",
+  "phase": 10,
+  "login": "A",
+  "je": [
+   {
+    "code": "1302",
+    "name": "Work in Progress",
+    "debit": 12000,
+    "credit": 0
+   },
+   {
+    "code": "4004",
+    "name": "Direct Labour",
+    "debit": 0,
+    "credit": 8000
+   },
+   {
+    "code": "4005",
+    "name": "Production Overheads",
+    "debit": 0,
+    "credit": 4000
+   }
+  ],
+  "method": "POST",
+  "path": "/production-orders/{{STK-10.poId}}/cost",
+  "body": {
+   "entryDate": "2026-05-04",
+   "lines": [
+    {
+     "accountId": "{{ACC_4004_A}}",
+     "amount": 8000
+    },
+    {
+     "accountId": "{{ACC_4005_A}}",
+     "amount": 4000
+    }
+   ],
+   "narration": "Week 18 labour and overhead"
+  },
+  "status": 200,
+  "capture": {
+   "costId": "data.entryId"
+  },
+  "asserts": [
+   "field data.total = 12000.00",
+   "journal production_cost {{costId}}"
+  ],
+  "auto": "YES",
+  "note": "AS 2 requires cost of conversion - direct labour plus a systematic allocation of production overheads - to sit in inventory. The expense head is CREDITED as its cost is capitalised, so the P&L carries only what was not absorbed."
+ },
+ {
+  "key": "STK-11.2",
+  "caseId": "STK-11",
+  "caseTitle": "Cost of conversion is capitalised into inventory, out of the right head",
+  "action": "The pool is now material plus conversion.",
+  "phase": 10,
+  "login": "A",
+  "method": "GET",
+  "path": "/production-orders/{{STK-10.poId}}",
+  "status": 200,
+  "asserts": [
+   "field data.issued = 9000",
+   "field data.costed = 12000",
+   "field data.wipBalance = 21000",
+   "field data.unitCostSoFar = null"
+  ],
+  "auto": "YES",
+  "note": "21,000.00 against a planned 10 units. unitCostSoFar is null rather than 2,100.00 because nothing has been received: a cost per unit before any unit exists would be a forecast, and this report does not forecast."
+ },
+ {
+  "key": "STK-11.3",
+  "caseId": "STK-11",
+  "caseTitle": "Cost of conversion is capitalised into inventory, out of the right head",
+  "action": "And 1302 agrees.",
+  "phase": 10,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='1302'\" = 21000.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='4004'\" = -8000.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='4005'\" = -4000.00"
+  ],
+  "auto": "YES",
+  "note": "4004 and 4005 read negative under sum(debit-credit) because they were credited - the cost left the P&L and went into stock. If a production run ever leaves a DEBIT sitting on 4004 at the year end, that is conversion cost that was never absorbed by anything."
+ },
+ {
+  "key": "STK-12.1",
+  "caseId": "STK-12",
+  "caseTitle": "The finished good's cost is derived, and the last receipt carries the rest",
+  "action": "Receive 6 of the 10 planned.",
+  "phase": 11,
+  "login": "A",
+  "je": [
+   {
+    "code": "1303",
+    "name": "Finished Goods (PUMP-5HP card)",
+    "debit": 12600,
+    "credit": 0
+   },
+   {
+    "code": "1302",
+    "name": "Work in Progress",
+    "debit": 0,
+    "credit": 12600
+   }
+  ],
+  "method": "POST",
+  "path": "/production-orders/{{STK-10.poId}}/receive",
+  "body": {
+   "entryDate": "2026-05-05",
+   "quantity": 6
+  },
+  "status": 200,
+  "capture": {
+   "rcpt1": "data.entryId"
+  },
+  "asserts": [
+   "field data.absorbed = 12600.00",
+   "field data.unitCost = 2100.0000",
+   "field data.completed = false",
+   "journal production_receipt {{rcpt1}}",
+   "GET /inventory/valuation :: field data.rows[item.sku=PUMP-5HP].quantityOnHand = 6",
+   "GET /inventory/valuation :: field data.rows[item.sku=PUMP-5HP].value = 12600.00"
+  ],
+  "auto": "YES",
+  "note": "Proportional to what is still expected: 21,000.00 x 6/10. The 2,100.00 a unit is not in the request and is not on the item - it is the pool divided by the output, and it is the number that will become COGS when a pump is sold."
+ },
+ {
+  "key": "STK-12.2",
+  "caseId": "STK-12",
+  "caseTitle": "The finished good's cost is derived, and the last receipt carries the rest",
+  "action": "Only 3 more come off the line. Call it finished.",
+  "phase": 11,
+  "login": "A",
+  "je": [
+   {
+    "code": "1303",
+    "name": "Finished Goods (PUMP-5HP card)",
+    "debit": 8400,
+    "credit": 0
+   },
+   {
+    "code": "1302",
+    "name": "Work in Progress",
+    "debit": 0,
+    "credit": 8400
+   }
+  ],
+  "method": "POST",
+  "path": "/production-orders/{{STK-10.poId}}/receive",
+  "body": {
+   "entryDate": "2026-05-06",
+   "quantity": 3,
+   "final": true
+  },
+  "status": 200,
+  "capture": {
+   "rcpt2": "data.entryId"
+  },
+  "asserts": [
+   "field data.absorbed = 8400.00",
+   "field data.unitCost = 2800.0000",
+   "field data.completed = true",
+   "journal production_receipt {{rcpt2}}"
+  ],
+  "auto": "YES",
+  "note": "THE BALANCING-FIGURE RULE, and the reason to run this case. 9 units were made where 10 were planned, and the final receipt takes the WHOLE remaining balance - 8,400.00 over 3 units is 2,800.00 each. That is how ordinary process loss is treated: the good units carry the cost of the ones lost, which is what AS 2 requires. `final` is a decision someone takes, not something arithmetic discovers - a short yield has to be declared."
+ },
+ {
+  "key": "STK-12.3",
+  "caseId": "STK-12",
+  "caseTitle": "The finished good's cost is derived, and the last receipt carries the rest",
+  "action": "The pool emptied into stock, to the paisa.",
+  "phase": 11,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='1302'\" = 0",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='1303'\" = 21000.00",
+   "GET /inventory/valuation :: field data.rows[item.sku=PUMP-5HP].quantityOnHand = 9",
+   "GET /inventory/valuation :: field data.rows[item.sku=PUMP-5HP].value = 21000.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN business_partners p ON p.id=l.business_partner_id WHERE e.organization_id={{ORG_A}} AND p.bp_type='ITEM' AND p.name='Pump 5HP' AND l.account_id IN (SELECT id FROM accounts WHERE organization_id={{ORG_A}} AND account_code='1303')\" = 21000.00"
+  ],
+  "auto": "YES",
+  "note": "9,000.00 of castings plus 12,000.00 of conversion is 21,000.00, and all of it is now in finished goods. The weighted average is 21,000 / 9 = 2,333.3333, so the valuation computes 20,999.9997 and reports 21,000.00 - the sub-paisa is the 4dp average, and it rounds away here because the whole pool landed on one item."
+ },
+ {
+  "key": "STK-12.4",
+  "caseId": "STK-12",
+  "caseTitle": "The finished good's cost is derived, and the last receipt carries the rest",
+  "action": "The order closed itself, and says what it made.",
+  "phase": 11,
+  "login": "A",
+  "method": "GET",
+  "path": "/production-orders/{{STK-10.poId}}",
+  "status": 200,
+  "asserts": [
+   "field data.status = COMPLETED",
+   "field data.wipBalance = 0",
+   "field data.absorbed = 21000",
+   "field data.receivedQuantity = 9",
+   "field data.unitCostSoFar = 2333.3333",
+   "field data.writtenOff = 0"
+  ],
+  "auto": "YES",
+  "note": "Completed by the receipt, not by a separate close. unitCostSoFar is now real: 21,000.00 over 9 units. Nothing was written off - the loss was absorbed, not expensed, because there was output to carry it."
+ },
+ {
+  "key": "STK-13.1",
+  "caseId": "STK-13",
+  "caseTitle": "A production order refuses what it cannot cost",
+  "action": "Open a second order, to try things against.",
+  "phase": 12,
+  "login": "A",
+  "method": "POST",
+  "path": "/production-orders",
+  "body": {
+   "branchId": "{{BR_A_CHN}}",
+   "orderDate": "2026-05-10",
+   "finishedItemId": "{{ITM_PUMP_A}}",
+   "plannedQuantity": 4
+  },
+  "status": 201,
+  "capture": {
+   "po2": "data.id"
+  },
+  "auto": "YES"
+ },
+ {
+  "key": "STK-13.2",
+  "caseId": "STK-13",
+  "caseTitle": "A production order refuses what it cannot cost",
+  "action": "Issue a service item as a component.",
+  "phase": 12,
+  "login": "A",
+  "method": "POST",
+  "path": "/production-orders/{{STK-13.po2}}/issue",
+  "body": {
+   "entryDate": "2026-05-11",
+   "lines": [
+    {
+     "itemId": "{{ITM_SVC_A}}",
+     "quantity": 1
+    }
+   ]
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"no stock to consume\""
+  ],
+  "auto": "YES",
+  "note": "This is STK-07.2, which batch 1 deferred for want of a production order. A service has no stock and no cost to consume, so it cannot be issued - labour goes on the order as a COST line, which is a different posting with a different ledger."
+ },
+ {
+  "key": "STK-13.3",
+  "caseId": "STK-13",
+  "caseTitle": "A production order refuses what it cannot cost",
+  "action": "Issue more castings than the branch holds.",
+  "phase": 12,
+  "login": "A",
+  "method": "POST",
+  "path": "/production-orders/{{STK-13.po2}}/issue",
+  "body": {
+   "entryDate": "2026-05-11",
+   "lines": [
+    {
+     "itemId": "{{ITM_CAST_A}}",
+     "quantity": 500
+    }
+   ]
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"in stock at this branch\""
+  ],
+  "auto": "YES",
+  "note": "The same InsufficientStockError a Stock Adjustment raises, surfaced as a 400 rather than a 500. An issue that could overdraw stock would put a negative quantity into the valuation and a cost into WIP that was never paid for."
+ },
+ {
+  "key": "STK-13.4",
+  "caseId": "STK-13",
+  "caseTitle": "A production order refuses what it cannot cost",
+  "action": "Absorb a cost out of an account that is not an expense.",
+  "phase": 12,
+  "login": "A",
+  "method": "POST",
+  "path": "/production-orders/{{STK-13.po2}}/cost",
+  "body": {
+   "entryDate": "2026-05-11",
+   "lines": [
+    {
+     "accountId": "{{ACC_1201_A}}",
+     "amount": 500
+    }
+   ]
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"is not an expense account\""
+  ],
+  "auto": "YES",
+  "note": "Crediting an asset to raise WIP would move value between two asset heads and call it conversion. The route reads the account type rather than trusting the picker."
+ },
+ {
+  "key": "STK-13.5",
+  "caseId": "STK-13",
+  "caseTitle": "A production order refuses what it cannot cost",
+  "action": "Receive output before anything has been issued.",
+  "phase": 12,
+  "login": "A",
+  "method": "POST",
+  "path": "/production-orders/{{STK-13.po2}}/receive",
+  "body": {
+   "entryDate": "2026-05-11",
+   "quantity": 1
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"no cost to give the output\""
+  ],
+  "auto": "YES",
+  "note": "A receipt divides the WIP pool. With an empty pool there is nothing to divide, and a unit cost of zero would be a free pump on the valuation report."
+ },
+ {
+  "key": "STK-13.6",
+  "caseId": "STK-13",
+  "caseTitle": "A production order refuses what it cannot cost",
+  "action": "Issue material to a job that had not started yet.",
+  "phase": 12,
+  "login": "A",
+  "method": "POST",
+  "path": "/production-orders/{{STK-13.po2}}/issue",
+  "body": {
+   "entryDate": "2026-05-09",
+   "lines": [
+    {
+     "itemId": "{{ITM_CAST_A}}",
+     "quantity": 1
+    }
+   ]
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"had not started\""
+  ],
+  "auto": "YES",
+  "note": "The order opened on 2026-05-10. A posting dated before it would sit in a period the order did not exist in."
+ },
+ {
+  "key": "STK-13.7",
+  "caseId": "STK-13",
+  "caseTitle": "A production order refuses what it cannot cost",
+  "action": "Post to the order that is already complete.",
+  "phase": 12,
+  "login": "A",
+  "method": "POST",
+  "path": "/production-orders/{{STK-10.poId}}/issue",
+  "body": {
+   "entryDate": "2026-05-12",
+   "lines": [
+    {
+     "itemId": "{{ITM_CAST_A}}",
+     "quantity": 1
+    }
+   ]
+  },
+  "status": 409,
+  "asserts": [
+   "error contains \"nothing more can be posted\""
+  ],
+  "auto": "YES",
+  "note": "PO-0001 finished in STK-12. A completed order whose cost per unit is already in the stock valuation cannot take more cost - the pumps are made and priced."
+ },
+ {
+  "key": "STK-13.8",
+  "caseId": "STK-13",
+  "caseTitle": "A production order refuses what it cannot cost",
+  "action": "Confirm none of those five wrote anything.",
+  "phase": 12,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='1302'\" = 0",
+   "sql \"SELECT count(*) FROM journal_entries WHERE organization_id={{ORG_A}} AND entry_date IN ('2026-05-09','2026-05-11','2026-05-12')\" = 0",
+   "GET /inventory/valuation :: field data.rows[item.sku=CAST-5HP].quantityOnHand = 80"
+  ],
+  "auto": "YES",
+  "note": "A refusal that half-posts is worse than one that does not refuse at all. WIP is nil, no journal entry carries any of those dates, and the castings are untouched."
+ },
+ {
+  "key": "STK-14.1",
+  "caseId": "STK-14",
+  "caseTitle": "Closing moves nothing; abandoning writes off to abnormal loss",
+  "action": "Issue castings to the second order.",
+  "phase": 12,
+  "login": "A",
+  "je": [
+   {
+    "code": "1302",
+    "name": "Work in Progress",
+    "debit": 2250,
+    "credit": 0
+   },
+   {
+    "code": "1301",
+    "name": "Raw Materials (CAST-5HP card)",
+    "debit": 0,
+    "credit": 2250
+   }
+  ],
+  "method": "POST",
+  "path": "/production-orders/{{STK-13.po2}}/issue",
+  "body": {
+   "entryDate": "2026-05-11",
+   "lines": [
+    {
+     "itemId": "{{ITM_CAST_A}}",
+     "quantity": 5
+    }
+   ]
+  },
+  "status": 200,
+  "capture": {
+   "issue2": "data.entryId"
+  },
+  "asserts": [
+   "field data.total = 2250.00",
+   "journal production_issue {{issue2}}"
+  ],
+  "auto": "YES",
+  "note": "5 x 450.00. Note the date: 2026-05-11 was refused four times in STK-13 for reasons that had nothing to do with the date, and is accepted here - which is the check that STK-13.8's count of zero entries on that date was measuring refusals, not a broken date filter."
+ },
+ {
+  "key": "STK-14.2",
+  "caseId": "STK-14",
+  "caseTitle": "Closing moves nothing; abandoning writes off to abnormal loss",
+  "action": "Try to close it with the cost still sitting there.",
+  "phase": 12,
+  "login": "A",
+  "method": "POST",
+  "path": "/production-orders/{{STK-13.po2}}/close",
+  "status": 409,
+  "asserts": [
+   "error contains \"no output to carry it\""
+  ],
+  "auto": "YES",
+  "note": "ASSERTS A DELIBERATE NARROWING. An earlier version let close sweep the remaining WIP into finished goods; the ledger would have moved while the stock valuation stayed where it was, and the two would never have agreed again. Value enters stock ONLY through a receipt, which carries a quantity and goes through receiveStock. So close is a status change or it is a refusal."
+ },
+ {
+  "key": "STK-14.3",
+  "caseId": "STK-14",
+  "caseTitle": "Closing moves nothing; abandoning writes off to abnormal loss",
+  "action": "While it is open, 1302 is exactly what that order holds.",
+  "phase": 12,
+  "login": "A",
+  "method": "GET",
+  "path": "/production-orders/{{STK-13.po2}}",
+  "status": 200,
+  "asserts": [
+   "field data.wipBalance = 2250",
+   "field data.status = OPEN",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='1302'\" = 2250.00"
+  ],
+  "auto": "YES",
+  "note": "1302 is deliberately NOT a control account - a half-made thing is not an item, it has no SKU and no unit of measure that means anything. So the question 'what is this balance' is answered by the open orders, and this step is that answer with one order open."
+ },
+ {
+  "key": "STK-14.4",
+  "caseId": "STK-14",
+  "caseTitle": "Closing moves nothing; abandoning writes off to abnormal loss",
+  "action": "Abandon it.",
+  "phase": 12,
+  "login": "A",
+  "je": [
+   {
+    "code": "4003",
+    "name": "Abnormal Production Loss",
+    "debit": 2250,
+    "credit": 0
+   },
+   {
+    "code": "1302",
+    "name": "Work in Progress",
+    "debit": 0,
+    "credit": 2250
+   }
+  ],
+  "method": "POST",
+  "path": "/production-orders/{{STK-13.po2}}/cancel",
+  "body": {
+   "entryDate": "2026-05-12"
+  },
+  "status": 200,
+  "asserts": [
+   "field data.writtenOff = 2250",
+   "field data.cancelled = true"
+  ],
+  "auto": "YES",
+  "note": "AS 2 excludes abnormal waste from the cost of inventories, so the 2,250.00 cannot be absorbed into anything - there is no output to carry it. It becomes an expense of the period, which is what 4003 is for."
+ },
+ {
+  "key": "STK-14.5",
+  "caseId": "STK-14",
+  "caseTitle": "Closing moves nothing; abandoning writes off to abnormal loss",
+  "action": "The castings do NOT come back.",
+  "phase": 12,
+  "login": "A",
+  "asserts": [
+   "GET /inventory/valuation :: field data.rows[item.sku=CAST-5HP].quantityOnHand = 75",
+   "GET /inventory/valuation :: field data.rows[item.sku=CAST-5HP].value = 33750.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='1302'\" = 0",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='4003'\" = 2250.00",
+   "sql \"SELECT status FROM production_orders WHERE id={{STK-13.po2}}\" = CANCELLED"
+  ],
+  "auto": "YES",
+  "note": "They were consumed. If some of the material is physically still there, that is an inward Stock Adjustment with its own reason and its own date - not something a cancellation should guess at. 1302 is back to nil, which is what makes STK-30.3 meaningful rather than merely true."
+ },
+ {
+  "key": "STK-16.1",
+  "caseId": "STK-16",
+  "caseTitle": "Stock and an invoice series, before anything can move",
+  "action": "Bring four items into Chennai, one FIFO lot each.",
+  "phase": 13,
+  "login": "B",
+  "je": [
+   {
+    "code": "1303",
+    "name": "Finished Goods (four item cards)",
+    "debit": 185000,
+    "credit": 0
+   },
+   {
+    "code": "4002",
+    "name": "Inventory Adjustments",
+    "debit": 0,
+    "credit": 185000
+   }
+  ],
+  "method": "POST",
+  "path": "/stock-adjustments",
+  "body": {
+   "adjustmentDate": "2026-05-01",
+   "branchId": "{{BR_B_CHN}}",
+   "narration": "Opening the transfer fixtures",
+   "lines": [
+    {
+     "itemId": "{{ITM_P1_B}}",
+     "direction": "IN",
+     "quantity": 40,
+     "unitCost": 1000
+    },
+    {
+     "itemId": "{{ITM_P2_B}}",
+     "direction": "IN",
+     "quantity": 40,
+     "unitCost": 1500
+    },
+    {
+     "itemId": "{{ITM_P3_B}}",
+     "direction": "IN",
+     "quantity": 40,
+     "unitCost": 2000
+    },
+    {
+     "itemId": "{{ITM_GSK_B}}",
+     "direction": "IN",
+     "quantity": 100,
+     "unitCost": 50
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "adjD": "data.id"
+  },
+  "asserts": [
+   "journal stock_adjustment {{adjD}}",
+   "GET /inventory/valuation :: field data.rows[item.sku=PUMP-P1].quantityOnHand = 40",
+   "GET /inventory/valuation :: field data.rows[item.sku=PUMP-P3].averageCost = 2000.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='1303'\" = 185000.00"
+  ],
+  "auto": "YES",
+  "note": "40,000 + 60,000 + 80,000 + 5,000 = 185,000.00. All four sit on 1303, so the journal folds to one debit - the per-item split is on the sub-ledger cards, which the cases below check individually. Nothing in this batch takes value out of the organisation, so 1303 must still read 185,000.00 at the end."
+ },
+ {
+  "key": "STK-16.2",
+  "caseId": "STK-16",
+  "caseTitle": "Stock and an invoice series, before anything can move",
+  "action": "Configure the tax-invoice series for the sending branch.",
+  "phase": 13,
+  "login": "B",
+  "method": "PUT",
+  "path": "/stock-transfers/series",
+  "body": {
+   "branchId": "{{BR_B_CHN}}",
+   "prefix": "BT",
+   "financialYear": "2026-27"
+  },
+  "status": 200,
+  "asserts": [
+   "field data.prefix = BT",
+   "field data.nextNumber = 1"
+  ],
+  "auto": "YES",
+  "note": "Rule 46(b) wants a consecutive serial number on a tax invoice, and there is no sensible number to invent - so a taxable transfer from a branch with no series is REFUSED rather than numbered arbitrarily. An untaxed transfer needs none of this: it moves under a delivery challan."
+ },
+ {
+  "key": "STK-17.1",
+  "caseId": "STK-17",
+  "caseTitle": "Same GSTIN, so moving goods is not a supply",
+  "action": "Dispatch 10 pumps from Chennai to Tiruppur.",
+  "phase": 13,
+  "login": "B",
+  "je": [
+   {
+    "code": "1304",
+    "name": "Stock in Transit",
+    "debit": 10000,
+    "credit": 0
+   },
+   {
+    "code": "1303",
+    "name": "Finished Goods (PUMP-P1 card)",
+    "debit": 0,
+    "credit": 10000
+   }
+  ],
+  "method": "POST",
+  "path": "/stock-transfers",
+  "body": {
+   "fromBranchId": "{{BR_B_CHN}}",
+   "toBranchId": "{{BR_B_TIR}}",
+   "transferDate": "2026-05-05",
+   "lines": [
+    {
+     "itemId": "{{ITM_P1_B}}",
+     "quantity": 10
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "tr1": "data.id"
+  },
+  "asserts": [
+   "field data.taxTreatment = NONE",
+   "field data.total = 10000.00",
+   "field data.taxTotal = 0",
+   "field data.documentNumber = null",
+   "journal stock_transfer_dispatch {{tr1}}"
+  ],
+  "auto": "YES",
+  "note": "Both branches carry 33AAACW5678B1Z9. One legal person moving its own goods between its own godowns is not a supply - Rule 55 delivery challan and nothing else. No invoice number, no tax, and documentNumber is null because none was needed."
+ },
+ {
+  "key": "STK-17.2",
+  "caseId": "STK-17",
+  "caseTitle": "Same GSTIN, so moving goods is not a supply",
+  "action": "Mid-transit: the goods are at neither branch.",
+  "phase": 13,
+  "login": "B",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='1304'\" = 10000.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN business_partners p ON p.id=l.business_partner_id WHERE e.organization_id={{ORG_B}} AND p.bp_type='ITEM' AND p.name='Pump P1 (untaxed transfer)' AND l.account_id IN (SELECT id FROM accounts WHERE organization_id={{ORG_B}} AND account_code='1303')\" = 30000.00",
+   "GET /inventory/valuation :: field data.rows[item.sku=PUMP-P1].quantityOnHand = 30"
+  ],
+  "auto": "YES",
+  "note": "THE REASON 1304 EXISTS. Chennai has given the goods up and Tiruppur has not got them, so on a balance sheet drawn today they are in transit - 10,000.00 of stock the organisation owns and no branch holds. The valuation report shows 30 because it counts what branches hold; the 10 in transit are on 1304 instead."
+ },
+ {
+  "key": "STK-17.3",
+  "caseId": "STK-17",
+  "caseTitle": "Same GSTIN, so moving goods is not a supply",
+  "action": "They arrive three days later.",
+  "phase": 13,
+  "login": "B",
+  "je": [
+   {
+    "code": "1303",
+    "name": "Finished Goods (PUMP-P1 card)",
+    "debit": 10000,
+    "credit": 0
+   },
+   {
+    "code": "1304",
+    "name": "Stock in Transit",
+    "debit": 0,
+    "credit": 10000
+   }
+  ],
+  "method": "POST",
+  "path": "/stock-transfers/{{STK-17.tr1}}/receive",
+  "body": {
+   "receivedDate": "2026-05-08"
+  },
+  "status": 200,
+  "asserts": [
+   "field data.received = true",
+   "field data.total = 10000.00",
+   "field data.taxTotal = 0",
+   "journal stock_transfer_receipt {{STK-17.tr1}}"
+  ],
+  "auto": "YES",
+  "note": "ONE entry, because one registration keeps one trial balance. The receiving branch takes the goods at the SENDING branch's cost - nothing is revalued in transit, so a transfer can never create or destroy value."
+ },
+ {
+  "key": "STK-17.4",
+  "caseId": "STK-17",
+  "caseTitle": "Same GSTIN, so moving goods is not a supply",
+  "action": "Where the stock actually is now.",
+  "phase": 13,
+  "login": "B",
+  "method": "GET",
+  "path": "/inventory/valuation?branchId={{BR_B_TIR}}",
+  "status": 200,
+  "asserts": [
+   "field data.rows[item.sku=PUMP-P1].quantityOnHand = 10",
+   "field data.rows[item.sku=PUMP-P1].value = 10000.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='1304'\" = 0",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='1303'\" = 185000.00"
+  ],
+  "auto": "YES",
+  "note": "Ten at Tiruppur, thirty at Chennai, 1304 empty and 1303 unchanged at 185,000.00. Value moved between branches, not into or out of the business - which is exactly what an untaxed transfer is supposed to do to a ledger."
+ },
+ {
+  "key": "STK-18.1",
+  "caseId": "STK-18",
+  "caseTitle": "Different registrations in the same state - taxable, CGST + SGST",
+  "action": "Dispatch 10 pumps from Chennai to Coimbatore.",
+  "phase": 14,
+  "login": "B",
+  "je": [
+   {
+    "code": "1304",
+    "name": "Stock in Transit",
+    "debit": 20000,
+    "credit": 0
+   },
+   {
+    "code": "1305",
+    "name": "Inter-Branch (Coimbatore)",
+    "debit": 3600,
+    "credit": 0
+   },
+   {
+    "code": "1303",
+    "name": "Finished Goods (PUMP-P3 card)",
+    "debit": 0,
+    "credit": 20000
+   },
+   {
+    "code": "2102",
+    "name": "CGST Output Payable",
+    "debit": 0,
+    "credit": 1800
+   },
+   {
+    "code": "2103",
+    "name": "SGST Output Payable",
+    "debit": 0,
+    "credit": 1800
+   }
+  ],
+  "method": "POST",
+  "path": "/stock-transfers",
+  "body": {
+   "fromBranchId": "{{BR_B_CHN}}",
+   "toBranchId": "{{BR_B_CBE}}",
+   "transferDate": "2026-05-10",
+   "lines": [
+    {
+     "itemId": "{{ITM_P3_B}}",
+     "quantity": 10
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "tr2": "data.id"
+  },
+  "asserts": [
+   "field data.taxTreatment = TAXABLE",
+   "field data.total = 20000.00",
+   "field data.taxTotal = 3600.00",
+   "field data.documentNumber = BT",
+   "journal stock_transfer_dispatch {{tr2}}"
+  ],
+  "auto": "YES",
+  "note": "Section 25(4) makes two registrations DISTINCT PERSONS, and Schedule I paragraph 2 makes a supply between distinct persons taxable even with no consideration. So this needs a tax invoice, goes in Chennai's GSTR-1 as an outward supply, and carries 18% on the Rule 28 second-proviso value - which is cost, 20,000.00, giving 3,600.00 split CGST 1,800.00 / SGST 1,800.00 because both branches are in state 33. Note what 1305 carries at THIS point: the tax only. The cost half joins it when the goods land."
+ },
+ {
+  "key": "STK-18.2",
+  "caseId": "STK-18",
+  "caseTitle": "Different registrations in the same state - taxable, CGST + SGST",
+  "action": "They arrive, and the receiving branch takes its credit.",
+  "phase": 14,
+  "login": "B",
+  "je": [
+   {
+    "code": "1303",
+    "name": "Finished Goods (PUMP-P3 card)",
+    "debit": 20000,
+    "credit": 0
+   },
+   {
+    "code": "1102",
+    "name": "CGST Input Credit",
+    "debit": 1800,
+    "credit": 0
+   },
+   {
+    "code": "1103",
+    "name": "SGST Input Credit",
+    "debit": 1800,
+    "credit": 0
+   },
+   {
+    "code": "2106",
+    "name": "Inter-Branch Payable (Chennai)",
+    "debit": 0,
+    "credit": 23600
+   }
+  ],
+  "method": "POST",
+  "path": "/stock-transfers/{{STK-18.tr2}}/receive",
+  "body": {
+   "receivedDate": "2026-05-13"
+  },
+  "status": 200,
+  "asserts": [
+   "field data.received = true",
+   "field data.taxTotal = 3600.00",
+   "journal stock_transfer_receipt {{STK-18.tr2}}"
+  ],
+  "auto": "YES",
+  "note": "Section 16(2)(b) is why the credit is taken HERE and not at dispatch: only receipt of the goods entitles it. Coimbatore owes Chennai the goods at cost plus the tax on them, 23,600.00, and that single figure is what sits on 2106."
+ },
+ {
+  "key": "STK-18.3",
+  "caseId": "STK-18",
+  "caseTitle": "Different registrations in the same state - taxable, CGST + SGST",
+  "action": "And the sending branch's transit asset becomes a receivable.",
+  "phase": 14,
+  "login": "B",
+  "je": [
+   {
+    "code": "1305",
+    "name": "Inter-Branch (Coimbatore)",
+    "debit": 20000,
+    "credit": 0
+   },
+   {
+    "code": "1304",
+    "name": "Stock in Transit",
+    "debit": 0,
+    "credit": 20000
+   }
+  ],
+  "asserts": [
+   "journal stock_transfer_transit {{STK-18.tr2}}"
+  ],
+  "auto": "YES",
+  "note": "A THIRD journal entry, on the sending branch, because two registrations keep two trial balances and neither may post to the other's accounts. Coimbatore's entry above cannot touch Chennai's 1304, so Chennai clears it itself. This is the entry that makes the taxable case three entries where the untaxed case is one."
+ },
+ {
+  "key": "STK-18.4",
+  "caseId": "STK-18",
+  "caseTitle": "Different registrations in the same state - taxable, CGST + SGST",
+  "action": "The two sides of the inter-branch account agree.",
+  "phase": 14,
+  "login": "B",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='1304'\" = 0",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='1305'\" = 23600.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='2106'\" = -23600.00"
+  ],
+  "auto": "YES",
+  "note": "1305 holds 3,600.00 of tax from the dispatch plus 20,000.00 of cost from the clearing entry. 2106 is the mirror. They are the same transaction seen from two registrations, and across the organisation they must cancel - which is what STK-25 checks once every transfer is done."
+ },
+ {
+  "key": "STK-19.1",
+  "caseId": "STK-19",
+  "caseTitle": "Across a state line - the same rate, different heads",
+  "action": "Dispatch 10 pumps from Chennai to Bengaluru.",
+  "phase": 14,
+  "login": "B",
+  "je": [
+   {
+    "code": "1304",
+    "name": "Stock in Transit",
+    "debit": 15000,
+    "credit": 0
+   },
+   {
+    "code": "1305",
+    "name": "Inter-Branch (Bengaluru)",
+    "debit": 2700,
+    "credit": 0
+   },
+   {
+    "code": "1303",
+    "name": "Finished Goods (PUMP-P2 card)",
+    "debit": 0,
+    "credit": 15000
+   },
+   {
+    "code": "2104",
+    "name": "IGST Output Payable",
+    "debit": 0,
+    "credit": 2700
+   }
+  ],
+  "method": "POST",
+  "path": "/stock-transfers",
+  "body": {
+   "fromBranchId": "{{BR_B_CHN}}",
+   "toBranchId": "{{BR_B_BLR}}",
+   "transferDate": "2026-05-11",
+   "lines": [
+    {
+     "itemId": "{{ITM_P2_B}}",
+     "quantity": 10
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "tr3": "data.id"
+  },
+  "asserts": [
+   "field data.taxTreatment = TAXABLE",
+   "field data.total = 15000.00",
+   "field data.taxTotal = 2700.00",
+   "journal stock_transfer_dispatch {{tr3}}"
+  ],
+  "auto": "YES",
+  "note": "THE CASE THAT PROVES PLACE OF SUPPLY DRIVES THE HEADS. Same 18%, same kind of document, same clearing accounts - and the tax lands on 2104 IGST alone instead of splitting across CGST and SGST, because state 33 to state 29 is inter-state. Get this wrong and the money is right while the GSTR-1 is wrong, which is the harder error to find."
+ },
+ {
+  "key": "STK-19.2",
+  "caseId": "STK-19",
+  "caseTitle": "Across a state line - the same rate, different heads",
+  "action": "They arrive at Bengaluru.",
+  "phase": 14,
+  "login": "B",
+  "je": [
+   {
+    "code": "1303",
+    "name": "Finished Goods (PUMP-P2 card)",
+    "debit": 15000,
+    "credit": 0
+   },
+   {
+    "code": "1104",
+    "name": "IGST Input Credit",
+    "debit": 2700,
+    "credit": 0
+   },
+   {
+    "code": "2106",
+    "name": "Inter-Branch Payable (Chennai)",
+    "debit": 0,
+    "credit": 17700
+   }
+  ],
+  "method": "POST",
+  "path": "/stock-transfers/{{STK-19.tr3}}/receive",
+  "body": {
+   "receivedDate": "2026-05-14"
+  },
+  "status": 200,
+  "asserts": [
+   "field data.received = true",
+   "field data.taxTotal = 2700.00",
+   "journal stock_transfer_receipt {{STK-19.tr3}}"
+  ],
+  "auto": "YES",
+  "note": "IGST out at one registration is IGST in at the other. Bengaluru owes 15,000.00 + 2,700.00."
+ },
+ {
+  "key": "STK-19.3",
+  "caseId": "STK-19",
+  "caseTitle": "Across a state line - the same rate, different heads",
+  "action": "Chennai clears its transit asset for this one too.",
+  "phase": 14,
+  "login": "B",
+  "je": [
+   {
+    "code": "1305",
+    "name": "Inter-Branch (Bengaluru)",
+    "debit": 15000,
+    "credit": 0
+   },
+   {
+    "code": "1304",
+    "name": "Stock in Transit",
+    "debit": 0,
+    "credit": 15000
+   }
+  ],
+  "asserts": [
+   "journal stock_transfer_transit {{STK-19.tr3}}",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='1304'\" = 0"
+  ],
+  "auto": "YES",
+  "note": "Two transfers received, and 1304 is empty again. It is only ever non-nil while something is genuinely on a lorry."
+ },
+ {
+  "key": "STK-19.4",
+  "caseId": "STK-19",
+  "caseTitle": "Across a state line - the same rate, different heads",
+  "action": "Check the GST landed on the right heads and nowhere else.",
+  "phase": 14,
+  "login": "B",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND e.reference_type LIKE 'stock_transfer%' AND a.account_code IN ('2104')\" = -2700.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND e.reference_type LIKE 'stock_transfer%' AND a.account_code IN ('1104')\" = 2700.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND e.reference_type LIKE 'stock_transfer%' AND a.account_code IN ('2102','2103')\" = -3600.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND e.reference_type LIKE 'stock_transfer%' AND a.account_code IN ('1102','1103')\" = 3600.00"
+  ],
+  "auto": "YES",
+  "note": "Filtered to stock_transfer entries on purpose: ORG-B's batch 1 purchase bill also debited 1102 and 1103, and this step is measuring the transfers rather than the organisation. IGST carries the Bengaluru transfer and only that; CGST and SGST carry Coimbatore's and only that."
+ },
+ {
+  "key": "STK-20.1",
+  "caseId": "STK-20",
+  "caseTitle": "A dispatch cancelled while the goods are still in transit",
+  "action": "Send 5 more pumps to Coimbatore.",
+  "phase": 15,
+  "login": "B",
+  "method": "POST",
+  "path": "/stock-transfers",
+  "body": {
+   "fromBranchId": "{{BR_B_CHN}}",
+   "toBranchId": "{{BR_B_CBE}}",
+   "transferDate": "2026-05-18",
+   "lines": [
+    {
+     "itemId": "{{ITM_P3_B}}",
+     "quantity": 5
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "tr4": "data.id"
+  },
+  "asserts": [
+   "pre sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='1305'\" capture b1305",
+   "pre sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN business_partners p ON p.id=l.business_partner_id WHERE e.organization_id={{ORG_B}} AND p.bp_type='ITEM' AND p.name='Pump P3 (intra-state transfer)' AND l.account_id IN (SELECT id FROM accounts WHERE organization_id={{ORG_B}} AND account_code='1303')\" capture b1303p3",
+   "field data.total = 10000.00",
+   "field data.taxTotal = 1800.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='1304'\" = 10000.00"
+  ],
+  "auto": "YES",
+  "note": "The two `pre` captures are what make the next-but-one step honest. They read 1305 and the PUMP-P3 card BEFORE this dispatch touches either, so 'back where it started' is asserted against what was actually there rather than against figures computed by hand - which is how STK-20.3 was wrong twice, once on each of them."
+ },
+ {
+  "key": "STK-20.2",
+  "caseId": "STK-20",
+  "caseTitle": "A dispatch cancelled while the goods are still in transit",
+  "action": "The lorry turns back.",
+  "phase": 15,
+  "login": "B",
+  "je": [
+   {
+    "code": "1303",
+    "name": "Finished Goods (PUMP-P3 card)",
+    "debit": 10000,
+    "credit": 0
+   },
+   {
+    "code": "2102",
+    "name": "CGST Output reversed",
+    "debit": 900,
+    "credit": 0
+   },
+   {
+    "code": "2103",
+    "name": "SGST Output reversed",
+    "debit": 900,
+    "credit": 0
+   },
+   {
+    "code": "1304",
+    "name": "Stock in Transit",
+    "debit": 0,
+    "credit": 10000
+   },
+   {
+    "code": "1305",
+    "name": "Inter-Branch (Coimbatore)",
+    "debit": 0,
+    "credit": 1800
+   }
+  ],
+  "method": "POST",
+  "path": "/stock-transfers/{{STK-20.tr4}}/cancel",
+  "body": {
+   "entryDate": "2026-05-19"
+  },
+  "status": 200,
+  "asserts": [
+   "field data.cancelled = true",
+   "field data.total = 10000.00",
+   "field data.creditNoteNumber = CN-0001",
+   "journal stock_transfer_cancel {{STK-20.tr4}}"
+  ],
+  "auto": "YES",
+  "note": "The supply did not happen, so the output tax comes back out of the liability it was credited into and the receivable stops being recoverable. CN-0001 IS THE INTERESTING FIELD. A tax invoice was issued and numbered, and un-posting it silently is not something GST allows - section 34 undoes an issued invoice with a CREDIT NOTE, itself a numbered document that goes in Table 9B of the return for the month it is raised. The cancellation now allocates one, in the same updateMany as the status so the note and the cancellation it documents commit together. Counted per organisation like SalesReturn.returnNumber, so there is no series to configure and a cancellation can never be refused because nobody set a prefix up."
+ },
+ {
+  "key": "STK-20.3",
+  "caseId": "STK-20",
+  "caseTitle": "A dispatch cancelled while the goods are still in transit",
+  "action": "Everything is back where it started.",
+  "phase": 15,
+  "login": "B",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='1304'\" = 0",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='1305'\" = {{b1305}}",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN business_partners p ON p.id=l.business_partner_id WHERE e.organization_id={{ORG_B}} AND p.bp_type='ITEM' AND p.name='Pump P3 (intra-state transfer)' AND l.account_id IN (SELECT id FROM accounts WHERE organization_id={{ORG_B}} AND account_code='1303')\" = {{b1303p3}}",
+   "GET /inventory/valuation :: field data.rows[item.sku=PUMP-P3].quantityOnHand = 40",
+   "sql \"SELECT status FROM stock_transfers WHERE id={{STK-20.tr4}}\" = CANCELLED"
+  ],
+  "auto": "YES",
+  "note": "MEASURED, NOT ASSERTED AS A CONSTANT, and this step earned that the hard way - it was wrong twice, on two different constants, while the software was right both times. 1305 was said to be 23,600.00, the Coimbatore transfer's own mark on it; the Bengaluru transfer had added 2,700.00 of tax and 15,000.00 of cost in between, so 41,300.00 was correct. The PUMP-P3 card was said to be 60,000.00, which assumed the card holds what CHENNAI has; it does not. 1303 carries one card per ITEM, not per item per branch, so the 20,000.00 that went to Coimbatore came straight back onto the same card when it arrived, and all 40 pumps sit there at 80,000.00 wherever they physically are. That is the same fact STK-25.4 depends on when it says 1303 is still 185,000.00. Reading both figures before the dispatch and requiring them back after the cancellation asks what the case actually means - did this document leave any trace - and cannot be wrong about a number I did not have to work out."
+ },
+ {
+  "key": "STK-22.1",
+  "caseId": "STK-22",
+  "caseTitle": "A cancellation in the month AFTER the dispatch",
+  "action": "Dispatch 4 pumps to Coimbatore near the end of May.",
+  "phase": 15,
+  "login": "B",
+  "method": "POST",
+  "path": "/stock-transfers",
+  "body": {
+   "fromBranchId": "{{BR_B_CHN}}",
+   "toBranchId": "{{BR_B_CBE}}",
+   "transferDate": "2026-05-28",
+   "lines": [
+    {
+     "itemId": "{{ITM_P1_B}}",
+     "quantity": 4
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "tr6": "data.id"
+  },
+  "asserts": [
+   "field data.total = 4000.00",
+   "field data.taxTotal = 720.00",
+   "field data.documentNumber = BT"
+  ],
+  "auto": "YES",
+  "note": "4 x 1,000.00 with CGST 360.00 and SGST 360.00. The point of this one is the calendar: the invoice is a May document and the credit note will be a June one."
+ },
+ {
+  "key": "STK-22.2",
+  "caseId": "STK-22",
+  "caseTitle": "A cancellation in the month AFTER the dispatch",
+  "action": "Cancel it in June.",
+  "phase": 15,
+  "login": "B",
+  "method": "POST",
+  "path": "/stock-transfers/{{STK-22.tr6}}/cancel",
+  "body": {
+   "entryDate": "2026-06-03"
+  },
+  "status": 200,
+  "asserts": [
+   "field data.cancelled = true",
+   "field data.creditNoteNumber = CN-0002",
+   "field data.total = 4000.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='1304'\" = 0"
+  ],
+  "auto": "YES",
+  "note": "THE CASE THE TIMING RULE EXISTS FOR, and the one every figure in batch 4 was blind to before it. A supply was made and invoiced in May; it is credited in June. Section 34 does not un-happen the May supply - it credits it in the period the note is raised. So May declares 4,000.00 of outward supply the group never actually completed, June reverses it, and only across the two months does it come to nothing. The old treatment dropped a cancelled transfer from every period at once, which is arithmetically identical while both dates sit in one month and understates the dispatch month by a whole invoice when they do not."
+ },
+ {
+  "key": "STK-21.1",
+  "caseId": "STK-21",
+  "caseTitle": "What a transfer refuses",
+  "action": "Cancel one that has already been received.",
+  "phase": 15,
+  "login": "B",
+  "method": "POST",
+  "path": "/stock-transfers/{{STK-18.tr2}}/cancel",
+  "status": 409,
+  "asserts": [
+   "error contains \"Send the goods back with a transfer the other way\""
+  ],
+  "auto": "YES",
+  "note": "Coimbatore is holding those pumps. Cancelling now would take stock off a branch that has it and put it back on one that does not - inventing 10 pumps at Chennai and destroying 10 at Coimbatore. The way back is another transfer, which is a document somebody signs."
+ },
+ {
+  "key": "STK-21.2",
+  "caseId": "STK-21",
+  "caseTitle": "What a transfer refuses",
+  "action": "Send goods to a branch that cannot claim full input credit.",
+  "phase": 15,
+  "login": "B",
+  "method": "POST",
+  "path": "/stock-transfers",
+  "body": {
+   "fromBranchId": "{{BR_B_CHN}}",
+   "toBranchId": "{{BR_B_HYD}}",
+   "transferDate": "2026-05-20",
+   "lines": [
+    {
+     "itemId": "{{ITM_P1_B}}",
+     "quantity": 1
+    }
+   ]
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"cannot claim full input tax credit\""
+  ],
+  "auto": "YES",
+  "note": "Hyderabad is RESTRICTED. Without full ITC at the receiving end the second proviso to Rule 28 is unavailable, the tax stops being revenue-neutral and becomes a COST that AS 2 requires be capitalised into that branch's inventory. That is a different design, not a different number - so it is refused rather than posted on an assumption that is wrong for this branch."
+ },
+ {
+  "key": "STK-21.3",
+  "caseId": "STK-21",
+  "caseTitle": "What a transfer refuses",
+  "action": "Put an item with no HSN on a TAXABLE transfer.",
+  "phase": 15,
+  "login": "B",
+  "method": "POST",
+  "path": "/stock-transfers",
+  "body": {
+   "fromBranchId": "{{BR_B_CHN}}",
+   "toBranchId": "{{BR_B_CBE}}",
+   "transferDate": "2026-05-20",
+   "lines": [
+    {
+     "itemId": "{{ITM_GSK_B}}",
+     "quantity": 5
+    }
+   ]
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"no HSN code\""
+  ],
+  "auto": "YES",
+  "note": "Rule 46(g) needs the HSN on the face of the invoice and the NIC portal rejects an e-way bill without one. Caught here rather than at the portal, after the lorry has left."
+ },
+ {
+  "key": "STK-21.4",
+  "caseId": "STK-21",
+  "caseTitle": "What a transfer refuses",
+  "action": "The SAME item on an UNTAXED transfer is fine.",
+  "phase": 15,
+  "login": "B",
+  "method": "POST",
+  "path": "/stock-transfers",
+  "body": {
+   "fromBranchId": "{{BR_B_CHN}}",
+   "toBranchId": "{{BR_B_TIR}}",
+   "transferDate": "2026-05-20",
+   "lines": [
+    {
+     "itemId": "{{ITM_GSK_B}}",
+     "quantity": 20
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "tr5": "data.id"
+  },
+  "asserts": [
+   "field data.taxTreatment = NONE",
+   "field data.total = 1000.00"
+  ],
+  "auto": "YES",
+  "note": "THE PAIR IS THE TEST. The same item, the same day, the same organisation - refused one way and accepted the other, because the HSN is needed for an INVOICE and a delivery challan is not one. A blanket 'items need an HSN' rule would have blocked this legitimate movement, and a blanket 'never mind' would have let the invoice through."
+ },
+ {
+  "key": "STK-21.5",
+  "caseId": "STK-21",
+  "caseTitle": "What a transfer refuses",
+  "action": "Send goods from a branch to itself.",
+  "phase": 15,
+  "login": "B",
+  "method": "POST",
+  "path": "/stock-transfers",
+  "body": {
+   "fromBranchId": "{{BR_B_CHN}}",
+   "toBranchId": "{{BR_B_CHN}}",
+   "transferDate": "2026-05-20",
+   "lines": [
+    {
+     "itemId": "{{ITM_P1_B}}",
+     "quantity": 1
+    }
+   ]
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"must be different\""
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "STK-21.6",
+  "caseId": "STK-21",
+  "caseTitle": "What a transfer refuses",
+  "action": "Confirm the three refusals wrote nothing.",
+  "phase": 15,
+  "login": "B",
+  "asserts": [
+   "sql \"SELECT count(*) FROM stock_transfers WHERE organization_id={{ORG_B}} AND transfer_date='2026-05-20'\" = 1",
+   "GET /inventory/valuation :: field data.rows[item.sku=PUMP-P1].quantityOnHand = 40"
+  ],
+  "auto": "YES",
+  "note": "One transfer dated 2026-05-20 - the gasket challan that was supposed to succeed - and not one of the three refusals left a row behind. PUMP-P1 is untouched at 40, so the Hyderabad and self-transfer attempts consumed nothing."
+ },
+ {
+  "key": "STK-21.7",
+  "caseId": "STK-21",
+  "caseTitle": "What a transfer refuses",
+  "action": "Receive the gasket challan, so nothing is left in transit.",
+  "phase": 15,
+  "login": "B",
+  "method": "POST",
+  "path": "/stock-transfers/{{STK-21.tr5}}/receive",
+  "body": {
+   "receivedDate": "2026-05-21"
+  },
+  "status": 200,
+  "asserts": [
+   "field data.received = true",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='1304'\" = 0"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "STK-25.1",
+  "caseId": "STK-25",
+  "caseTitle": "The reconciliation this clearing design exists to make checkable",
+  "action": "Ask the transfer reconciliation where things stand.",
+  "phase": 16,
+  "login": "B",
+  "method": "GET",
+  "path": "/stock-transfers/reconciliation?asOf=2026-06-30",
+  "status": 200,
+  "asserts": [
+   "field data.balanced = true",
+   "field data.difference = 0",
+   "field data.expected = 0",
+   "field count(data.inTransit) = 0"
+  ],
+  "auto": "YES",
+  "note": "30 June rather than 31 May, and the date matters: STK-22 dispatched on 28 May and was not cancelled until 3 June, so on 31 May it was genuinely still in transit and this report would rightly have said so. Nothing is on a lorry by the end of June, so the clearing accounts must net to nil. The endpoint states the identity and reports the parts alongside it, so a break can be read straight off rather than recomputed by hand."
+ },
+ {
+  "key": "STK-25.2",
+  "caseId": "STK-25",
+  "caseTitle": "The reconciliation this clearing design exists to make checkable",
+  "action": "Ask it again as at a date when goods WERE in transit.",
+  "phase": 16,
+  "login": "B",
+  "method": "GET",
+  "path": "/stock-transfers/reconciliation?asOf=2026-05-06",
+  "status": 200,
+  "asserts": [
+   "field count(data.inTransit) = 1",
+   "field data.inTransit[0].transferNumber = TR-0001",
+   "field data.inTransit[0].cost = 10000",
+   "field data.inTransit[0].status = RECEIVED",
+   "field data.accounts.transit = 10000",
+   "field data.expected = 10000",
+   "field data.balanced = true"
+  ],
+  "auto": "YES",
+  "note": "THE HALF THAT MAKES IT A TEST. A reconciliation that only ever reports nil proves nothing. On 6 May the Tiruppur transfer had left and not arrived, so it must appear - and it appears with status RECEIVED, because the status is what the transfer is NOW while the question was about THEN. That distinction is the difference between a report you can hand an auditor and one you cannot. AND IT STILL BALANCES: both sides are scoped to the date, the ledger by entryDate <= asOf and the expected figure by which transfers had left and not arrived. A control scoped on one side only would read 'balanced' today and nonsense for every historical date, which is precisely when somebody asks it."
+ },
+ {
+  "key": "STK-25.3",
+  "caseId": "STK-25",
+  "caseTitle": "The reconciliation this clearing design exists to make checkable",
+  "action": "As at a date when TWO taxable transfers were mid-flight.",
+  "phase": 16,
+  "login": "B",
+  "method": "GET",
+  "path": "/stock-transfers/reconciliation?asOf=2026-05-12",
+  "status": 200,
+  "asserts": [
+   "field count(data.inTransit) = 2",
+   "field data.accounts.transit = 35000",
+   "field data.accounts.receivable = 6300",
+   "field data.accounts.payable = 0",
+   "field data.expected = 41300",
+   "field data.difference = 0",
+   "field data.balanced = true"
+  ],
+  "auto": "YES",
+  "note": "The hardest date to be right about. On 12 May the Coimbatore and Bengaluru transfers had both left and neither had arrived, so 1304 holds their cost, 35,000.00, and 1305 holds their TAX ALONE, 3,600.00 + 2,700.00 = 6,300.00 - the cost half has not joined it yet because that happens on receipt. 2106 is still nil because neither receiving branch has taken anything. 35,000 + 6,300 + 0 = 41,300.00, and the two invoice values are 23,600.00 and 17,700.00, which is the same 41,300.00. Three accounts, two transfers, one identity, and it has to hold on a date in the middle of both."
+ },
+ {
+  "key": "STK-25.4",
+  "caseId": "STK-25",
+  "caseTitle": "The reconciliation this clearing design exists to make checkable",
+  "action": "The inter-branch accounts cancel across the organisation.",
+  "phase": 16,
+  "login": "B",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='1304'\" = 0",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code IN ('1305','2106')\" = 0",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND e.reference_type LIKE 'stock_transfer%' AND a.account_code IN ('1102','1103','1104','2102','2103','2104')\" = 0",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='1303'\" = 185000.00"
+  ],
+  "auto": "YES",
+  "note": "Four identities, and every one of them has to hold at once. 1304 nil because nothing is in transit. 1305 and 2106 cancel because they are one transaction seen from two registrations. The GST on transfers nets to nil across the organisation - which is what 'revenue-neutral' means in ledger terms, and the whole reason the second proviso to Rule 28 lets cost be the value. And 1303 is still 185,000.00: four branches now hold the goods instead of one, and not a rupee entered or left the business."
+ },
+ {
+  "key": "STK-26.1",
+  "caseId": "STK-26",
+  "caseTitle": "A branch transfer is an ordinary B2B supply on the sender's GSTR-1",
+  "action": "Ask for Chennai's GSTR-1 for May.",
+  "phase": 17,
+  "login": "B",
+  "method": "GET",
+  "path": "/gst/gstr1?from=2026-05-01&to=2026-05-31&branchId={{BR_B_CHN}}",
+  "status": 200,
+  "asserts": [
+   "field count(data.b2b) = 4",
+   "field count(data.b2c) = 0",
+   "field count(data.exports) = 0",
+   "field data.totals.taxableValue = 49000.00",
+   "field data.totals.cgst = 3060.00",
+   "field data.totals.sgst = 3060.00",
+   "field data.totals.igst = 2700.00",
+   "field data.totals.invoiceValue = 57820.00"
+  ],
+  "auto": "YES",
+  "note": "The GSTN has no 'branch transfer' category. Section 25(4) makes two registrations distinct persons, so these are ordinary Table 4A B2B supplies against the receiving branch's GSTIN - which is precisely what lets that branch's GSTR-2B pick them up and match the credit. FOUR rows, not two: every taxable invoice ISSUED in May is here, the two that were later cancelled included, because each was undone by a credit note rather than by pretending it never existed. 20,000 + 15,000 + 10,000 + 4,000 = 49,000.00. The untaxed challans are not supplies and are not here. invoiceValue is the gross of the same four documents, 57,820.00 - it is built from the transfers actually pushed into 4A, so it cannot drift away from the taxable value it is meant to summarise."
+ },
+ {
+  "key": "STK-26.2",
+  "caseId": "STK-26",
+  "caseTitle": "A branch transfer is an ordinary B2B supply on the sender's GSTR-1",
+  "action": "Check each row names the right registration and place of supply.",
+  "phase": 17,
+  "login": "B",
+  "method": "GET",
+  "path": "/gst/gstr1?from=2026-05-01&to=2026-05-31&branchId={{BR_B_CHN}}",
+  "status": 200,
+  "asserts": [
+   "field count(data.b2b[gstin=33AAACW5678B2Z8]) = 3",
+   "field sum(data.b2b[gstin=33AAACW5678B2Z8].taxableValue) = 34000.00",
+   "field sum(data.b2b[gstin=33AAACW5678B2Z8].cgst) = 3060.00",
+   "field sum(data.b2b[gstin=33AAACW5678B2Z8].sgst) = 3060.00",
+   "field sum(data.b2b[gstin=33AAACW5678B2Z8].igst) = 0",
+   "field sum(data.b2b[gstin=33AAACW5678B2Z8].invoiceValue) = 40120.00",
+   "field distinct(data.b2b[gstin=33AAACW5678B2Z8].placeOfSupply) = 1",
+   "field sum(data.b2b[placeOfSupply=33].taxableValue) = 34000.00",
+   "field sum(data.b2b[placeOfSupply=29].taxableValue) = 15000.00",
+   "field data.b2b[gstin=29AAACW5678B1Z5].taxableValue = 15000.00",
+   "field data.b2b[gstin=29AAACW5678B1Z5].igst = 2700.00",
+   "field data.b2b[gstin=29AAACW5678B1Z5].cgst = 0",
+   "field data.b2b[gstin=29AAACW5678B1Z5].placeOfSupply = 29",
+   "field data.b2b[gstin=29AAACW5678B1Z5].invoiceValue = 17700.00"
+  ],
+  "auto": "YES",
+  "note": "THE FILING HALF OF THE CASE BATCH 3 PROVED IN THE LEDGER. Same 18%, and the return has to put Coimbatore's under CGST+SGST with place of supply 33 and Bengaluru's under IGST with place of supply 29. A system that posted both to the right accounts but filed both against one GSTIN, or with one place of supply, would balance perfectly and file wrongly. SUMMED RATHER THAN LOOKED UP, and that is not cosmetic: three of the four invoices now go to Coimbatore, and a selector that finds a row by GSTIN alone returns whichever it meets first. The old assertions would have gone on passing against one row out of three and said nothing about the other two. The place-of-supply pair asserts the grouping straight against the money instead of trusting a label on a single row."
+ },
+ {
+  "key": "STK-26.3",
+  "caseId": "STK-26",
+  "caseTitle": "A branch transfer is an ordinary B2B supply on the sender's GSTR-1",
+  "action": "The HSN summary reconciles to the supply tables.",
+  "phase": 17,
+  "login": "B",
+  "method": "GET",
+  "path": "/gst/gstr1?from=2026-05-01&to=2026-05-31&branchId={{BR_B_CHN}}",
+  "status": 200,
+  "asserts": [
+   "field count(data.hsn) = 1",
+   "field data.hsn[0].hsnCode = 84137010",
+   "field data.hsn[0].rate = 18",
+   "field data.hsn[0].quantity = 29",
+   "field data.hsn[0].taxableValue = 49000.00",
+   "field data.hsn[0].cgst = 3060.00",
+   "field data.hsn[0].igst = 2700.00"
+  ],
+  "auto": "YES",
+  "note": "PUMP-P1, PUMP-P2 and PUMP-P3 all share HSN 84137010 at 18%, so table 12 folds them into ONE row - 10 + 10 + 5 + 4 = 29 units, 49,000.00, and the tax split preserved across the two states. That figure has to equal totals.taxableValue from STK-26.1, and it does. Two sheets of one return that do not reconcile is the first thing a portal rejects, and the credit-note change is exactly the kind of change that could have broken it: the HSN row is written inside the same line loop that decides whether a supply counts, so a transfer added to one and not the other is a one-line mistake."
+ },
+ {
+  "key": "STK-26.4",
+  "caseId": "STK-26",
+  "caseTitle": "A branch transfer is an ordinary B2B supply on the sender's GSTR-1",
+  "action": "The RECEIVING branch's GSTR-1 shows none of it.",
+  "phase": 17,
+  "login": "B",
+  "method": "GET",
+  "path": "/gst/gstr1?from=2026-05-01&to=2026-05-31&branchId={{BR_B_CBE}}",
+  "status": 200,
+  "asserts": [
+   "field count(data.b2b) = 0",
+   "field data.totals.taxableValue = 0",
+   "field data.totals.cgst = 0"
+  ],
+  "auto": "YES",
+  "note": "A GSTR-1 is a return of OUTWARD supplies, and Coimbatore made none. The same transfer reaches it as an inward supply in its GSTR-2B, from the sender's filing. If it appeared in both, one movement of goods would be declared as a supply twice."
+ },
+ {
+  "key": "STK-27.1",
+  "caseId": "STK-27",
+  "caseTitle": "The credit note that undoes a cancelled invoice",
+  "action": "May's Table 9B carries CN-0001, against the invoice it reverses.",
+  "phase": 17,
+  "login": "B",
+  "method": "GET",
+  "path": "/gst/gstr1?from=2026-05-01&to=2026-05-31&branchId={{BR_B_CHN}}",
+  "status": 200,
+  "asserts": [
+   "field count(data.creditNotes) = 1",
+   "field data.creditNotes[0].noteNumber = CN-0001",
+   "field data.creditNotes[0].noteDate = 2026-05-19",
+   "field data.creditNotes[0].originalInvoiceNumber = BT",
+   "field data.creditNotes[0].gstin = 33AAACW5678B2Z8",
+   "field data.creditNotes[0].placeOfSupply = 33",
+   "field data.creditNotes[0].rate = 18",
+   "field data.creditNotes[0].taxableValue = 10000.00",
+   "field data.creditNotes[0].cgst = 900.00",
+   "field data.creditNotes[0].sgst = 900.00",
+   "field count(data.cancelledTransfers) = 0"
+  ],
+  "auto": "YES",
+  "note": "STK-20 cancelled TR-0004 while the goods were still on the lorry, and the ledger reversal was complete. The return now says so in the way GST requires: section 34(1) undoes an ISSUED invoice with a CREDIT NOTE, a numbered document that goes in Table 9B naming the invoice it reverses. SmartERP used to raise none, so the supply was quietly dropped from the tables and the invoice number listed under cancelledTransfers for somebody to deal with by hand. That list is now empty, which is the whole point of the change - an invoice number vanishing out of a consecutive series is exactly what an auditor asks about, and the answer is a document, not a footnote. The SAME table already carries sales-return credit notes, so this follows a path in your own code rather than inventing a second one."
+ },
+ {
+  "key": "STK-27.2",
+  "caseId": "STK-27",
+  "caseTitle": "The credit note that undoes a cancelled invoice",
+  "action": "The supply and its credit note both appear, and the sheets still agree.",
+  "phase": 17,
+  "login": "B",
+  "method": "GET",
+  "path": "/gst/gstr1?from=2026-05-01&to=2026-05-31&branchId={{BR_B_CHN}}",
+  "status": 200,
+  "asserts": [
+   "field data.totals.taxableValue = 49000.00",
+   "field data.hsn[0].quantity = 29",
+   "field data.hsn[0].taxableValue = 49000.00",
+   "field sum(data.b2b[rate=18].taxableValue) = 49000.00",
+   "field sum(data.creditNotes[rate=18].taxableValue) = 10000.00"
+  ],
+  "auto": "YES",
+  "note": "THE CONSISTENCY THAT MATTERS, restated for the new treatment. 49,000.00 of pumps were dispatched under a tax invoice in May, and 10,000.00 of that was credited in May - so 4A and table 12 must BOTH read 49,000.00 and 29 units, with the reversal sitting in 9B rather than netted into either. Under the old rule both sheets read 35,000.00; what could never be allowed is 49,000.00 on one and 35,000.00 on the other, a return whose own two sheets disagree by exactly the value of a cancelled document. The B2B assertion adds the rows up rather than looking for an invoice number and finding it - a presence proved by a name is worth as little as an absence proved by one, because a name I got wrong would break either."
+ },
+ {
+  "key": "STK-27.3",
+  "caseId": "STK-27",
+  "caseTitle": "The credit note that undoes a cancelled invoice",
+  "action": "June is a credit note and nothing else.",
+  "phase": 17,
+  "login": "B",
+  "method": "GET",
+  "path": "/gst/gstr1?from=2026-06-01&to=2026-06-30&branchId={{BR_B_CHN}}",
+  "status": 200,
+  "asserts": [
+   "field count(data.b2b) = 0",
+   "field count(data.hsn) = 0",
+   "field data.totals.taxableValue = 0",
+   "field count(data.cancelledTransfers) = 0",
+   "field count(data.creditNotes) = 1",
+   "field data.creditNotes[0].noteNumber = CN-0002",
+   "field data.creditNotes[0].noteDate = 2026-06-03",
+   "field data.creditNotes[0].gstin = 33AAACW5678B2Z8",
+   "field data.creditNotes[0].taxableValue = 4000.00",
+   "field data.creditNotes[0].cgst = 360.00",
+   "field data.creditNotes[0].sgst = 360.00"
+  ],
+  "auto": "YES",
+  "note": "THE CASE THE TIMING RULE EXISTS FOR. TR-0006 went out on 28 May under a May invoice and was cancelled on 3 June. Its supply belongs to May - it is one of the four rows in STK-26.1 - and its credit note belongs to June, because that is the period the note was raised in. So June's GSTR-1 has no outward supply at all and one entry in 9B. The transfer is in scope for this return by its NOTE date and by nothing else, which is why the b2b and HSN tables must stay empty: pulling a May invoice into a June return because its note landed there would declare the same supply twice."
+ },
+ {
+  "key": "STK-28.1",
+  "caseId": "STK-28",
+  "caseTitle": "GSTR-3B, where the two sides of a transfer land in different months",
+  "action": "The sending branch owes the tax from the day it dispatched.",
+  "phase": 17,
+  "login": "B",
+  "method": "GET",
+  "path": "/gst/gstr3b?from=2026-05-01&to=2026-05-31&branchId={{BR_B_CHN}}",
+  "status": 200,
+  "asserts": [
+   "field data.outward.taxableValue = 39000.00",
+   "field data.outward.cgst = 2160.00",
+   "field data.outward.sgst = 2160.00",
+   "field data.outward.igst = 2700.00",
+   "field data.outward.total = 7020.00",
+   "field data.itc.total = 0",
+   "field data.netPayable.total = 7020.00"
+  ],
+  "auto": "YES",
+  "note": "Section 12 puts the time of supply at the issue of the invoice, so the liability is Chennai's from the dispatch date whether or not the goods have arrived. 49,000.00 was invoiced in May and 10,000.00 of it was credited in May, leaving 39,000.00 - and TR-0006's 4,000.00 stays in, because its credit note is a June document and this is May's return. THAT IS THE CHANGE. The old code dropped a cancelled transfer from every period at once, which gives the same answer as this whenever the invoice and the note share a month and understates the dispatch month by a whole invoice when they do not. Chennai received nothing in May, so it has no credit to set against the 7,020.00."
+ },
+ {
+  "key": "STK-28.2",
+  "caseId": "STK-28",
+  "caseTitle": "GSTR-3B, where the two sides of a transfer land in different months",
+  "action": "The receiving branch takes the credit only when the goods land.",
+  "phase": 17,
+  "login": "B",
+  "method": "GET",
+  "path": "/gst/gstr3b?from=2026-05-01&to=2026-05-31&branchId={{BR_B_CBE}}",
+  "status": 200,
+  "asserts": [
+   "field data.outward.taxableValue = 0",
+   "field data.outward.total = 0",
+   "field data.itc.taxableValue = 20000.00",
+   "field data.itc.cgst = 1800.00",
+   "field data.itc.sgst = 1800.00",
+   "field data.itc.igst = 0",
+   "field data.netPayable.total = 0"
+  ],
+  "auto": "YES",
+  "note": "Section 16(2)(b) allows the credit only on RECEIPT of the goods, so this is keyed on receivedDate and toBranchId while the liability above is keyed on transferDate and fromBranchId. The 20,000.00 is TR-0002 alone. Neither cancelled transfer ever arrived, so neither is here - a credit is claimed against goods received, and the credit note at the other end is what unwinds the sender's side. A transfer that crosses a month end therefore pays in one return and claims in the next - revenue-neutral over the year, not within the month, and the commonest question anybody will ask about these figures."
+ },
+ {
+  "key": "STK-28.3",
+  "caseId": "STK-28",
+  "caseTitle": "GSTR-3B, where the two sides of a transfer land in different months",
+  "action": "Bengaluru's credit is IGST, not CGST and SGST.",
+  "phase": 17,
+  "login": "B",
+  "method": "GET",
+  "path": "/gst/gstr3b?from=2026-05-01&to=2026-05-31&branchId={{BR_B_BLR}}",
+  "status": 200,
+  "asserts": [
+   "field data.itc.taxableValue = 15000.00",
+   "field data.itc.igst = 2700.00",
+   "field data.itc.cgst = 0",
+   "field data.itc.sgst = 0",
+   "field data.outward.total = 0"
+  ],
+  "auto": "YES",
+  "note": "The head follows the place of supply at both ends. IGST out at Chennai is IGST in at Bengaluru - if the credit came back as CGST+SGST the two registrations could never reconcile, and the receiving branch would be claiming a credit under heads the sender never paid."
+ },
+ {
+  "key": "STK-28.4",
+  "caseId": "STK-28",
+  "caseTitle": "GSTR-3B, where the two sides of a transfer land in different months",
+  "action": "June's 3B is a NEGATIVE outward supply, and it is not an error.",
+  "phase": 17,
+  "login": "B",
+  "method": "GET",
+  "path": "/gst/gstr3b?from=2026-06-01&to=2026-06-30&branchId={{BR_B_CHN}}",
+  "status": 200,
+  "asserts": [
+   "sql \"SELECT count(*) FROM sales_invoices WHERE organization_id={{ORG_B}} AND invoice_date BETWEEN '2026-06-01' AND '2026-06-30'\" = 0",
+   "sql \"SELECT count(*) FROM purchase_bills WHERE organization_id={{ORG_B}} AND bill_date BETWEEN '2026-06-01' AND '2026-06-30'\" = 0",
+   "field data.outward.taxableValue = -4000.00",
+   "field data.outward.cgst = -360.00",
+   "field data.outward.sgst = -360.00",
+   "field data.outward.igst = 0",
+   "field data.outward.total = -720.00",
+   "field data.itc.total = 0",
+   "field data.netPayable.total = 0"
+  ],
+  "auto": "YES",
+  "note": "THE OTHER HALF OF STK-27.3, on the return where the money actually moves. June has one document in it, a credit note, so 3.1(a) is negative - which is what table 3.1(a) is for and what every taxpayer with more credit notes than invoices in a month files. A report that clamped this to zero, or refused it, would strand the reversal and leave May's 7,020.00 paid on a supply that never completed. netPayable IS clamped, and rightly: a negative liability is not a refund, it is carried forward, so 3B says nil is due and the credit stays in the ledger. The two SQL controls come first so the figures above mean what they claim - June holds no invoice and no bill, so every rupee here came from the credit note and nothing is quietly offsetting anything."
+ },
+ {
+  "key": "STK-29.1",
+  "caseId": "STK-29",
+  "caseTitle": "Across the whole organisation, transfer tax nets to nothing",
+  "action": "May alone, org-wide, does NOT net to nil any more.",
+  "phase": 17,
+  "login": "B",
+  "method": "GET",
+  "path": "/gst/gstr3b?from=2026-05-01&to=2026-05-31",
+  "status": 200,
+  "asserts": [
+   "field data.outward.taxableValue = 39000.00",
+   "field data.itc.taxableValue = 35000.00",
+   "field data.outward.total = 7020.00",
+   "field data.itc.total = 6300.00",
+   "field data.netPayable.cgst = 360.00",
+   "field data.netPayable.sgst = 360.00",
+   "field data.netPayable.igst = 0",
+   "field data.netPayable.total = 720.00"
+  ],
+  "auto": "YES",
+  "note": "AND THIS STEP EXISTS TO SAY SO OUT LOUD. Under the old treatment every transfer figure netted to nil inside a single month, because a cancelled one vanished from both sides at once. It cannot now: TR-0006's supply is declared in May and credited in June, so May carries 4,000.00 of outward supply with no matching credit and the group owes 720.00 - exactly the tax on that one invoice. That is not a defect. It is the correct filing position for a supply that was invoiced in May, and the 720.00 comes straight back in June. A pack that only ever asserted nil would pass just as happily against software that had silently dropped the invoice."
+ },
+ {
+  "key": "STK-29.2",
+  "caseId": "STK-29",
+  "caseTitle": "Across the whole organisation, transfer tax nets to nothing",
+  "action": "May and June together, where it does.",
+  "phase": 17,
+  "login": "B",
+  "method": "GET",
+  "path": "/gst/gstr3b?from=2026-05-01&to=2026-06-30",
+  "status": 200,
+  "asserts": [
+   "field data.outward.taxableValue = 35000.00",
+   "field data.itc.taxableValue = 35000.00",
+   "field data.outward.total = 6300.00",
+   "field data.itc.total = 6300.00",
+   "field data.netPayable.total = 0"
+  ],
+  "auto": "YES",
+  "note": "THE RETURN-SIDE TWIN OF STK-25.4. That step proved the transfer GST nets to nil in the LEDGER; this proves it nets to nil in the RETURN - over the period in which both halves of every document fall, which is now two months rather than one. 49,000.00 invoiced less 14,000.00 credited is 35,000.00 out, and the 35,000.00 received by Coimbatore and Bengaluru inside May is the credit against it. That is what 'revenue-neutral' means in filing terms, and it is the whole reason the second proviso to Rule 28 permits cost as the value - if the tax were a real cost to the group, valuing at cost would be a concession nobody could justify. It is neutral across periods, not within one, and STK-29.1 is the proof that the pack knows the difference."
+ },
+ {
+  "key": "STK-29.3",
+  "caseId": "STK-29",
+  "caseTitle": "Across the whole organisation, transfer tax nets to nothing",
+  "action": "April, a month with no transfers in it at all.",
+  "phase": 17,
+  "login": "B",
+  "method": "GET",
+  "path": "/gst/gstr3b?from=2026-04-01&to=2026-04-30",
+  "status": 200,
+  "asserts": [
+   "pre sql \"SELECT round(coalesce(sum(subtotal),0),2) FROM purchase_bills WHERE organization_id={{ORG_B}} AND status='POSTED' AND bill_date BETWEEN '2026-04-01' AND '2026-04-30'\" capture aprBills",
+   "field data.outward.taxableValue = 48000.00",
+   "field data.outward.cgst = 4320.00",
+   "field data.outward.sgst = 4320.00",
+   "field data.itc.taxableValue = {{aprBills}}",
+   "sql \"SELECT count(*) FROM stock_transfers WHERE organization_id={{ORG_B}} AND tax_treatment='TAXABLE' AND (transfer_date <= '2026-04-30' OR received_date <= '2026-04-30' OR credit_note_date <= '2026-04-30')\" = 0"
+  ],
+  "auto": "YES",
+  "note": "A CONTROL ON THE CONTROL: if April's figures moved when batches 3 and 4 were added, a transfer had leaked into a period it does not belong to. The last assertion says that directly - no taxable transfer was dispatched, received or CREDITED on or before 30 April - which is the claim, rather than a figure that happens to follow from it. The credit-note date is in there because it is now a third way a transfer can be pulled into a return period, and a control that predates a new date column silently stops covering what it was written to cover. THE ITC SIDE IS MEASURED, and this step is why. It first asserted 13,000.00, the STK-08 purchase bill, and got 133,000.00: the DEPRECIATION pack shares these organisations and runs first, and DEP-11.1 posts a 120,000.00 capital purchase bill in ORG-B on 1 April. Its 21,600.00 of GST is claimable in full in the month of receipt under section 16 and belongs in this return - the software was right and the test had forgotten who else writes to this database. Reading the posted bills for the period and requiring the ITC section to equal them asserts something better anyway: with no purchase returns and no transfers in April, 4(A) must be exactly the bills."
+ },
+ {
+  "key": "STK-29.4",
+  "caseId": "STK-29",
+  "caseTitle": "Across the whole organisation, transfer tax nets to nothing",
+  "action": "A period with no data at all reads as nil, not as an error.",
+  "phase": 17,
+  "login": "B",
+  "method": "GET",
+  "path": "/gst/gstr3b?from=2026-03-01&to=2026-03-31",
+  "status": 200,
+  "asserts": [
+   "field data.outward.taxableValue = 0",
+   "field data.itc.taxableValue = 0",
+   "field data.netPayable.total = 0"
+  ],
+  "auto": "YES",
+  "note": "March is before the organisation traded. A return for an empty period is a legitimate question with a legitimate answer - nil - and a report that threw, or omitted the sections, would be unusable for the first month of any business and for any month a branch happened to be idle."
+ },
+ {
+  "key": "STK-08.1",
+  "caseId": "STK-08",
+  "caseTitle": "FIFO consumes the oldest layer first",
+  "action": "Lay down layer 1.",
+  "phase": 7,
+  "login": "B",
+  "je": [
+   {
+    "code": "1201",
+    "name": "Inventory (BRG-6205 card)",
+    "debit": 20000,
+    "credit": 0
+   },
+   {
+    "code": "4002",
+    "name": "Inventory Adjustments",
+    "debit": 0,
+    "credit": 20000
+   }
+  ],
+  "method": "POST",
+  "path": "/stock-adjustments",
+  "body": {
+   "adjustmentDate": "2026-04-01",
+   "branchId": "{{BR_B_CHN}}",
+   "narration": "Layer 1",
+   "lines": [
+    {
+     "itemId": "{{ITM_BRG_B}}",
+     "direction": "IN",
+     "quantity": 100,
+     "unitCost": 200
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "adjB": "data.id"
+  },
+  "asserts": [
+   "journal stock_adjustment {{adjB}}"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "STK-08.2",
+  "caseId": "STK-08",
+  "caseTitle": "FIFO consumes the oldest layer first",
+  "action": "Lay down layer 2 at a different cost.",
+  "phase": 7,
+  "login": "B",
+  "je": [
+   {
+    "code": "1201",
+    "name": "Inventory (BRG-6205 card)",
+    "debit": 13000,
+    "credit": 0
+   },
+   {
+    "code": "1102",
+    "name": "CGST Input Credit",
+    "debit": 1170,
+    "credit": 0
+   },
+   {
+    "code": "1103",
+    "name": "SGST Input Credit",
+    "debit": 1170,
+    "credit": 0
+   },
+   {
+    "code": "2001",
+    "name": "Accounts Payable",
+    "debit": 0,
+    "credit": 15340
+   }
+  ],
+  "method": "POST",
+  "path": "/purchase-bills",
+  "body": {
+   "businessPartnerId": "{{VENDOR_TN_B}}",
+   "billDate": "2026-04-05",
+   "branchId": "{{BR_B_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_BRG_B}}",
+     "quantity": 50,
+     "rate": 260,
+     "taxRate": 18
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "billB": "data.id"
+  },
+  "asserts": [
+   "journal purchase_bill {{billB}}"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "STK-08.3",
+  "caseId": "STK-08",
+  "caseTitle": "FIFO consumes the oldest layer first",
+  "action": "Sell across both layers.",
+  "phase": 7,
+  "login": "B",
+  "method": "POST",
+  "path": "/sales-invoices",
+  "body": {
+   "businessPartnerId": "{{CUST_TN_B}}",
+   "invoiceDate": "2026-04-10",
+   "branchId": "{{BR_B_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{ITM_BRG_B}}",
+     "quantity": 120,
+     "rate": 400,
+     "taxRate": 18
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "invB": "data.id"
+  },
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_B}} AND a.account_code='4001'\" = 25200.00"
+  ],
+  "auto": "YES",
+  "note": "100 x 200.00 + 20 x 260.00 = 25,200.00. Weighted average would have given 120 x 220.00 = 26,400.00. THIS is the case that proves the organisation's costing method is actually honoured - a 1,200.00 difference."
+ },
+ {
+  "key": "STK-08.4",
+  "caseId": "STK-08",
+  "caseTitle": "FIFO consumes the oldest layer first",
+  "action": "Check the lots directly.",
+  "phase": 7,
+  "login": "B",
+  "asserts": [
+   "sql \"SELECT quantity_remaining FROM stock_lots WHERE item_id={{ITM_BRG_B}} ORDER BY received_at LIMIT 1\" = 0",
+   "sql \"SELECT quantity_remaining FROM stock_lots WHERE item_id={{ITM_BRG_B}} ORDER BY received_at DESC LIMIT 1\" = 30"
+  ],
+  "auto": "YES",
+  "note": "Lot 1 drained to nil, lot 2 down to 30. If lot 2 went first the ORDER BY received_at has regressed."
+ },
+ {
+  "key": "STK-09.0",
+  "caseId": "STK-09",
+  "caseTitle": "Purchase return credits the ORIGINAL bill rate, not the current average",
+  "action": "Look up the bill line to return against.",
+  "phase": 8,
+  "login": "A",
+  "method": "GET",
+  "path": "/purchase-returns/bill/{{STK-03.billId}}/lines",
+  "status": 200,
+  "capture": {
+   "billLineA": "data.lines[0].id"
+  },
+  "auto": "YES"
+ },
+ {
+  "key": "STK-09.1",
+  "caseId": "STK-09",
+  "caseTitle": "Purchase return credits the ORIGINAL bill rate, not the current average",
+  "action": "Raise a Purchase Return against the STK-03 bill.",
+  "phase": 8,
+  "login": "A",
+  "je": [
+   {
+    "code": "2001",
+    "name": "Accounts Payable (vendor)",
+    "debit": 3068,
+    "credit": 0
+   },
+   {
+    "code": "1201",
+    "name": "Inventory (BRG-6205 card)",
+    "debit": 0,
+    "credit": 2600
+   },
+   {
+    "code": "1102",
+    "name": "CGST Input Credit reversed",
+    "debit": 0,
+    "credit": 234
+   },
+   {
+    "code": "1103",
+    "name": "SGST Input Credit reversed",
+    "debit": 0,
+    "credit": 234
+   }
+  ],
+  "method": "POST",
+  "path": "/purchase-returns",
+  "body": {
+   "purchaseBillId": "{{STK-03.billId}}",
+   "returnDate": "2026-04-20",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "purchaseBillLineId": "{{STK-09.billLineA}}",
+     "quantity": 10
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "retA": "data.id"
+  },
+  "asserts": [
+   "journal purchase_return {{retA}}",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].quantityOnHand = 70",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].value = 15376.47",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].averageCost = 219.6639"
+  ],
+  "auto": "YES",
+  "note": "Credited at the BILL rate of 260.00, not the current average. A bill brings stock in at an explicit rate, so reversing it credits that same rate back - the average would drift from what was actually paid. THE AVERAGE MOVES, though, and that was the second defect: 2,600.00 of value left at a rate that is not the average, so the average of what remains cannot be what it was. 80 x 224.7059 - 2,600.00 = 15,376.47 over 70 units is 219.6639. costing.ts held averageCost still - the same convention consumeStock uses, where it is right because consumption leaves at the average."
+ },
+ {
+  "key": "STK-09.2",
+  "caseId": "STK-09",
+  "caseTitle": "Purchase return credits the ORIGINAL bill rate, not the current average",
+  "action": "Does the valuation report still tie to the ledger for this item?",
+  "phase": 8,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(s.quantity_on_hand * s.average_cost),0),2) FROM item_stock s WHERE s.item_id={{ITM_BRG_A}}\" capture valA",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN business_partners p ON p.id=l.business_partner_id WHERE e.organization_id={{ORG_A}} AND p.bp_type='ITEM' AND p.name='Bearing 6205' AND l.account_id IN (SELECT id FROM accounts WHERE organization_id={{ORG_A}} AND account_code='1201')\" = {{valA}}"
+  ],
+  "auto": "YES",
+  "note": "THE CONTROL FOR THE STEP ABOVE, and the reason the average has to move. Both sides must read 15,376.47. Before the fix the ledger read 15,376.47 and the valuation 15,729.41 - a gap of 352.94, which is 10 x (260.00 - 224.7059), the difference between the rate credited and the rate the valuation removed. It is deliberately measured rather than asserted as a constant: this step reads whatever the valuation says and requires the ledger to agree, so it stays honest if the figures upstream ever change."
+ },
+ {
+  "key": "STK-09.3",
+  "caseId": "STK-09",
+  "caseTitle": "Purchase return credits the ORIGINAL bill rate, not the current average",
+  "action": "Same test in ORG-B, where FIFO must drain the lot that bill created.",
+  "phase": 8,
+  "login": "B",
+  "auto": "TBD",
+  "note": "Deferred: needs the ORG-B bill line lookup and one more return. Specified with batch 2."
+ },
+ {
+  "key": "STK-31.0",
+  "caseId": "STK-31",
+  "caseTitle": "Stock ledger direction - a receipt must not read as an issue",
+  "action": "Look up the invoice line to return against.",
+  "phase": 9,
+  "login": "A",
+  "method": "GET",
+  "path": "/sales-returns/invoice/{{STK-04.invId}}/lines",
+  "status": 200,
+  "capture": {
+   "invLine": "data.lines[0].id"
+  },
+  "auto": "YES"
+ },
+ {
+  "key": "STK-31.1",
+  "caseId": "STK-31",
+  "caseTitle": "Stock ledger direction - a receipt must not read as an issue",
+  "action": "Take 10 units back from the customer.",
+  "phase": 9,
+  "login": "A",
+  "method": "POST",
+  "path": "/sales-returns",
+  "body": {
+   "salesInvoiceId": "{{STK-04.invId}}",
+   "returnDate": "2026-04-22",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "salesInvoiceLineId": "{{STK-31.invLine}}",
+     "quantity": 10,
+     "condition": "GOOD"
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "srId": "data.id"
+  },
+  "asserts": [
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].quantityOnHand = 80",
+   "GET /inventory/valuation :: field data.rows[item.sku=BRG-6205].value = 17576.47"
+  ],
+  "auto": "YES",
+  "note": "A SALES_RETURN_IN movement. Stock genuinely comes back: 70 on hand becomes 80, at the cost the invoice consumed (220.00), so (70 x 219.6639 + 10 x 220.00) / 80 = 219.7059 and the value is 17,576.47. The ledger debits 1201 by the COGS reversed, 10 x 220.00 = 2,200.00, and 15,376.47 + 2,200.00 is the same 17,576.47."
+ },
+ {
+  "key": "STK-31.2",
+  "caseId": "STK-31",
+  "caseTitle": "Stock ledger direction - a receipt must not read as an issue",
+  "action": "Read the stock ledger and check which way the return moved.",
+  "phase": 9,
+  "login": "A",
+  "method": "GET",
+  "path": "/inventory/stock-ledger?itemId={{ITM_BRG_A}}",
+  "status": 200,
+  "asserts": [
+   "field data.rows[movementType=SALES_RETURN_IN].quantity = 10",
+   "field data.rows[movementType=SALES_RETURN_IN].balance = 80"
+  ],
+  "auto": "YES",
+  "note": "The third defect. inventory.ts decided direction with `inward = movementType === 'PURCHASE' || movementType === 'ADJUSTMENT_IN'`, and ten types exist. TRANSFER_IN, SALES_RETURN_IN and PRODUCTION_IN are all receipts and all got -qty, so on the report an auditor reads to trace an item, a branch receipt, a customer return and a finished-goods receipt each showed stock going OUT. The valuation report is computed separately and was right, which is worse: the two disagreed and only one of them was wrong. Fixed with an INWARD set of all five receipt types."
+ },
+ {
+  "key": "STK-32.1",
+  "caseId": "STK-32",
+  "caseTitle": "Stock ledger opening balance is the balance brought into the window",
+  "action": "Ask for the OPEN-TEST ledger at a branch that never held any.",
+  "phase": 9,
+  "login": "A",
+  "method": "GET",
+  "path": "/inventory/stock-ledger?itemId={{STK-01.itemId}}&branchId={{BR_A_D07}}",
+  "status": 200,
+  "asserts": [
+   "field data.openingQuantity = 0",
+   "field count(data.rows) = 0"
+  ],
+  "auto": "YES",
+  "note": "The fourth defect. openingQuantity was read from a column on Item that has no branch at all, while ?branchId= filtered the ROWS by branch - so Test Branch D07, which never held one unit, opened at 10 and every balance in that column was wrong by the same amount. Worse on the OWNING branch: creating an item with an opening balance already writes an ADJUSTMENT_IN, so Chennai counted the 10 twice, once as the opening figure and again as the movement below it."
+ },
+ {
+  "key": "STK-32.2",
+  "caseId": "STK-32",
+  "caseTitle": "Stock ledger opening balance is the balance brought into the window",
+  "action": "Ask for the same item at Chennai, from a date AFTER the opening.",
+  "phase": 9,
+  "login": "A",
+  "method": "GET",
+  "path": "/inventory/stock-ledger?itemId={{STK-01.itemId}}&branchId={{BR_A_CHN}}&from=2026-05-01",
+  "status": 200,
+  "asserts": [
+   "field data.openingQuantity = 10",
+   "field count(data.rows) = 0"
+  ],
+  "auto": "YES",
+  "note": "THE OTHER HALF, and the one that would catch a fix that simply returned nil. The opening movement is dated 2026-04-01 and falls outside the window, so it must appear as 10 brought forward and NOT as a row. Nothing else has happened to OPEN-TEST, so the window itself is empty."
+ },
+ {
+  "key": "STK-32.3",
+  "caseId": "STK-32",
+  "caseTitle": "Stock ledger opening balance is the balance brought into the window",
+  "action": "Brought-forward on BRG-6205 mid-stream, where every movement type appears.",
+  "phase": 9,
+  "login": "A",
+  "method": "GET",
+  "path": "/inventory/stock-ledger?itemId={{ITM_BRG_A}}&branchId={{BR_A_CHN}}&from=2026-04-10",
+  "status": 200,
+  "asserts": [
+   "field data.openingQuantity = 150",
+   "field data.rows[0].balance = 90"
+  ],
+  "auto": "YES",
+  "note": "100 found on 04-01 plus 50 bought on 04-05 is 150 carried in; the first row inside the window is the 04-10 sale of 60, leaving 90. Proves the brought-forward respects the date window and signs receipts and issues the same way the rows do - a ledger whose opening is computed one way and whose rows another is a ledger that does not add up."
+ },
+ {
+  "key": "STK-30.1",
+  "caseId": "STK-30",
+  "caseTitle": "Stock valuation ties to the ledger",
+  "action": "Read the ledger balance on 1201 for ORG-A.",
+  "phase": 18,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='1201'\" capture led1201"
+  ],
+  "auto": "YES"
+ },
+ {
+  "key": "STK-30.2",
+  "caseId": "STK-30",
+  "caseTitle": "Stock valuation ties to the ledger",
+  "action": "Compare it to the valuation report.",
+  "phase": 18,
+  "login": "A",
+  "method": "GET",
+  "path": "/inventory/valuation",
+  "status": 200,
+  "asserts": [
+   "field sum(data.rows[stockAccount.accountCode=1201].value) = {{led1201}}"
+  ],
+  "auto": "YES",
+  "note": "THE HEADLINE CONTROL: stock on the report equals stock in the accounts, 22,576.47 either way - BRG-6205 at 17,576.47 after the sales return, plus OPEN-TEST at 5,000.00. Before this batch it failed by 5,352.94, and that number is the whole reason to run it: 5,000.00 of opening stock sat on the report with nothing behind it in the ledger, and 352.94 was the purchase return leaving the ledger at the bill rate while the valuation moved at the average. Two independent defects, and only this one step said anything was wrong. It read 20,376.47 while it sat in phase 9, because it ran before the sales return - see the note above."
+ },
+ {
+  "key": "STK-30.3",
+  "caseId": "STK-30",
+  "caseTitle": "Stock valuation ties to the ledger",
+  "action": "Check the WIP and in-transit control accounts are flat.",
+  "phase": 18,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='1302'\" = 0",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='1304'\" = 0"
+  ],
+  "auto": "YES",
+  "note": "1302 Work in Progress should equal the WIP of orders still OPEN, and 1304 Stock in Transit the cost of transfers still IN_TRANSIT. Nothing in this batch opens either, so both must be nil. Batch 2 and batch 3 are what make them move."
+ },
+ {
+  "key": "STK-30.4",
+  "caseId": "STK-30",
+  "caseTitle": "Stock valuation ties to the ledger",
+  "action": "Prove the whole ledger balances, in both organisations.",
+  "phase": 18,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id WHERE e.organization_id={{ORG_A}}\" = 0",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id WHERE e.organization_id={{ORG_B}}\" = 0"
+  ],
+  "auto": "YES",
+  "note": "Total debits equal total credits, to the paisa. If this ever fails, stop everything else."
+ },
+ {
+  "key": "STK-30.6",
+  "caseId": "STK-30",
+  "caseTitle": "Stock valuation ties to the ledger",
+  "action": "The manufacturing accounts tie too, not just 1201.",
+  "phase": 18,
+  "login": "A",
+  "method": "GET",
+  "path": "/inventory/valuation",
+  "status": 200,
+  "asserts": [
+   "field sum(data.rows[stockAccount.accountCode=1301].value) = 33750.00",
+   "field sum(data.rows[stockAccount.accountCode=1303].value) = 21000.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='1301'\" = 33750.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='1303'\" = 21000.00"
+  ],
+  "auto": "YES",
+  "note": "Batch 2 made 1301 Raw Materials and 1303 Finished Goods live, so the control that only ever asked about 1201 now asks about all three inventory heads. 1301: 45,000.00 of castings in, 9,000.00 issued to PO-0001 and 2,250.00 to the cancelled PO-0002, leaving 75 units at 450.00. 1303: the whole 21,000.00 pool absorbed into 9 pumps. Both sides of both, because a tie proved on one account says nothing about the other two."
+ },
+ {
+  "key": "STK-30.7",
+  "caseId": "STK-30",
+  "caseTitle": "Stock valuation ties to the ledger",
+  "action": "And the abnormal loss is where it should be.",
+  "phase": 18,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='4003'\" = 2250.00",
+   "sql \"SELECT count(*) FROM production_orders WHERE organization_id={{ORG_A}} AND status='OPEN'\" = 0"
+  ],
+  "auto": "YES",
+  "note": "1302 being nil (STK-30.3) is only meaningful if no order is still open - an open order with a balance would make the same assertion fail, which is the point. Here both orders are finished: one completed, one cancelled with its 2,250.00 written off to 4003 rather than absorbed into a pump that was never made."
+ },
+ {
+  "key": "STK-30.5",
+  "caseId": "STK-30",
+  "caseTitle": "Stock valuation ties to the ledger",
+  "action": "Check each item card against its stock value.",
+  "phase": 18,
+  "login": "A",
+  "asserts": [
+   "manual: drill into 1201 / 1301 / 1303 in the UI and compare each ITEM card to that item's quantity x average cost, per branch. Under FIFO compare it to the sum of quantity remaining x unit cost across that item's open lots instead."
+  ],
+  "auto": "NO"
+ }
+]

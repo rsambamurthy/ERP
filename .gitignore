@@ -8,3 +8,5 @@ build/
 backend/tests/.testorgs.json
 backend/tests/SmartERP-Test-Results.json
 backend/tests/SmartERP-Test-Results.xlsx
+backend/SmartERP-Test-Pack.xlsx
+backend/tests/SmartERP-Test-Results-*.json

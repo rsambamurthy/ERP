@@ -6,6 +6,55 @@ import { receiveStock } from "../lib/costing";
 import { upload } from "../lib/upload";
 import { buildTemplateWorkbook, loadUploadedWorksheet, cellText } from "../lib/xlsxTemplate";
 
+// Posts an opening stock balance to the ledger.
+//
+// Dr the item's stock account on its own sub-ledger card, exactly as a Stock
+// Adjustment IN would. Cr Opening Balance Equity - NOT an income or expense
+// head: stock the business already owned on the day it started using this
+// system is not a gain it made here. Crediting 4002 would have reported every
+// rupee of opening stock as first-year profit.
+//
+// See migration_050. Once every opening balance is loaded, 3003 holds the
+// opening net worth and is journalled into Reserves & Surplus, leaving nil.
+// A non-zero 3003 after go-live means the load is unfinished.
+const OPENING_BALANCE_EQUITY_CODE = "3003";
+
+async function postOpeningStock(tx: any, a: {
+  organizationId: string; branchId: string | null; accountId: string; cardId: string;
+  sku: string; quantity: number; unitCost: number; when: Date; userId: string;
+}) {
+  const equity = await tx.account.findFirst({
+    where: { organizationId: a.organizationId, accountCode: OPENING_BALANCE_EQUITY_CODE },
+  });
+  if (!equity) {
+    throw Object.assign(new Error(
+      `Account ${OPENING_BALANCE_EQUITY_CODE} Opening Balance Equity is missing, so an opening ` +
+      `stock balance cannot be posted. Re-run provisioning for this organisation - it is ` +
+      `idempotent - and try again.`), { status: 409 });
+  }
+  const entry = await tx.journalEntry.create({
+    data: {
+      organizationId: a.organizationId, branchId: a.branchId, entryDate: a.when,
+      narration: `Opening stock \u2014 ${a.sku}`,
+      // referenceType only: journal_entries has no referenceId column, and the
+      // documents that need the link store journalEntryId on their own row.
+      // Item has no such column, so the trail is the referenceType plus the SKU
+      // in the narration - enough to find the entry, not to navigate to it.
+      voucherType: "JV", referenceType: "item_opening_balance",
+      createdBy: a.userId,
+    },
+  });
+  const value = Math.round(a.quantity * a.unitCost * 100) / 100;
+  await tx.journalLine.createMany({
+    data: [
+      { journalEntryId: entry.id, accountId: a.accountId, businessPartnerId: a.cardId,
+        debit: value, credit: 0, narration: `Opening stock ${a.quantity} x ${a.unitCost}` },
+      { journalEntryId: entry.id, accountId: equity.id, businessPartnerId: null,
+        debit: 0, credit: value, narration: `Opening stock \u2014 ${a.sku}` },
+    ],
+  });
+}
+
 const router = Router();
 router.use(authenticate, requireActiveSubscription);
 
@@ -505,12 +554,25 @@ router.post("/", canManageItems, async (req, res) => {
     await tx.businessPartner.update({ where: { id: bp.id }, data: { refId: created.id } });
 
     if (qty > 0) {
+      const when = openingDate ? new Date(openingDate) : new Date();
       await receiveStock(tx, {
         organizationId, branchId: resolvedOpeningBranchId!, itemId: created.id,
         quantity: qty, unitCost: cost, costingMethod: org.costingMethod!,
         movementType: "ADJUSTMENT_IN", referenceType: "item_opening_balance", referenceId: created.id,
-        movementDate: openingDate ? new Date(openingDate) : new Date(),
+        movementDate: when,
         narration: "Opening stock",
+      });
+
+      // AND POST IT. This moved stock and wrote nothing to the ledger, so the
+      // valuation report and the accounts disagreed by the whole opening value
+      // from the moment the item was created - and nothing said so.
+      // Reconciling stock to 1201 is the control that catches a costing error,
+      // and it cannot work while one side is fed through a door the other side
+      // does not know about.
+      await postOpeningStock(tx, {
+        organizationId, branchId: resolvedOpeningBranchId, accountId: stockAccountId,
+        cardId: bp.id, sku: created.sku, quantity: qty, unitCost: cost,
+        when, userId: req.user!.userId,
       });
     }
 
@@ -766,11 +828,21 @@ router.post("/bulk-upload/apply", canManageItems, async (req, res) => {
         });
         await tx.businessPartner.update({ where: { id: bp.id }, data: { refId: createdItem.id } });
         if (row.openingQuantity > 0) {
+          const when = new Date();
           await receiveStock(tx, {
             organizationId, branchId: ho.id, itemId: createdItem.id,
             quantity: row.openingQuantity, unitCost: row.openingCost, costingMethod: org!.costingMethod!,
             movementType: "ADJUSTMENT_IN", referenceType: "item_opening_balance", referenceId: createdItem.id,
-            movementDate: new Date(), narration: "Opening stock (bulk upload)",
+            movementDate: when, narration: "Opening stock (bulk upload)",
+          });
+          // The SAME posting the single-item path makes. This is the door most
+          // opening stock actually comes through - a spreadsheet of a hundred
+          // items on day one - so leaving it unposted while fixing the other
+          // one would have fixed almost nothing.
+          await postOpeningStock(tx, {
+            organizationId, branchId: ho.id, accountId: account.id,
+            cardId: bp.id, sku: row.sku, quantity: row.openingQuantity,
+            unitCost: row.openingCost, when, userId: req.user!.userId,
           });
         }
         return createdItem;

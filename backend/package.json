@@ -11,7 +11,9 @@
     "create-admin": "ts-node scripts/create-admin.ts",
     "test:dep": "ts-node tests/runCases.ts",
     "test:dep:dry": "ts-node tests/runCases.ts --dry",
-    "test:seed": "ts-node tests/seed.ts"
+    "test:seed": "ts-node tests/seed.ts",
+    "test:stk": "ts-node tests/runCases.ts --module=STK",
+    "test:stk:dry": "ts-node tests/runCases.ts --module=STK --dry"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

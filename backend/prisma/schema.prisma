@@ -1595,6 +1595,20 @@ model StockTransfer {
   // DocumentNumberSeries for the sending branch.
   documentNumber         String?   @map("document_number") @db.VarChar(30)
   ewayBillNumber         String?   @map("eway_bill_number") @db.VarChar(20)
+  // Section 34(1) credit note, raised when a TAXABLE transfer is cancelled
+  // after its invoice went out. CN-nnnn, counted per organisation the same
+  // way SalesReturn.returnNumber is — and that number is already what GSTR-1
+  // files as a credit note for a sales return, so this follows a precedent
+  // rather than inventing a second scheme. See migration_052.
+  //
+  // creditNoteDate is separate from transferDate ON PURPOSE: the supply falls
+  // in the period of the invoice and the note may fall in the next one, and
+  // both returns have to be able to say so. Null on anything that is not a
+  // cancelled taxable transfer, and null on cancellations that predate
+  // migration_052 — those still need a note raising by hand and appear in
+  // computeGstr1's cancelledTransfers list until somebody does.
+  creditNoteNumber       String?   @map("credit_note_number") @db.VarChar(30)
+  creditNoteDate         DateTime? @map("credit_note_date") @db.Date
   // An untaxed transfer has TWO entries — dispatch at the sending branch and
   // receipt at the receiving one, each balancing through 1304 Stock in
   // Transit, because one legal person's books can carry both halves.

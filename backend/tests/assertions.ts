@@ -126,8 +126,22 @@ export function evalPath(root: any, expr: string): any {
 }
 
 function same(actual: any, want: string): boolean {
+  // "the field is deliberately empty" is a thing a pack needs to be able to
+  // say - a cost per unit before any unit exists, a disposal date on an asset
+  // still in use. It has to be an EXPLICIT null, never undefined: a path that
+  // resolved to nothing is a typo in the assertion, and matching it here would
+  // turn every misspelt field name into a passing test.
+  if (want === "null") return actual === null;
   if (want === "true" || want === "false") return String(actual) === want;
   if (/^-?\d+(\.\d+)?$/.test(want)) {
+    // NOTHING IS NOT ZERO. Number(null) is 0 and finite, so `= 0` used to pass
+    // against a null - which is what a `sql` assertion returns when the query
+    // matched NO ROWS AT ALL. That is the worst kind of green: a query looking
+    // at the wrong table or a mistyped column name reads exactly like a
+    // balance that is correctly nil, and the case goes on passing after the
+    // thing it was watching has broken. undefined was already rejected by the
+    // isFinite check below; null has to be rejected explicitly.
+    if (actual === null || actual === undefined) return false;
     const a = Number(actual), b = Number(want);
     if (!Number.isFinite(a)) return false;
     return Math.round(a * 100) === Math.round(b * 100);      // money, to the paisa
@@ -141,11 +155,39 @@ function same(actual: any, want: string): boolean {
 // journal comparison
 // ---------------------------------------------------------------------------
 
-const DOC_TABLE: Record<string, string> = {
-  purchase_bill: "purchaseBill",
-  purchase_return: "purchaseReturn",
-  stock_adjustment: "stockAdjustment",
-  sales_invoice: "salesInvoice",
+// Which table holds the link to a document's journal entry, and under which
+// column. Most documents post ONE entry and call the column journalEntryId,
+// so `doc()` covers them in a word.
+//
+// A stock transfer does not. It is two events - goods leave on Monday, arrive
+// on Thursday - and a TAXABLE one posts three entries, because two GST
+// registrations keep two trial balances and neither may post to the other's
+// accounts. All three ids live on the same row under different columns, so
+// the refType picks the column and the selector is the transfer id.
+interface DocRef { table: string; field: string }
+const doc = (table: string): DocRef => ({ table, field: "journalEntryId" });
+
+const DOC_TABLE: Record<string, DocRef> = {
+  purchase_bill: doc("purchaseBill"),
+  purchase_return: doc("purchaseReturn"),
+  stock_adjustment: doc("stockAdjustment"),
+  sales_invoice: doc("salesInvoice"),
+  // All three production postings are rows in the SAME table. A production
+  // order is a container; what carries a journal entry is the ISSUE, COST or
+  // RECEIPT posted against it, and productionEntry.journalEntryId is the link.
+  // So the selector for each is the entryId the posting returned, not the
+  // order id - which is why every production case captures data.entryId.
+  production_issue: doc("productionEntry"),
+  production_cost: doc("productionEntry"),
+  production_receipt: doc("productionEntry"),
+
+  stock_transfer_dispatch: { table: "stockTransfer", field: "dispatchJournalEntryId" },
+  stock_transfer_receipt:  { table: "stockTransfer", field: "receiptJournalEntryId" },
+  stock_transfer_transit:  { table: "stockTransfer", field: "transitClearingJournalEntryId" },
+  // A cancellation reuses receiptJournalEntryId to hold the return entry -
+  // see the comment on the column in schema.prisma. Named separately here so
+  // a case can say which of the two it means and be read by a person.
+  stock_transfer_cancel:   { table: "stockTransfer", field: "receiptJournalEntryId" },
 };
 
 function fold(lines: JeLine[]): Map<string, { d: number; c: number }> {
@@ -194,15 +236,17 @@ async function entriesFor(refType: string, selector: string, ctx: Ctx): Promise<
     return entries.map((e) => e.id);
   }
 
-  const table = DOC_TABLE[refType];
-  if (!table) throw new AssertionError(`journal: unknown document type '${refType}'`);
+  const ref = DOC_TABLE[refType];
+  if (!ref) throw new AssertionError(`journal: unknown document type '${refType}'`);
   const id = substitute(selector.trim(), ctx);
-  const doc: any = await (prisma as any)[table].findUnique({
-    where: { id }, select: { journalEntryId: true },
+  const row: any = await (prisma as any)[ref.table].findUnique({
+    where: { id }, select: { [ref.field]: true },
   });
-  if (!doc) throw new AssertionError(`no ${refType} with id ${id}`);
-  if (!doc.journalEntryId) throw new AssertionError(`${refType} ${id} has posted no journal entry`);
-  return [doc.journalEntryId];
+  if (!row) throw new AssertionError(`no ${refType} with id ${id}`);
+  if (!row[ref.field]) {
+    throw new AssertionError(`${refType} ${id} has posted no journal entry (${ref.field} is null)`);
+  }
+  return [row[ref.field]];
 }
 
 async function assertJournal(rest: string, ctx: Ctx): Promise<string> {

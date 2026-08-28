@@ -24,6 +24,25 @@ import {
 
 type Outcome = "PASS" | "FAIL" | "MANUAL" | "SKIPPED";
 
+const MODULE_NAME: Record<string, string> = { DEP: "depreciation", STK: "stock management" };
+
+// Phase order is the whole trick: a module's state accumulates, so the steps
+// run in dependency order rather than case order. Depreciation posts each
+// period once and every case reads its own slice; stock walks one item's
+// cost forward and every case asserts the balance it inherits.
+const PHASES: Record<string, string[]> = {
+  DEP: ["", "capitalise", "post April", "post May", "post June",
+        "post July / catch-up", "later periods", "controls"],
+  STK: ["", "opening balances and refusals", "found stock", "purchase raises the average",
+        "sale consumes at average", "shrinkage and a two-way document", "over-issue is refused",
+        "FIFO in ORG-B", "purchase returns", "sales returns and the stock ledger",
+        "production - material and conversion cost", "production - output",
+        "production - refusals, close and cancel",
+        "transfers - untaxed, one registration", "transfers - taxable, both ways",
+        "transfers - cancellation and refusals", "transfers - reconciliation",
+        "GST returns - GSTR-1 and GSTR-3B", "controls and reconciliation"],
+};
+
 interface Result {
   step: Step; outcome: Outcome; detail: string; ms: number;
 }
@@ -169,11 +188,11 @@ async function main() {
   const dry = args.includes("--dry");
   const only = args.filter((a) => !a.startsWith("--"));
 
-  console.log(`${BOLD}SmartERP — depreciation test run${OFF}`);
+  console.log(`${BOLD}SmartERP — ${MODULE_NAME[CONFIG.module] ?? CONFIG.module} test run${OFF}`);
   console.log(`${GREY}workbook ${CONFIG.workbook}   backend ${CONFIG.baseUrl}${OFF}\n`);
 
   const { wb, steps: all } = await readCases();
-  let steps = all.filter((s) => s.caseId.startsWith("DEP-") && s.auto !== "TBD");
+  let steps = all.filter((s) => s.caseId.startsWith(`${CONFIG.module}-`) && s.auto !== "TBD");
   if (only.length) steps = steps.filter((s) => only.some((o) => s.key.startsWith(o)));
   if (steps.length === 0) { console.log("Nothing to run."); return; }
 
@@ -221,8 +240,7 @@ async function main() {
   for (const step of steps) {
     if (step.phase !== phase) {
       phase = step.phase;
-      const label = ["", "capitalise", "post April", "post May", "post June",
-                     "post July / catch-up", "later periods", "controls"][phase] ?? `phase ${phase}`;
+      const label = (PHASES[CONFIG.module] ?? [])[phase] ?? `phase ${phase}`;
       console.log(`\n${BOLD}-- phase ${phase}: ${label}${OFF}`);
     }
     const r = await runStep(step, ctx, postedPeriods);
