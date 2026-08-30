@@ -191,6 +191,11 @@ export interface CompanyMaster {
   // Sales Order approval workflow — the exact sales-side mirror of
   // poApprovalThreshold. See SalesOrder.status below.
   soApprovalThreshold: string | null;
+  // May a Sales Invoice be raised against stock the branch does not hold?
+  // False for every company until an administrator turns it on, and even
+  // then each invoice must ask for the override and give a reason. See
+  // migration_053 and backend/src/lib/costing.ts.
+  allowNegativeStock: boolean;
   directors: Director[];
   auditors: Auditor[];
 }

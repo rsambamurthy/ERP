@@ -252,6 +252,10 @@ export function updateCompanyMaster(body: {
   incorporationDate?: string | null; registeredOfficeAddress?: string | null;
   poApprovalThreshold?: number | null; priceVarianceTolerancePct?: number | null;
   soApprovalThreshold?: number | null;
+  // Not optional in practice: this endpoint is a full replace, so a caller
+  // that omits it switches the override OFF. The Company Master screen
+  // always sends it - see handleSaveOrg there.
+  allowNegativeStock?: boolean;
 }) {
   return request<{ data: CompanyMaster }>("/company-master", { method: "PATCH", body: JSON.stringify(body) });
 }
@@ -875,6 +879,12 @@ export function createSalesInvoice(body: {
   // businessPartnerId is optional (derived from the SO server-side), and
   // every line must carry a deliveryNoteLineId (3-way match).
   salesOrderId?: string;
+  // Post this invoice even though a branch is short of stock. Refused
+  // unless the COMPANY permits it (CompanyMaster.allowNegativeStock) and
+  // a reason is given, which is stored on the invoice. Never sent unless
+  // the user has been shown the shortfall and chosen to go ahead.
+  allowNegativeStock?: boolean;
+  negativeStockReason?: string;
 }) {
   return request<{ data: SalesInvoice }>("/sales-invoices", { method: "POST", body: JSON.stringify(body) });
 }

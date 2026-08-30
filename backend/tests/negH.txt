@@ -1,0 +1,147 @@
+// negH - the half that was missing: the Sales Invoice screen.
+//
+// The company setting and the API existed; the invoice form had no way to
+// use either, so with the setting on a user still could not post the
+// invoice. That is not a feature, it is a promise. Run negG first - this
+// reads the company setting that screen sets.
+//
+// NOBODY IS OFFERED THE OVERRIDE UP FRONT. The invoice is posted normally.
+// Only when the server refuses it for want of stock, AND the company
+// permits the override, does a panel appear carrying the server's own
+// message - 'Only 4 in stock at this branch' - with a box for the reason
+// and a Post anyway button. Then the same invoice goes again with the
+// override attached.
+//
+// Asking afterwards rather than beforehand is the design, not a shortcut.
+// A tick-box on an empty form gets ticked out of habit by somebody who has
+// not been told anything is wrong yet. A panel that appears saying how
+// short you are is a decision taken in front of the fact - and it carries
+// the two consequences with it, because somebody choosing this is taking
+// on an estimated margin and a negative stock balance.
+//
+// A FIFO refusal is deliberately NOT matched: the message says 'not under
+// FIFO', there is nothing the user could usefully confirm, and it shows as
+// an ordinary error.
+//
+// negI adds the panel itself. Run both; between them the screen compiles
+// but the override is unreachable.
+//
+// Save this as backend/tests/negH.mjs and run it from backend/:
+//   node tests/negH.mjs
+// Safe to run twice - a second run says 'already there' and changes nothing.
+
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import { fileURLToPath } from "url";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const at = (f) => path.join(here, "..", f);
+const read = (f) => fs.readFileSync(at(f), "utf8").replace(/\r\n/g, "\n");
+const L = (...ls) => ls.join("\n");
+const save = (f, t) => fs.writeFileSync(at(f), t.replace(/\n*$/, "\n"));
+
+let applied = 0, already = 0;
+function edit(file, from, to, done) {
+  const t = read(file);
+  if (t.includes(done)) { already++; save(file, t); return; }
+  const n = t.split(from).length - 1;
+  if (n === 0) throw new Error("anchor not found in " + file + ": " + from.slice(0, 70));
+  if (n > 1) throw new Error("anchor is not unique in " + file + ": " + from.slice(0, 70));
+  save(file, t.replace(from, to));
+  applied++;
+}
+
+edit("../frontend/app/sales/invoices/page.tsx",
+  "  ApiError, createSalesInvoice, downloadSalesInvoicePdf, getBranches, getBusinessPartnerLookup, getDeliveryNotes, getItems, getSalesInvoice,",
+  "  ApiError, createSalesInvoice, downloadSalesInvoicePdf, getBranches, getBusinessPartnerLookup, getCompanyMaster, getDeliveryNotes, getItems, getSalesInvoice,",
+  "getBusinessPartnerLookup, getCompanyMaster, getDeliveryNotes"
+);
+
+edit("../frontend/app/sales/invoices/page.tsx",
+  "  async function handleCreate(e: React.FormEvent) {",
+  L(
+    "  // THE NEGATIVE-STOCK OVERRIDE, from the user's side.",
+    "  //",
+    "  // Nobody is offered this up front. The invoice is posted normally; only",
+    "  // when the server refuses it for want of stock, AND the company permits",
+    "  // the override, does the panel below appear with the server's own message",
+    "  // and a box for the reason. Then the same invoice is posted again with",
+    "  // the override attached.",
+    "  //",
+    "  // Asking afterwards rather than beforehand is the whole design. A tick-box",
+    "  // sitting on an empty form gets ticked out of habit by somebody who has",
+    "  // not yet been told anything is wrong; a panel that appears saying \"only 4",
+    "  // in stock\" is a decision taken in front of the fact.",
+    "  const [companyAllowsNegative, setCompanyAllowsNegative] = useState(false);",
+    "  const [shortfall, setShortfall] = useState<string | null>(null);",
+    "  const [overrideReason, setOverrideReason] = useState(\"\");",
+    "",
+    "  // Whether the company permits it at all. Read once; a user who cannot see",
+    "  // Company Master can still read this endpoint, and if the call fails the",
+    "  // answer stays false - the override simply is not offered, which is the",
+    "  // right way for this to break.",
+    "  useEffect(() => {",
+    "    getCompanyMaster()",
+    "      .then((res) => setCompanyAllowsNegative(res.data.allowNegativeStock === true))",
+    "      .catch(() => setCompanyAllowsNegative(false));",
+    "  }, []);",
+    "",
+    "  async function handleCreate(e: React.FormEvent, override = false) {"),
+  "const [companyAllowsNegative, setCompanyAllowsNegative] = useState(false);"
+);
+
+edit("../frontend/app/sales/invoices/page.tsx",
+  "      await createSalesInvoice({",
+  L(
+    "      await createSalesInvoice({",
+    "        ...(override ? { allowNegativeStock: true, negativeStockReason: overrideReason.trim() } : {}),"),
+  "...(override ? { allowNegativeStock: true"
+);
+
+edit("../frontend/app/sales/invoices/page.tsx",
+  "      setShowForm(false);",
+  L(
+    "      setShowForm(false);",
+    "      setShortfall(null); setOverrideReason(\"\");"),
+  "setShortfall(null); setOverrideReason(\"\");"
+);
+
+edit("../frontend/app/sales/invoices/page.tsx",
+  "      setError(err instanceof ApiError ? err.message : \"Could not post invoice.\");",
+  L(
+    "      const message = err instanceof ApiError ? err.message : \"Could not post invoice.\";",
+    "      // Only a shortfall opens the panel, and only where the company allows",
+    "      // it. Matched on the phrase the server actually uses - see",
+    "      // consumeStock() in backend/src/lib/costing.ts. A FIFO organisation is",
+    "      // refused with a different message that says so, and is deliberately",
+    "      // NOT matched here: there is nothing the user could usefully confirm.",
+    "      const isShortfall = /in stock at this branch/i.test(message) && !/FIFO/i.test(message);",
+    "      if (isShortfall && companyAllowsNegative && !override) {",
+    "        setShortfall(message);",
+    "        setError(null);",
+    "      } else {",
+    "        setShortfall(null);",
+    "        setError(message);",
+    "      }"),
+  "const isShortfall = /in stock at this branch/i.test(message)"
+);
+
+edit("../frontend/lib/api.ts",
+  "  salesOrderId?: string;",
+  L(
+    "  salesOrderId?: string;",
+    "  // Post this invoice even though a branch is short of stock. Refused",
+    "  // unless the COMPANY permits it (CompanyMaster.allowNegativeStock) and",
+    "  // a reason is given, which is stored on the invoice. Never sent unless",
+    "  // the user has been shown the shortfall and chosen to go ahead.",
+    "  allowNegativeStock?: boolean;",
+    "  negativeStockReason?: string;"),
+  "negativeStockReason?: string;"
+);
+
+console.log(`${applied} change(s) applied, ${already} already there`);
+for (const f of ["../frontend/app/sales/invoices/page.tsx","../frontend/lib/api.ts"]) {
+  const h = crypto.createHash("sha256").update(fs.readFileSync(at(f))).digest("hex");
+  console.log("  " + f.padEnd(46) + h.slice(0, 16).toUpperCase());
+}

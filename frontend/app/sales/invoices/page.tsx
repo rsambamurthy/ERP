@@ -9,7 +9,7 @@ import CurrencyPicker from "@/components/shared/CurrencyPicker";
 import ItemPicker from "@/components/shared/ItemPicker";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import {
-  ApiError, createSalesInvoice, downloadSalesInvoicePdf, getBranches, getBusinessPartnerLookup, getDeliveryNotes, getItems, getSalesInvoice,
+  ApiError, createSalesInvoice, downloadSalesInvoicePdf, getBranches, getBusinessPartnerLookup, getCompanyMaster, getDeliveryNotes, getItems, getSalesInvoice,
   getSalesInvoices, getSalesOrder, getSalesOrders, lookupCurrencyRate, updateSalesInvoiceReference,
 } from "@/lib/api";
 import { computeDiscountedLines, isInterState, round2 } from "@/lib/discountGst";
@@ -334,12 +334,39 @@ function SalesInvoicesInner() {
     });
   }
 
-  async function handleCreate(e: React.FormEvent) {
+  // THE NEGATIVE-STOCK OVERRIDE, from the user's side.
+  //
+  // Nobody is offered this up front. The invoice is posted normally; only
+  // when the server refuses it for want of stock, AND the company permits
+  // the override, does the panel below appear with the server's own message
+  // and a box for the reason. Then the same invoice is posted again with
+  // the override attached.
+  //
+  // Asking afterwards rather than beforehand is the whole design. A tick-box
+  // sitting on an empty form gets ticked out of habit by somebody who has
+  // not yet been told anything is wrong; a panel that appears saying "only 4
+  // in stock" is a decision taken in front of the fact.
+  const [companyAllowsNegative, setCompanyAllowsNegative] = useState(false);
+  const [shortfall, setShortfall] = useState<string | null>(null);
+  const [overrideReason, setOverrideReason] = useState("");
+
+  // Whether the company permits it at all. Read once; a user who cannot see
+  // Company Master can still read this endpoint, and if the call fails the
+  // answer stays false - the override simply is not offered, which is the
+  // right way for this to break.
+  useEffect(() => {
+    getCompanyMaster()
+      .then((res) => setCompanyAllowsNegative(res.data.allowNegativeStock === true))
+      .catch(() => setCompanyAllowsNegative(false));
+  }, []);
+
+  async function handleCreate(e: React.FormEvent, override = false) {
     e.preventDefault();
     setSaving(true);
     setError(null);
     try {
       await createSalesInvoice({
+        ...(override ? { allowNegativeStock: true, negativeStockReason: overrideReason.trim() } : {}),
         businessPartnerId: linkedSO ? undefined : businessPartnerId, invoiceDate, narration,
         lines: lines.filter((l) => l.itemId && l.quantity > 0),
         discountType: invoiceDiscountType || null,
@@ -354,6 +381,7 @@ function SalesInvoicesInner() {
         salesOrderId: linkedSO?.id,
       });
       setShowForm(false);
+      setShortfall(null); setOverrideReason("");
       setBusinessPartnerId(""); setNarration(""); setLines([emptyLine()]);
       setInvoiceDiscountType(""); setInvoiceDiscountValue("");
       setCurrency("INR"); setExchangeRate("1");
@@ -362,7 +390,20 @@ function SalesInvoicesInner() {
       setLinkedSO(null);
       await loadAll();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not post invoice.");
+      const message = err instanceof ApiError ? err.message : "Could not post invoice.";
+      // Only a shortfall opens the panel, and only where the company allows
+      // it. Matched on the phrase the server actually uses - see
+      // consumeStock() in backend/src/lib/costing.ts. A FIFO organisation is
+      // refused with a different message that says so, and is deliberately
+      // NOT matched here: there is nothing the user could usefully confirm.
+      const isShortfall = /in stock at this branch/i.test(message) && !/FIFO/i.test(message);
+      if (isShortfall && companyAllowsNegative && !override) {
+        setShortfall(message);
+        setError(null);
+      } else {
+        setShortfall(null);
+        setError(message);
+      }
     } finally {
       setSaving(false);
     }
@@ -608,6 +649,50 @@ function SalesInvoicesInner() {
             </p>
           )}
           {error && <p style={{ color: "#dc2626", fontSize: 13, padding: "0 14px 10px" }}>{error}</p>}
+
+          {/* The shortfall panel. Appears only after the server has refused
+              this invoice for want of stock, and only where the company
+              permits the override - so the decision is taken in front of the
+              actual number rather than pre-emptively on an empty form. */}
+          {shortfall && (
+            <div style={{
+              margin: "0 14px 12px", padding: "10px 12px", borderRadius: 6,
+              border: "1px solid #f59e0b", background: "#fffbeb",
+            }}>
+              <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#92400e" }}>
+                Not enough stock
+              </p>
+              <p style={{ margin: "4px 0 0", fontSize: 13, color: "#92400e" }}>{shortfall}</p>
+              <p style={{ margin: "8px 0 0", fontSize: 11.5, color: "var(--color-muted)" }}>
+                This company allows an invoice to be posted anyway. Cost of goods sold will be taken at the
+                current average for the whole quantity, including the part not held, so the margin on this
+                invoice is an estimate. The item&rsquo;s stock balance goes negative until the goods are
+                received. Give a reason — it is stored on the invoice.
+              </p>
+              <input
+                className="ent-fc" maxLength={200} style={{ marginTop: 8 }}
+                placeholder="Why is this being posted short? e.g. goods delivered, purchase bill not yet entered"
+                value={overrideReason}
+                onChange={(e) => setOverrideReason(e.target.value)}
+              />
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button
+                  type="button" className="ent-btn-save"
+                  disabled={saving || !overrideReason.trim()}
+                  onClick={(e) => handleCreate(e, true)}
+                >
+                  {saving ? "Posting…" : "Post anyway"}
+                </button>
+                <button
+                  type="button" className="ent-btn"
+                  onClick={() => { setShortfall(null); setOverrideReason(""); }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
           <div style={{ padding: "0 14px 14px" }}>
             <button type="submit" className="ent-btn-save" disabled={saving || !businessPartnerId || (isZeroRatedExport && hasLineTax)}>{saving ? "Posting…" : "Post Invoice"}</button>
           </div>

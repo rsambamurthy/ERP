@@ -39,6 +39,9 @@ export default function CompanyMasterPage() {
   const [orgForm, setOrgForm] = useState({
     cin: "", companyPan: "", companyType: "", incorporationDate: "", registeredOfficeAddress: "",
     poApprovalThreshold: "", priceVarianceTolerancePct: "", soApprovalThreshold: "",
+    // A boolean among strings, because it is one. Kept in the same form
+    // state so that saving this screen always sends it - see handleSaveOrg.
+    allowNegativeStock: false,
   });
   const [savingOrg, setSavingOrg] = useState(false);
 
@@ -64,6 +67,7 @@ export default function CompanyMasterPage() {
         poApprovalThreshold: res.data.poApprovalThreshold ?? "",
         priceVarianceTolerancePct: res.data.priceVarianceTolerancePct ?? "",
         soApprovalThreshold: res.data.soApprovalThreshold ?? "",
+        allowNegativeStock: res.data.allowNegativeStock === true,
       });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load company master data.");
@@ -88,6 +92,13 @@ export default function CompanyMasterPage() {
         poApprovalThreshold: orgForm.poApprovalThreshold ? Number(orgForm.poApprovalThreshold) : null,
         priceVarianceTolerancePct: orgForm.priceVarianceTolerancePct ? Number(orgForm.priceVarianceTolerancePct) : null,
         soApprovalThreshold: orgForm.soApprovalThreshold ? Number(orgForm.soApprovalThreshold) : null,
+        // SENT ON EVERY SAVE, and that is the point rather than a detail.
+        // This endpoint is a full replace - anything not sent is cleared -
+        // so a screen that omitted this field would switch the override off
+        // every time somebody edited the CIN and pressed Save. Silently, and
+        // in the safe direction, which is the worst kind: an invoice that
+        // worked on Tuesday is refused on Wednesday and nothing says why.
+        allowNegativeStock: orgForm.allowNegativeStock,
       });
       await load();
     } catch (err) {
@@ -267,6 +278,28 @@ export default function CompanyMasterPage() {
                 <p style={{ fontSize: 11.5, color: "var(--color-muted)", margin: 0 }}>
                   A submitted Sales Order below this amount is approved automatically. Blank means every Sales Order
                   needs manual approval, regardless of amount — the safe default.
+                </p>
+              </div>
+              <div className="ent-fg" style={{ gridColumn: "1 / -1" }}>
+                <label className="ent-fl" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={orgForm.allowNegativeStock}
+                    onChange={(e) => setOrgForm((f) => ({ ...f, allowNegativeStock: e.target.checked }))}
+                  />
+                  Allow invoicing stock this company does not hold
+                </label>
+                <p style={{ fontSize: 11.5, color: "var(--color-muted)", margin: "6px 0 0" }}>
+                  Off by default, and off is the right answer for most companies. With it on, a Sales Invoice may
+                  still be raised when the branch is short — but only if that invoice explicitly asks to override the
+                  stock check and gives a reason, which is stored against it. Turning this on changes nothing about
+                  any invoice that does not ask.
+                </p>
+                <p style={{ fontSize: 11.5, color: "var(--color-muted)", margin: "6px 0 0" }}>
+                  What it costs: cost of goods sold is posted at the current average for the whole quantity, including
+                  the part you did not hold, so the margin on that invoice is an estimate that is not corrected when
+                  the real purchase arrives. The item&rsquo;s stock account goes into credit while the balance is
+                  negative, which shows as negative inventory on the Balance Sheet. Not available under FIFO costing.
                 </p>
               </div>
             </div>
