@@ -70,6 +70,13 @@ interface ConsumeArgs {
   referenceId: string;
   movementDate: Date;
   narration?: string | null;
+  // Let the balance go negative rather than refusing. Set only by a Sales
+  // Invoice that explicitly asked for it, in an organisation that permits
+  // it. Every other caller - stock adjustments, transfers, production
+  // issues, delivery notes - leaves it unset and keeps the old refusal,
+  // because none of them is a promise to a customer that somebody has
+  // already made.
+  allowNegative?: boolean;
 }
 
 // Stock going out — a Sales Invoice line or an outward Stock Adjustment.
@@ -77,13 +84,43 @@ interface ConsumeArgs {
 // caller posts as COGS (Sales Invoice) or the write-off amount (Stock
 // Adjustment) — never the sale/adjustment's own rate, which is a price,
 // not a cost.
-export async function consumeStock(tx: Tx, args: ConsumeArgs): Promise<{ unitCost: number; totalCost: number }> {
-  const { organizationId, branchId, itemId, quantity, costingMethod, movementType, referenceType, referenceId, movementDate, narration } = args;
+// wentNegative says whether this call actually took the balance below
+// zero, which is not the same question as whether it was ALLOWED to. An
+// invoice can ask for the override and have enough stock after all, and
+// recording that as an override would put invoices on the exception
+// report that never were one.
+export async function consumeStock(tx: Tx, args: ConsumeArgs):
+  Promise<{ unitCost: number; totalCost: number; wentNegative: boolean }> {
+  const { organizationId, branchId, itemId, quantity, costingMethod, movementType, referenceType, referenceId, movementDate, narration, allowNegative } = args;
 
   const stock = await tx.itemStock.findUnique({ where: { itemId_branchId: { itemId, branchId } } });
   const onHand = Number(stock?.quantityOnHand ?? 0);
   if (onHand < quantity) {
-    throw new InsufficientStockError(`Only ${onHand} in stock at this branch — cannot remove ${quantity}.`);
+    // THE OVERRIDE, and it is narrow on purpose. Two locks have to be open:
+    // the organisation must permit negative stock at all, and the document
+    // must ask for it — see routes/salesInvoices.ts. Neither alone is
+    // enough, so nobody arrives here by accident.
+    if (!allowNegative) {
+      throw new InsufficientStockError(`Only ${onHand} in stock at this branch — cannot remove ${quantity}.`);
+    }
+    // FIFO REFUSES EVEN WITH THE OVERRIDE ON, and this is not an oversight.
+    // Weighted average always has an answer to "at what cost did this
+    // leave?" — the stored average, which is a real number computed from
+    // real receipts. FIFO's answer is a LOT, and for the shortfall there is
+    // no lot: nothing was ever received to consume from. Inventing one
+    // means inventing a cost and a date, and then reconciling it against
+    // whatever actually arrives later. That is a different feature with its
+    // own failure modes, not a flag on this one.
+    //
+    // The refusal below is also why the "lots don't cover" check further
+    // down can go on treating that state as corruption rather than as
+    // something this path might legitimately produce.
+    if (costingMethod === "FIFO") {
+      throw new InsufficientStockError(
+        `Only ${onHand} in stock at this branch. Negative stock is allowed for this organisation, ` +
+        `but not under FIFO — there is no lot to take the shortfall of ${quantity - onHand} from. ` +
+        `Receive the stock first.`);
+    }
   }
 
   let totalCost: number;
@@ -110,15 +147,33 @@ export async function consumeStock(tx: Tx, args: ConsumeArgs): Promise<{ unitCos
       throw new InsufficientStockError("Stock lots don't cover the requested quantity — inventory data is inconsistent for this item.");
     }
   } else {
+    // The whole quantity leaves at the stored average, INCLUDING any part of
+    // it the branch did not hold. That is the only defensible cost available
+    // - it is what every unit of this item has cost on average up to now -
+    // but it is a forecast rather than a fact for the shortfall, and when
+    // the real receipt lands at a different rate the COGS already posted on
+    // that invoice is wrong and nothing goes back to correct it. The margin
+    // on a negative-stock sale is an estimate. That is the price of the
+    // override and it is why the organisation has to switch it on.
     const avgCost = Number(stock?.averageCost ?? 0);
     totalCost = quantity * avgCost;
   }
 
   const unitCost = quantity > 0 ? totalCost / quantity : 0;
 
-  await tx.itemStock.update({
+  // upsert, not update: an override can sell an item this branch has NO row
+  // for at all - never received one unit - and update would throw on the
+  // missing row rather than record the negative balance. averageCost stays
+  // where it was (0 for an item never held), because consumption never moves
+  // the average.
+  await tx.itemStock.upsert({
     where: { itemId_branchId: { itemId, branchId } },
-    data: { quantityOnHand: onHand - quantity }, // averageCost unchanged on consumption
+    create: {
+      itemId, branchId,
+      quantityOnHand: onHand - quantity,
+      averageCost: Number(stock?.averageCost ?? 0),
+    },
+    update: { quantityOnHand: onHand - quantity }, // averageCost unchanged on consumption
   });
 
   await tx.stockMovement.create({
@@ -128,7 +183,7 @@ export async function consumeStock(tx: Tx, args: ConsumeArgs): Promise<{ unitCos
     },
   });
 
-  return { unitCost, totalCost };
+  return { unitCost, totalCost, wentNegative: onHand < quantity };
 }
 
 interface ReturnToVendorArgs {

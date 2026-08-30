@@ -10,8 +10,10 @@
 // stkCasesC.mjs is batch 2, production orders, phases 10 to 12.
 // stkCasesD.mjs is batch 3, branch transfers in ORG-B, phases 13 to 16.
 // stkCasesE.mjs is batch 4, the GST returns in ORG-B, phase 17.
-// stkCasesF.mjs is module entitlement, phase 19 - the only batch that runs
-// AFTER the controls, because it posts nothing and puts back the one
+// stkCasesG.mjs is the negative-stock override, phase 18 - BEFORE the
+// controls, because it moves stock and posts COGS.
+// stkCasesF.mjs is module entitlement, phase 20 - the only batch that runs
+// AFTER the controls at 19, because it posts nothing and puts back the one
 // column it changes.
 // This file is phases 7 to 9, and the controls, which stay last at 18.
 
@@ -20,6 +22,7 @@ import "./stkCasesA.mjs";
 import "./stkCasesC.mjs";
 import "./stkCasesD.mjs";
 import "./stkCasesE.mjs";
+import "./stkCasesG.mjs";
 import "./stkCasesF.mjs";
 
 const T8 = "FIFO consumes the oldest layer first";
@@ -145,39 +148,39 @@ C("STK-32.3", T32, "Brought-forward on BRG-6205 mid-stream, where every movement
 // batch 4's returns took 17 so it is now 18. Three times. The number is not
 // the rule; being last is the rule.
 const T30 = "Stock valuation ties to the ledger";
-C("STK-30.1", T30, "Read the ledger balance on 1201 for ORG-A.", 18, {
+C("STK-30.1", T30, "Read the ledger balance on 1201 for ORG-A.", 19, {
   asserts: [CAP(bal("{{ORG_A}}", "1201"), "led1201")],
 });
-C("STK-30.2", T30, "Compare it to the valuation report.", 18, {
+C("STK-30.2", T30, "Compare it to the valuation report.", 19, {
   method: "GET", path: "/inventory/valuation", status: 200,
   asserts: ["field sum(data.rows[stockAccount.accountCode=1201].value) = {{led1201}}"],
-  note: "THE HEADLINE CONTROL: stock on the report equals stock in the accounts, 22,576.47 either way - BRG-6205 at 17,576.47 after the sales return, plus OPEN-TEST at 5,000.00. Before this batch it failed by 5,352.94, and that number is the whole reason to run it: 5,000.00 of opening stock sat on the report with nothing behind it in the ledger, and 352.94 was the purchase return leaving the ledger at the bill rate while the valuation moved at the average. Two independent defects, and only this one step said anything was wrong. It read 20,376.47 while it sat in phase 9, because it ran before the sales return - see the note above.",
+  note: "THE HEADLINE CONTROL: stock on the report equals stock in the accounts, whatever that figure happens to be - which is why it is CAPTURED in the step above rather than written here. It now has three items in it: BRG-6205 at 17,576.47 after the sales return, OPEN-TEST at 4,500.00 after STK-36.8 sold one unit, and NEG-TEST at MINUS 3,000.00. The negative row is the strongest part of this control and it is deliberate: a valuation report that quietly dropped negative balances, or a ledger that did, would break this tie and nothing else in the pack would notice. Before this batch it failed by 5,352.94, and that number is the whole reason to run it: 5,000.00 of opening stock sat on the report with nothing behind it in the ledger, and 352.94 was the purchase return leaving the ledger at the bill rate while the valuation moved at the average. Two independent defects, and only this one step said anything was wrong. It read 20,376.47 while it sat in phase 9, because it ran before the sales return - see the note above.",
 });
-C("STK-30.3", T30, "Check the WIP and in-transit control accounts are flat.", 18, {
+C("STK-30.3", T30, "Check the WIP and in-transit control accounts are flat.", 19, {
   asserts: [SQL(bal("{{ORG_A}}", "1302"), 0), SQL(bal("{{ORG_A}}", "1304"), 0)],
   note: "1302 Work in Progress should equal the WIP of orders still OPEN, and 1304 Stock in Transit the cost of transfers still IN_TRANSIT. Nothing in this batch opens either, so both must be nil. Batch 2 and batch 3 are what make them move.",
 });
-C("STK-30.4", T30, "Prove the whole ledger balances, in both organisations.", 18, {
+C("STK-30.4", T30, "Prove the whole ledger balances, in both organisations.", 19, {
   asserts: [SQL("SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l " +
                 "JOIN journal_entries e ON e.id=l.journal_entry_id WHERE e.organization_id={{ORG_A}}", 0),
             SQL("SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l " +
                 "JOIN journal_entries e ON e.id=l.journal_entry_id WHERE e.organization_id={{ORG_B}}", 0)],
   note: "Total debits equal total credits, to the paisa. If this ever fails, stop everything else.",
 });
-C("STK-30.6", T30, "The manufacturing accounts tie too, not just 1201.", 18, {
+C("STK-30.6", T30, "The manufacturing accounts tie too, not just 1201.", 19, {
   method: "GET", path: "/inventory/valuation", status: 200,
   asserts: ["field sum(data.rows[stockAccount.accountCode=1301].value) = 33750.00",
             "field sum(data.rows[stockAccount.accountCode=1303].value) = 21000.00",
             SQL(bal("{{ORG_A}}", "1301"), "33750.00"), SQL(bal("{{ORG_A}}", "1303"), "21000.00")],
   note: "Batch 2 made 1301 Raw Materials and 1303 Finished Goods live, so the control that only ever asked about 1201 now asks about all three inventory heads. 1301: 45,000.00 of castings in, 9,000.00 issued to PO-0001 and 2,250.00 to the cancelled PO-0002, leaving 75 units at 450.00. 1303: the whole 21,000.00 pool absorbed into 9 pumps. Both sides of both, because a tie proved on one account says nothing about the other two.",
 });
-C("STK-30.7", T30, "And the abnormal loss is where it should be.", 18, {
+C("STK-30.7", T30, "And the abnormal loss is where it should be.", 19, {
   asserts: [SQL(bal("{{ORG_A}}", "4003"), "2250.00"),
             SQL("SELECT count(*) FROM production_orders WHERE organization_id={{ORG_A}} " +
                 "AND status='OPEN'", 0)],
   note: "1302 being nil (STK-30.3) is only meaningful if no order is still open - an open order with a balance would make the same assertion fail, which is the point. Here both orders are finished: one completed, one cancelled with its 2,250.00 written off to 4003 rather than absorbed into a pump that was never made.",
 });
-C("STK-30.5", T30, "Check each item card against its stock value.", 18, {
+C("STK-30.5", T30, "Check each item card against its stock value.", 19, {
   auto: "NO",
   asserts: ["manual: drill into 1201 / 1301 / 1303 in the UI and compare each ITEM card to that item's " +
             "quantity x average cost, per branch. Under FIFO compare it to the sum of quantity remaining x " +

@@ -149,7 +149,16 @@ router.get("/valuation", async (req, res) => {
       return {
         item: { id: i.id, sku: i.sku, name: i.name, uom: i.uom },
         stockAccount: i.stockAccount,
-        quantityOnHand: qty, averageCost: qty > 0 ? value / qty : 0, value,
+        // NOT `qty > 0`. That guard was there to avoid dividing by zero and it
+        // also caught every NEGATIVE balance, which used to be impossible and
+        // now is not - migration_053 lets a sales invoice sell what the branch
+        // does not hold. The row then read minus six units at an average of
+        // ZERO with a value of minus 3,000.00, three figures that cannot all be
+        // true at once, on the one report somebody would go to when asking why
+        // an item is negative.
+        //
+        // Division by a negative is perfectly well defined; only zero is not.
+        quantityOnHand: qty, averageCost: Math.abs(qty) > 0.0001 ? value / qty : 0, value,
       };
     });
   }

@@ -302,8 +302,40 @@ router.post("/", canPost, async (req, res) => {
     }
   }
 
-  const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { costingMethod: true } });
+  const org = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { costingMethod: true, allowNegativeStock: true },
+  });
   if (!org?.costingMethod) return res.status(422).json({ message: "Set the organization's stock costing method first." });
+
+  // THE NEGATIVE-STOCK OVERRIDE. Two locks, and both have to be open.
+  //
+  // The organisation has to permit it at all (migration_053, off by
+  // default), and THIS invoice has to ask for it. An organisation with the
+  // setting on still refuses every ordinary invoice that runs short,
+  // because the setting grants the possibility rather than the behaviour -
+  // otherwise turning it on would silently change what every existing
+  // document does, which is the opposite of a deliberate decision.
+  //
+  // The reason is mandatory and is stored on the invoice. "Why did this go
+  // negative" is the question somebody asks three months later, and a
+  // boolean cannot answer it. Refusing without one here rather than
+  // defaulting to "override" keeps the answer worth reading.
+  const wantsOverride = req.body?.allowNegativeStock === true;
+  const negativeStockReason = String(req.body?.negativeStockReason ?? "").trim();
+  if (wantsOverride && !org.allowNegativeStock) {
+    return res.status(403).json({
+      message: "This organization does not allow invoicing stock it does not hold. " +
+        "An administrator can enable it under Company Master.",
+    });
+  }
+  if (wantsOverride && !negativeStockReason) {
+    return res.status(400).json({ message: "negativeStockReason is required when overriding the stock check." });
+  }
+  if (negativeStockReason.length > 200) {
+    return res.status(400).json({ message: "negativeStockReason must be 200 characters or fewer." });
+  }
+  const allowNegative = wantsOverride && org.allowNegativeStock;
 
   const customer = await prisma.businessPartner.findFirst({ where: { id: effectiveBusinessPartnerId, organizationId, bpType: "CUSTOMER" } });
   if (!customer) return res.status(400).json({ message: "businessPartnerId must be an existing customer." });
@@ -425,6 +457,7 @@ router.post("/", canPost, async (req, res) => {
       // StockMovement rows created here can reference it directly.
       let subtotal = 0, discountTotal = 0, taxTotal = 0, cgstTotal = 0, sgstTotal = 0, igstTotal = 0, totalCogs = 0;
       const computed = [];
+      let anyLineWentNegative = false;
       for (let i = 0; i < typedLines.length; i++) {
         const l = typedLines[i];
         const d = discountLines[i];
@@ -438,12 +471,15 @@ router.post("/", canPost, async (req, res) => {
           unitCost = Number(dnLine.unitCost);
           totalCost = round2(unitCost * l.quantity);
         } else {
-          ({ unitCost, totalCost } = await consumeStock(tx, {
+          let wentNegative = false;
+          ({ unitCost, totalCost, wentNegative } = await consumeStock(tx, {
             organizationId, branchId: resolvedBranchId!, itemId: l.itemId,
             quantity: l.quantity, costingMethod: org.costingMethod!,
             movementType: "SALE", referenceType: "sales_invoice", referenceId: invoiceId,
             movementDate: new Date(invoiceDate), narration: `Sales invoice ${invoiceNumber}`,
+            allowNegative,
           }));
+          if (wentNegative) anyLineWentNegative = true;
         }
         subtotal += d.lineSubtotal;
         discountTotal += round2(d.lineDiscountAmount + d.invoiceDiscountShare);
@@ -495,6 +531,11 @@ router.post("/", canPost, async (req, res) => {
           id: invoiceId,
           organizationId, branchId: resolvedBranchId, businessPartnerId: effectiveBusinessPartnerId,
           invoiceNumber, invoiceDate: new Date(invoiceDate), narration: narration ?? "",
+          // Only where the override was actually used. An invoice that asked
+          // for it and had enough stock anyway records nothing, because
+          // nothing was overridden - the column is a list of the invoices
+          // that really did sell what was not there.
+          negativeStockReason: anyLineWentNegative ? negativeStockReason : null,
           journalEntryId: journalEntry.id, subtotal, taxTotal, grandTotal, totalCogs,
           discountType: discountType ?? null, discountValue: discountValue ?? 0, discountTotal,
           cgstTotal, sgstTotal, igstTotal,

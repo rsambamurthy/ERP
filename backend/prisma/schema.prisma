@@ -123,6 +123,12 @@ model Organization {
   // poApprovalThreshold above. Null means "always require manual
   // approval". See routes/salesOrders.ts POST /:id/submit.
   soApprovalThreshold     Decimal?  @map("so_approval_threshold") @db.Decimal(14, 2)
+  // May a Sales Invoice be raised against stock the branch does not
+  // hold? Off for every organisation until somebody turns it on, and
+  // even then each invoice must ask for the override explicitly and give
+  // a reason - see migration_053 and lib/costing.ts. Refused under FIFO
+  // regardless, because the shortfall has no lot to come out of.
+  allowNegativeStock      Boolean   @default(false) @map("allow_negative_stock")
   createdAt               DateTime  @default(now()) @map("created_at")
   updatedAt               DateTime  @default(now()) @updatedAt @map("updated_at")
   deletedAt               DateTime? @map("deleted_at")
@@ -684,6 +690,12 @@ model SalesInvoice {
   invoiceNumber     String   @map("invoice_number") @db.VarChar(30)
   invoiceDate       DateTime @map("invoice_date") @db.Date
   narration         String   @default("") @db.VarChar(255)
+  // Set only when this invoice used the negative-stock override. NULL on
+  // every other invoice, which makes it the filter for "show me every
+  // invoice that ever sold what we did not have". A sentence rather than
+  // a flag on purpose: the question asked three months later is why, and
+  // a boolean cannot answer it.
+  negativeStockReason String? @map("negative_stock_reason") @db.VarChar(200)
   journalEntryId    String   @unique @map("journal_entry_id") @db.Uuid
   // Gross, pre-discount total (sum of qty*rate across lines) — Sales
   // Revenue posts here (gross method). Grand Total is still what the

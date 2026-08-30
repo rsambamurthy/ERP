@@ -2458,11 +2458,401 @@
   "note": "March is before the organisation traded. A return for an empty period is a legitimate question with a legitimate answer - nil - and a report that threw, or omitted the sections, would be unusable for the first month of any business and for any month a branch happened to be idle."
  },
  {
+  "key": "STK-36.1",
+  "caseId": "STK-36",
+  "caseTitle": "Two locks, and neither one opens the door on its own",
+  "action": "An item with four on hand, and a promise to sell ten.",
+  "phase": 18,
+  "login": "A",
+  "method": "POST",
+  "path": "/items",
+  "body": {
+   "sku": "NEG-TEST",
+   "name": "Sold short (negative stock test)",
+   "itemKind": "STOCK",
+   "stockAccountId": "{{ACC_1201_A}}",
+   "hsnCode": "84821010",
+   "taxRate": 18,
+   "openingQuantity": 4,
+   "openingCost": 500,
+   "openingBranchId": "{{BR_A_CHN}}",
+   "openingDate": "2026-04-01"
+  },
+  "status": 201,
+  "capture": {
+   "itemId": "data.id"
+  },
+  "asserts": [
+   "GET /inventory/valuation :: field data.rows[item.sku=NEG-TEST].quantityOnHand = 4",
+   "GET /inventory/valuation :: field data.rows[item.sku=NEG-TEST].value = 2000.00"
+  ],
+  "auto": "YES",
+  "note": "Its own item, touched by nothing else in the pack, so the negative balance this batch leaves behind cannot be confused with any other case's arithmetic. Four units at 500.00 each - the average that the shortfall will later be costed at, which is the whole question the override has to answer."
+ },
+ {
+  "key": "STK-36.2",
+  "caseId": "STK-36",
+  "caseTitle": "Two locks, and neither one opens the door on its own",
+  "action": "Sell ten without asking for anything. Refused, as always.",
+  "phase": 18,
+  "login": "A",
+  "method": "POST",
+  "path": "/sales-invoices",
+  "body": {
+   "businessPartnerId": "{{CUST_TN}}",
+   "invoiceDate": "2026-04-28",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{STK-36.itemId}}",
+     "quantity": 10,
+     "rate": 900,
+     "taxRate": 18
+    }
+   ]
+  },
+  "status": 409,
+  "asserts": [
+   "error contains \"Only 4 in stock at this branch\""
+  ],
+  "auto": "YES",
+  "note": "THE BASELINE, and it has to be asserted or the rest of the batch proves nothing. Every invoice that does not explicitly ask for the override behaves exactly as it did before this feature existed. If this step ever passes with a 201, the override has stopped being an override and become the default."
+ },
+ {
+  "key": "STK-36.3",
+  "caseId": "STK-36",
+  "caseTitle": "Two locks, and neither one opens the door on its own",
+  "action": "Ask for the override while the organisation forbids it.",
+  "phase": 18,
+  "login": "A",
+  "method": "POST",
+  "path": "/sales-invoices",
+  "body": {
+   "businessPartnerId": "{{CUST_TN}}",
+   "invoiceDate": "2026-04-28",
+   "branchId": "{{BR_A_CHN}}",
+   "allowNegativeStock": true,
+   "negativeStockReason": "Goods shipped, bill not entered",
+   "lines": [
+    {
+     "itemId": "{{STK-36.itemId}}",
+     "quantity": 10,
+     "rate": 900,
+     "taxRate": 18
+    }
+   ]
+  },
+  "status": 403,
+  "asserts": [
+   "error contains \"does not allow invoicing stock it does not hold\"",
+   "sql \"SELECT allow_negative_stock FROM organizations WHERE id={{ORG_A}}\" = false"
+  ],
+  "auto": "YES",
+  "note": "THE FIRST LOCK. The document asked, correctly and with a reason, and it is still refused - because the organisation has never said this is allowed. allow_negative_stock defaults to false, so this is what every organisation that exists today does, and nothing about this release changes that for any of them until somebody makes a decision."
+ },
+ {
+  "key": "STK-36.4",
+  "caseId": "STK-36",
+  "caseTitle": "Two locks, and neither one opens the door on its own",
+  "action": "An administrator turns it on.",
+  "phase": 18,
+  "login": "A",
+  "method": "PATCH",
+  "path": "/company-master",
+  "body": {
+   "allowNegativeStock": true
+  },
+  "status": 200,
+  "asserts": [
+   "field data.allowNegativeStock = true",
+   "sql \"SELECT allow_negative_stock FROM organizations WHERE id={{ORG_A}}\" = true"
+  ],
+  "auto": "YES",
+  "note": "Company Master, beside the costing method and the approval thresholds, because it is the same kind of decision: a standing rule about how this organisation's documents behave, made once by somebody entitled to make it. Not a checkbox on the invoice screen."
+ },
+ {
+  "key": "STK-36.5",
+  "caseId": "STK-36",
+  "caseTitle": "Two locks, and neither one opens the door on its own",
+  "action": "With it on, an override still needs a reason.",
+  "phase": 18,
+  "login": "A",
+  "method": "POST",
+  "path": "/sales-invoices",
+  "body": {
+   "businessPartnerId": "{{CUST_TN}}",
+   "invoiceDate": "2026-04-28",
+   "branchId": "{{BR_A_CHN}}",
+   "allowNegativeStock": true,
+   "lines": [
+    {
+     "itemId": "{{STK-36.itemId}}",
+     "quantity": 10,
+     "rate": 900,
+     "taxRate": 18
+    }
+   ]
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"negativeStockReason is required\""
+  ],
+  "auto": "YES",
+  "note": "The reason is the only part of this that is any use later. 'Why is this item at minus six' is asked months afterwards by somebody reconciling stock, and a boolean cannot answer it. Refusing here rather than storing an empty string keeps the exception report worth reading - a list of overrides with no reasons on them is a list nobody acts on."
+ },
+ {
+  "key": "STK-36.6",
+  "caseId": "STK-36",
+  "caseTitle": "Two locks, and neither one opens the door on its own",
+  "action": "Both locks open, and the invoice posts.",
+  "phase": 18,
+  "login": "A",
+  "je": [
+   {
+    "code": "1005",
+    "name": "Accounts Receivable (customer)",
+    "debit": 10620,
+    "credit": 0
+   },
+   {
+    "code": "5001",
+    "name": "Sales Revenue",
+    "debit": 0,
+    "credit": 9000
+   },
+   {
+    "code": "2102",
+    "name": "CGST Output Payable",
+    "debit": 0,
+    "credit": 810
+   },
+   {
+    "code": "2103",
+    "name": "SGST Output Payable",
+    "debit": 0,
+    "credit": 810
+   },
+   {
+    "code": "4001",
+    "name": "Cost of Goods Sold",
+    "debit": 5000,
+    "credit": 0
+   },
+   {
+    "code": "1201",
+    "name": "Inventory (NEG-TEST card)",
+    "debit": 0,
+    "credit": 5000
+   }
+  ],
+  "method": "POST",
+  "path": "/sales-invoices",
+  "body": {
+   "businessPartnerId": "{{CUST_TN}}",
+   "invoiceDate": "2026-04-28",
+   "branchId": "{{BR_A_CHN}}",
+   "allowNegativeStock": true,
+   "negativeStockReason": "Goods shipped, purchase bill not yet entered",
+   "lines": [
+    {
+     "itemId": "{{STK-36.itemId}}",
+     "quantity": 10,
+     "rate": 900,
+     "taxRate": 18
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "invId": "data.id"
+  },
+  "asserts": [
+   "field data.totalCogs = 5000.00",
+   "journal sales_invoice {{invId}}"
+  ],
+  "auto": "YES",
+  "note": "COGS IS 5,000.00 - ten units at the 500.00 average, including the six the branch never had. That is the only defensible cost available and it is still a forecast: when the real purchase lands at 520.00 or at 480.00, the margin posted on this invoice is already wrong and nothing goes back to correct it. Asserting 10 x 500.00 rather than 4 x 500.00 is the point - a system that costed only what it held would post 2,000.00 of COGS against 9,000.00 of revenue and report a margin that never existed."
+ },
+ {
+  "key": "STK-36.7",
+  "caseId": "STK-36",
+  "caseTitle": "Two locks, and neither one opens the door on its own",
+  "action": "What it left behind, in three places that must agree.",
+  "phase": 18,
+  "login": "A",
+  "asserts": [
+   "GET /inventory/valuation :: field data.rows[item.sku=NEG-TEST].quantityOnHand = -6",
+   "GET /inventory/valuation :: field data.rows[item.sku=NEG-TEST].averageCost = 500.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN business_partners p ON p.id=l.business_partner_id WHERE e.organization_id={{ORG_A}} AND p.bp_type='ITEM' AND p.name='Sold short (negative stock test)'\" = -3000.00",
+   "sql \"SELECT negative_stock_reason FROM sales_invoices WHERE id={{STK-36.invId}}\" = Goods shipped, purchase bill not yet entered"
+  ],
+  "auto": "YES",
+  "note": "MINUS SIX UNITS, MINUS 3,000.00 ON THE CARD, and the two tie: 2,000.00 in less 5,000.00 out. The average is untouched at 500.00, because consumption never moves it - which matters here, since it is the rate the next six units will be costed at too if somebody sells short again before receiving any. THE CARD BEING IN CREDIT IS THE REAL COST OF THIS FEATURE. 1201 is an asset control account, and on a Schedule III balance sheet this reads as negative inventory, which AS 2 does not contemplate and an auditor will ask about. The reason column is what they will be asked to look at."
+ },
+ {
+  "key": "STK-36.8",
+  "caseId": "STK-36",
+  "caseTitle": "Two locks, and neither one opens the door on its own",
+  "action": "An invoice that asked for the override but did not need it.",
+  "phase": 18,
+  "login": "A",
+  "method": "POST",
+  "path": "/sales-invoices",
+  "body": {
+   "businessPartnerId": "{{CUST_TN}}",
+   "invoiceDate": "2026-04-29",
+   "branchId": "{{BR_A_CHN}}",
+   "allowNegativeStock": true,
+   "negativeStockReason": "Asked for, not needed",
+   "lines": [
+    {
+     "itemId": "{{STK-01.itemId}}",
+     "quantity": 1,
+     "rate": 900,
+     "taxRate": 18
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "plainId": "data.id"
+  },
+  "asserts": [
+   "sql \"SELECT negative_stock_reason FROM sales_invoices WHERE id={{STK-36.plainId}}\" = null",
+   "GET /inventory/valuation :: field data.rows[item.sku=OPEN-TEST].quantityOnHand = 9"
+  ],
+  "auto": "YES",
+  "note": "OPEN-TEST has ten on hand, so nothing went negative and NO reason is recorded, even though the request carried one. 'Was the override allowed' and 'was the override used' are different questions, and only the second belongs on an exception report - otherwise a cautious operator who ticks the box on every invoice fills that report with documents that never sold anything they did not have. consumeStock returns wentNegative for exactly this. OPEN-TEST RATHER THAN BRG-6205, and the reason is worth recording: BRG-6205's average is 219.7059 to four places, so selling ONE unit posts COGS of round2(219.7059) = 219.71 while the valuation keeps 79 x 219.7059 = 17,356.7661 and reports 17,356.77. A single paisa apart, and it broke STK-30.2 - not because anything here is wrong, but because a step meant to prove one thing was quietly also a rounding test. OPEN-TEST's average is exactly 500.00, so this step tests only what it claims to. The paisa is real and is its own open question."
+ },
+ {
+  "key": "STK-36.9",
+  "caseId": "STK-36",
+  "caseTitle": "Two locks, and neither one opens the door on its own",
+  "action": "Turn it off again, and the door shuts.",
+  "phase": 18,
+  "login": "A",
+  "method": "PATCH",
+  "path": "/company-master",
+  "body": {
+   "allowNegativeStock": false
+  },
+  "status": 200,
+  "asserts": [
+   "field data.allowNegativeStock = false"
+  ],
+  "auto": "YES",
+  "note": "Put back inside the batch that turned it on, so nothing downstream inherits an organisation with the override live. The negative BALANCE is deliberately left where it is - see the header - because STK-30.2 comparing the 1201 ledger to the valuation report with a negative item in the mix is a stronger control than the same comparison without one."
+ },
+ {
+  "key": "STK-36.10",
+  "caseId": "STK-36",
+  "caseTitle": "Two locks, and neither one opens the door on its own",
+  "action": "And the same invoice is refused again.",
+  "phase": 18,
+  "login": "A",
+  "method": "POST",
+  "path": "/sales-invoices",
+  "body": {
+   "businessPartnerId": "{{CUST_TN}}",
+   "invoiceDate": "2026-04-30",
+   "branchId": "{{BR_A_CHN}}",
+   "allowNegativeStock": true,
+   "negativeStockReason": "Should not be allowed now",
+   "lines": [
+    {
+     "itemId": "{{STK-36.itemId}}",
+     "quantity": 5,
+     "rate": 900,
+     "taxRate": 18
+    }
+   ]
+  },
+  "status": 403,
+  "asserts": [
+   "error contains \"does not allow invoicing stock it does not hold\"",
+   "GET /inventory/valuation :: field data.rows[item.sku=NEG-TEST].quantityOnHand = -6"
+  ],
+  "auto": "YES",
+  "note": "The other direction, which is what makes STK-36.6 a test rather than a coincidence: a system that had simply stopped checking would have passed every step up to here and failed this one. The balance is still exactly minus six, so the refusal wrote nothing - a rejected invoice that had already consumed stock would be a worse defect than the one this feature was built for."
+ },
+ {
+  "key": "STK-37.1",
+  "caseId": "STK-37",
+  "caseTitle": "FIFO refuses even with both locks open",
+  "action": "Allow it in ORG-B, which costs by FIFO.",
+  "phase": 18,
+  "login": "B",
+  "method": "PATCH",
+  "path": "/company-master",
+  "body": {
+   "allowNegativeStock": true
+  },
+  "status": 200,
+  "asserts": [
+   "field data.allowNegativeStock = true",
+   "sql \"SELECT costing_method FROM organizations WHERE id={{ORG_B}}\" = FIFO"
+  ],
+  "auto": "YES",
+  "note": "The second assertion is the one that makes the next step mean anything. If ORG-B ever stopped being a FIFO organisation, STK-37.2 would go on passing for entirely the wrong reason - refused because there was no stock rather than refused because there was no lot."
+ },
+ {
+  "key": "STK-37.2",
+  "caseId": "STK-37",
+  "caseTitle": "FIFO refuses even with both locks open",
+  "action": "Sell short anyway. Still refused, and it says why.",
+  "phase": 18,
+  "login": "B",
+  "method": "POST",
+  "path": "/sales-invoices",
+  "body": {
+   "businessPartnerId": "{{CUST_TN_B}}",
+   "invoiceDate": "2026-06-10",
+   "branchId": "{{BR_B_CHN}}",
+   "allowNegativeStock": true,
+   "negativeStockReason": "Should be refused - FIFO",
+   "lines": [
+    {
+     "itemId": "{{ITM_P1_B}}",
+     "quantity": 9999,
+     "rate": 1200,
+     "taxRate": 18
+    }
+   ]
+  },
+  "status": 409,
+  "asserts": [
+   "error contains \"not under FIFO\"",
+   "sql \"SELECT count(*) FROM sales_invoices WHERE organization_id={{ORG_B}} AND invoice_date='2026-06-10'\" = 0"
+  ],
+  "auto": "YES",
+  "note": "THE LIMIT OF THE FEATURE, and it is a design decision rather than an unfinished edge. Weighted average can always say what a unit cost on the way out: the stored average, computed from receipts that really happened. FIFO's answer is a LOT, and for the shortfall there is no lot - nothing was received, so there is nothing to consume from. Inventing one means inventing a cost AND a date, then reconciling it against whatever actually arrives later, which is a different feature with its own failure modes. The message says 'not under FIFO' rather than 'insufficient stock' so that somebody who has just switched the setting on is told the real reason instead of hunting for a lock they have already opened. And nothing was written: no invoice on that date."
+ },
+ {
+  "key": "STK-37.3",
+  "caseId": "STK-37",
+  "caseTitle": "FIFO refuses even with both locks open",
+  "action": "Put ORG-B back.",
+  "phase": 18,
+  "login": "B",
+  "method": "PATCH",
+  "path": "/company-master",
+  "body": {
+   "allowNegativeStock": false
+  },
+  "status": 200,
+  "asserts": [
+   "field data.allowNegativeStock = false",
+   "sql \"SELECT count(*) FROM organizations WHERE allow_negative_stock = true AND id IN ({{ORG_A}}, {{ORG_B}})\" = 0"
+  ],
+  "auto": "YES",
+  "note": "Both organisations back to the default, asserted together rather than one at a time - the batch turned the setting on in two places and a restore that missed one would leave the next run starting somewhere different from where this one did."
+ },
+ {
   "key": "STK-33.1",
   "caseId": "STK-33",
   "caseTitle": "A module nobody recorded is not a module anybody withdrew",
   "action": "Take ORG-A's BOM row away entirely - not cancel it, remove it.",
-  "phase": 19,
+  "phase": 20,
   "login": "A",
   "asserts": [
    "sql \"DELETE FROM org_modules WHERE organization_id={{ORG_A}} AND module_id=(SELECT id FROM modules WHERE code='BOM')\" = 1",
@@ -2477,7 +2867,7 @@
   "caseId": "STK-33",
   "caseTitle": "A module nobody recorded is not a module anybody withdrew",
   "action": "With no row at all, the BOM endpoint still answers.",
-  "phase": 19,
+  "phase": 20,
   "login": "A",
   "method": "GET",
   "path": "/production-orders",
@@ -2490,7 +2880,7 @@
   "caseId": "STK-33",
   "caseTitle": "A module nobody recorded is not a module anybody withdrew",
   "action": "Put the row back before anything else runs.",
-  "phase": 19,
+  "phase": 20,
   "login": "A",
   "asserts": [
    "sql \"INSERT INTO org_modules (organization_id, module_id) SELECT {{ORG_A}}, id FROM modules WHERE code='BOM'\" = 1",
@@ -2504,7 +2894,7 @@
   "caseId": "STK-34",
   "caseTitle": "A withdrawn module is refused, and the books are not",
   "action": "Withdraw ORG-A's Inventory subscription.",
-  "phase": 19,
+  "phase": 20,
   "login": "A",
   "asserts": [
    "sql \"UPDATE org_modules SET status='CANCELLED' WHERE organization_id={{ORG_A}} AND module_id=(SELECT id FROM modules WHERE code='INVENTORY')\" = 1"
@@ -2517,7 +2907,7 @@
   "caseId": "STK-34",
   "caseTitle": "A withdrawn module is refused, and the books are not",
   "action": "The stock ledger is refused, with a status somebody can act on.",
-  "phase": 19,
+  "phase": 20,
   "login": "A",
   "method": "GET",
   "path": "/inventory/stock-ledger?itemId={{ITM_BRG_A}}",
@@ -2533,7 +2923,7 @@
   "caseId": "STK-34",
   "caseTitle": "A withdrawn module is refused, and the books are not",
   "action": "So are adjustments, transfers and valuation.",
-  "phase": 19,
+  "phase": 20,
   "login": "A",
   "method": "GET",
   "path": "/stock-transfers",
@@ -2546,7 +2936,7 @@
   "caseId": "STK-34",
   "caseTitle": "A withdrawn module is refused, and the books are not",
   "action": "The BOOKS are untouched. This is the half that matters.",
-  "phase": 19,
+  "phase": 20,
   "login": "A",
   "method": "GET",
   "path": "/journal",
@@ -2559,7 +2949,7 @@
   "caseId": "STK-34",
   "caseTitle": "A withdrawn module is refused, and the books are not",
   "action": "It can still buy, sell and file.",
-  "phase": 19,
+  "phase": 20,
   "login": "A",
   "method": "GET",
   "path": "/purchase-bills",
@@ -2572,7 +2962,7 @@
   "caseId": "STK-34",
   "caseTitle": "A withdrawn module is refused, and the books are not",
   "action": "The item master stays open, because SERVICE items live there.",
-  "phase": 19,
+  "phase": 20,
   "login": "A",
   "method": "GET",
   "path": "/items",
@@ -2585,7 +2975,7 @@
   "caseId": "STK-34",
   "caseTitle": "A withdrawn module is refused, and the books are not",
   "action": "A SERVICE item can still be created; a STOCK item cannot.",
-  "phase": 19,
+  "phase": 20,
   "login": "A",
   "method": "POST",
   "path": "/items",
@@ -2610,7 +3000,7 @@
   "caseId": "STK-34",
   "caseTitle": "A withdrawn module is refused, and the books are not",
   "action": "The service half of that same pair.",
-  "phase": 19,
+  "phase": 20,
   "login": "A",
   "method": "POST",
   "path": "/items",
@@ -2634,7 +3024,7 @@
   "caseId": "STK-35",
   "caseTitle": "Restoring the grant restores the access",
   "action": "Reinstate the subscription.",
-  "phase": 19,
+  "phase": 20,
   "login": "A",
   "asserts": [
    "sql \"UPDATE org_modules SET status='ACTIVE' WHERE organization_id={{ORG_A}} AND module_id=(SELECT id FROM modules WHERE code='INVENTORY')\" = 1"
@@ -2647,7 +3037,7 @@
   "caseId": "STK-35",
   "caseTitle": "Restoring the grant restores the access",
   "action": "And the stock ledger answers again.",
-  "phase": 19,
+  "phase": 20,
   "login": "A",
   "method": "GET",
   "path": "/inventory/stock-ledger?itemId={{ITM_BRG_A}}",
@@ -2660,7 +3050,7 @@
   "caseId": "STK-35",
   "caseTitle": "Restoring the grant restores the access",
   "action": "Nothing else was changed on the way through.",
-  "phase": 19,
+  "phase": 20,
   "login": "A",
   "asserts": [
    "sql \"SELECT count(*) FROM org_modules om JOIN modules m ON m.id=om.module_id WHERE om.organization_id={{ORG_A}} AND m.code='BOM'\" = 1",
@@ -3037,7 +3427,7 @@
   "caseId": "STK-30",
   "caseTitle": "Stock valuation ties to the ledger",
   "action": "Read the ledger balance on 1201 for ORG-A.",
-  "phase": 18,
+  "phase": 19,
   "login": "A",
   "asserts": [
    "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='1201'\" capture led1201"
@@ -3049,7 +3439,7 @@
   "caseId": "STK-30",
   "caseTitle": "Stock valuation ties to the ledger",
   "action": "Compare it to the valuation report.",
-  "phase": 18,
+  "phase": 19,
   "login": "A",
   "method": "GET",
   "path": "/inventory/valuation",
@@ -3058,14 +3448,14 @@
    "field sum(data.rows[stockAccount.accountCode=1201].value) = {{led1201}}"
   ],
   "auto": "YES",
-  "note": "THE HEADLINE CONTROL: stock on the report equals stock in the accounts, 22,576.47 either way - BRG-6205 at 17,576.47 after the sales return, plus OPEN-TEST at 5,000.00. Before this batch it failed by 5,352.94, and that number is the whole reason to run it: 5,000.00 of opening stock sat on the report with nothing behind it in the ledger, and 352.94 was the purchase return leaving the ledger at the bill rate while the valuation moved at the average. Two independent defects, and only this one step said anything was wrong. It read 20,376.47 while it sat in phase 9, because it ran before the sales return - see the note above."
+  "note": "THE HEADLINE CONTROL: stock on the report equals stock in the accounts, whatever that figure happens to be - which is why it is CAPTURED in the step above rather than written here. It now has three items in it: BRG-6205 at 17,576.47 after the sales return, OPEN-TEST at 4,500.00 after STK-36.8 sold one unit, and NEG-TEST at MINUS 3,000.00. The negative row is the strongest part of this control and it is deliberate: a valuation report that quietly dropped negative balances, or a ledger that did, would break this tie and nothing else in the pack would notice. Before this batch it failed by 5,352.94, and that number is the whole reason to run it: 5,000.00 of opening stock sat on the report with nothing behind it in the ledger, and 352.94 was the purchase return leaving the ledger at the bill rate while the valuation moved at the average. Two independent defects, and only this one step said anything was wrong. It read 20,376.47 while it sat in phase 9, because it ran before the sales return - see the note above."
  },
  {
   "key": "STK-30.3",
   "caseId": "STK-30",
   "caseTitle": "Stock valuation ties to the ledger",
   "action": "Check the WIP and in-transit control accounts are flat.",
-  "phase": 18,
+  "phase": 19,
   "login": "A",
   "asserts": [
    "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='1302'\" = 0",
@@ -3079,7 +3469,7 @@
   "caseId": "STK-30",
   "caseTitle": "Stock valuation ties to the ledger",
   "action": "Prove the whole ledger balances, in both organisations.",
-  "phase": 18,
+  "phase": 19,
   "login": "A",
   "asserts": [
    "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id WHERE e.organization_id={{ORG_A}}\" = 0",
@@ -3093,7 +3483,7 @@
   "caseId": "STK-30",
   "caseTitle": "Stock valuation ties to the ledger",
   "action": "The manufacturing accounts tie too, not just 1201.",
-  "phase": 18,
+  "phase": 19,
   "login": "A",
   "method": "GET",
   "path": "/inventory/valuation",
@@ -3112,7 +3502,7 @@
   "caseId": "STK-30",
   "caseTitle": "Stock valuation ties to the ledger",
   "action": "And the abnormal loss is where it should be.",
-  "phase": 18,
+  "phase": 19,
   "login": "A",
   "asserts": [
    "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='4003'\" = 2250.00",
@@ -3126,7 +3516,7 @@
   "caseId": "STK-30",
   "caseTitle": "Stock valuation ties to the ledger",
   "action": "Check each item card against its stock value.",
-  "phase": 18,
+  "phase": 19,
   "login": "A",
   "asserts": [
    "manual: drill into 1201 / 1301 / 1303 in the UI and compare each ITEM card to that item's quantity x average cost, per branch. Under FIFO compare it to the sum of quantity remaining x unit cost across that item's open lots instead."

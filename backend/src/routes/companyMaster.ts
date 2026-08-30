@@ -30,7 +30,7 @@ router.get("/", async (req, res) => {
     select: {
       id: true, name: true, cin: true, companyPan: true, companyType: true,
       incorporationDate: true, registeredOfficeAddress: true, poApprovalThreshold: true,
-      priceVarianceTolerancePct: true, soApprovalThreshold: true,
+      priceVarianceTolerancePct: true, soApprovalThreshold: true, allowNegativeStock: true,
     },
   });
   if (!org) return res.status(404).json({ message: "Organization not found." });
@@ -51,6 +51,7 @@ router.patch("/", canManageCompany, async (req, res) => {
   const {
     cin, companyPan, companyType, incorporationDate, registeredOfficeAddress,
     poApprovalThreshold, priceVarianceTolerancePct, soApprovalThreshold,
+    allowNegativeStock,
   } = req.body ?? {};
   if (poApprovalThreshold !== undefined && poApprovalThreshold !== null && !(Number(poApprovalThreshold) >= 0)) {
     return res.status(400).json({ message: "poApprovalThreshold must be a non-negative number, or null." });
@@ -85,11 +86,22 @@ router.patch("/", canManageCompany, async (req, res) => {
       // Organization.soApprovalThreshold. Same omit/null-clears convention
       // as poApprovalThreshold above.
       soApprovalThreshold: soApprovalThreshold != null ? Number(soApprovalThreshold) : null,
+      // May a Sales Invoice sell stock the branch does not hold? See
+      // migration_053. Follows this endpoint's omit-clears convention, and
+      // that convention is doing real work here: forgetting to send the
+      // field turns the override OFF, which is the safe direction to fail
+      // in. Only an explicit true enables it.
+      //
+      // Enabling it grants the POSSIBILITY, never the behaviour - every
+      // invoice still has to ask for the override by name and give a
+      // reason, so turning this on changes nothing about what any existing
+      // document does.
+      allowNegativeStock: allowNegativeStock === true,
     },
     select: {
       id: true, name: true, cin: true, companyPan: true, companyType: true,
       incorporationDate: true, registeredOfficeAddress: true, poApprovalThreshold: true,
-      priceVarianceTolerancePct: true, soApprovalThreshold: true,
+      priceVarianceTolerancePct: true, soApprovalThreshold: true, allowNegativeStock: true,
     },
   });
   logAudit({
