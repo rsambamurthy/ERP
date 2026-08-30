@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { prisma } from "../db";
-import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
+import { authenticate, requirePermission, requireActiveSubscription, requireModule, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { receiveStock } from "../lib/costing";
 import { upload } from "../lib/upload";
 import { buildTemplateWorkbook, loadUploadedWorksheet, cellText } from "../lib/xlsxTemplate";
+import { holdsModule } from "../lib/entitlements";
 
 // Posts an opening stock balance to the ledger.
 //
@@ -84,7 +85,11 @@ router.get("/costing-method", async (req, res) => {
 // Succeeds exactly once per org: every ItemStock/StockLot row that follows
 // is computed under this rule, so there's no well-defined way to migrate
 // an org's existing stock history from one method to the other later.
-router.post("/costing-method", canManageItems, async (req, res) => {
+// Weighted Average vs FIFO decides how STOCK is valued, so setting it is an
+// Inventory operation. Reading it above stays open: the gate screen asks
+// before it offers, and an organisation without Inventory should be told
+// "not set" rather than shown an error.
+router.post("/costing-method", canManageItems, requireModule("INVENTORY"), async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
   const { costingMethod } = req.body ?? {};
@@ -240,7 +245,10 @@ async function bomReaches(organizationId: string, startId: string, target: strin
 // production order actually charges is whatever consumeStock returns at the
 // moment the material is issued, which is a different number on a different
 // day. Saying so on the screen matters more than the figure itself.
-router.get("/:id/bom", async (req, res) => {
+// A BOM belongs to the Bill of Materials module, not to Items. The Items
+// master itself is deliberately ungated - a SERVICE item is the one master
+// an organisation without stock needs most, and it lives here.
+router.get("/:id/bom", requireModule("BOM"), async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
 
@@ -305,7 +313,7 @@ router.get("/:id/bom", async (req, res) => {
 // when the order is opened and then keeps its own component lines, so editing
 // the recipe afterwards never reaches back into an order already running —
 // the same snapshot rule the fixed asset register uses.
-router.put("/:id/bom", canManageItems, async (req, res) => {
+router.put("/:id/bom", canManageItems, requireModule("BOM"), async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
 
@@ -475,9 +483,35 @@ router.post("/", canManageItems, async (req, res) => {
     return res.status(400).json({ message: "sku, name, and stockAccountId are required." });
   }
 
-  const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { costingMethod: true } });
-  if (!org?.costingMethod) {
-    return res.status(422).json({ message: "Set the organization's stock costing method before adding items." });
+  // Declared out here because the opening-stock block far below needs it.
+  // Null for a SERVICE item, and that block cannot run for one: qty is
+  // forced to 0 a few lines down for SERVICE, and the block is guarded on
+  // qty > 0. So the non-null assertion at its only use site is carried by
+  // this comment rather than by hope.
+  let costingMethod: string | null = null;
+
+  // BOTH CHECKS BELOW ARE STOCK-ONLY, and that is the fix rather than an
+  // optimisation. A SERVICE item holds no stock: it has no cost layers for a
+  // costing method to govern and nothing for the Inventory module to move.
+  // It debits an expense head and that is the whole of it.
+  //
+  // Requiring a costing method for EVERY item meant an organisation with no
+  // inventory could not create the one kind of item it actually needs, and
+  // gating POST /costing-method on INVENTORY - as this change does - would
+  // have made that permanent: no method may be set, so no item may be
+  // created, so no purchase bill may be raised. The books would have been
+  // shut by an entitlement about stock.
+  if (kind === "STOCK") {
+    if (!(await holdsModule(organizationId, "INVENTORY"))) {
+      return res.status(402).json({
+        message: "This organization's Inventory subscription is not active — only service items can be added.",
+      });
+    }
+    const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { costingMethod: true } });
+    if (!org?.costingMethod) {
+      return res.status(422).json({ message: "Set the organization's stock costing method before adding items." });
+    }
+    costingMethod = org.costingMethod;
   }
 
   // stockAccountId means different things per kind — a stock control
@@ -557,7 +591,7 @@ router.post("/", canManageItems, async (req, res) => {
       const when = openingDate ? new Date(openingDate) : new Date();
       await receiveStock(tx, {
         organizationId, branchId: resolvedOpeningBranchId!, itemId: created.id,
-        quantity: qty, unitCost: cost, costingMethod: org.costingMethod!,
+        quantity: qty, unitCost: cost, costingMethod: costingMethod!,
         movementType: "ADJUSTMENT_IN", referenceType: "item_opening_balance", referenceId: created.id,
         movementDate: when,
         narration: "Opening stock",
@@ -685,14 +719,18 @@ interface ItemPreviewRow {
   error?: string;
 }
 
-router.get("/bulk-upload/template", canManageItems, async (req, res) => {
+// The whole bulk-upload feature resolves item CONTROL accounts, so every
+// row it creates is a STOCK item. Gated at the template rather than only at
+// apply: being refused before you fill a spreadsheet in is kinder than
+// being refused after.
+router.get("/bulk-upload/template", canManageItems, requireModule("INVENTORY"), async (req, res) => {
   const buffer = await buildTemplateWorkbook("Items", ITEM_COLUMNS);
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition", 'attachment; filename="SmartERP_Items_Template.xlsx"');
   res.send(buffer);
 });
 
-router.post("/bulk-upload/preview", canManageItems, upload.single("file"), async (req, res) => {
+router.post("/bulk-upload/preview", canManageItems, requireModule("INVENTORY"), upload.single("file"), async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
   if (!req.file) return res.status(400).json({ message: "No file uploaded." });
@@ -773,7 +811,7 @@ router.post("/bulk-upload/preview", canManageItems, upload.single("file"), async
   res.json({ data: preview });
 });
 
-router.post("/bulk-upload/apply", canManageItems, async (req, res) => {
+router.post("/bulk-upload/apply", canManageItems, requireModule("INVENTORY"), async (req, res) => {
   const organizationId = orgIdOr400(req, res);
   if (!organizationId) return;
   const rows: ItemPreviewRow[] = Array.isArray(req.body?.rows) ? req.body.rows : [];

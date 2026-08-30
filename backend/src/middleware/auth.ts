@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { verifyToken, AuthTokenPayload } from "../lib/jwt";
 import { prisma } from "../db";
 import { Permission, builtInPermissions } from "../lib/permissions";
+import { ModuleCode, holdsModule } from "../lib/entitlements";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -118,6 +119,48 @@ export async function requireActiveSubscription(req: Request, res: Response, nex
   }
   next();
 }
+
+// The module entitlement guard. requireActiveSubscription() above asks
+// whether the ORGANISATION and the USER are active; this asks whether the
+// organisation still holds the module the route belongs to.
+//
+// Until this existed, cancelling a subscription in the platform admin
+// console wrote CANCELLED to org_modules and nothing consulted it - the
+// screens stayed in the menu and the endpoints kept serving. The console
+// reported a state the API did not honour.
+//
+// 402 rather than 403 on purpose. 403 says "you are not allowed to do
+// this", which a user cannot act on; 402 Payment Required says the
+// organisation's entitlement is the problem, which is a thing somebody can
+// go and fix. Same status requireActiveSubscription() already uses for a
+// suspended subscription, for the same reason.
+//
+// WHAT THIS DELIBERATELY DOES NOT GATE: /items, /purchase-bills,
+// /sales-invoices, /journal and the reports. An organisation that gives up
+// Inventory is giving up stock movement, not its books - it keeps buying,
+// selling, and filing, and it keeps the Items master because SERVICE items
+// live there too and are the one master a business without stock needs
+// most. Gate that and "we cancelled Inventory" becomes "the app stopped
+// working", which is not what anybody agreed to.
+export function requireModule(code: ModuleCode) {
+  return async function (req: Request, res: Response, next: NextFunction) {
+    if (req.user?.isPlatformAdmin) return next();
+    const organizationId = req.user?.organizationId;
+    if (!organizationId) return next();
+    if (await holdsModule(organizationId, code)) return next();
+    return res.status(402).json({
+      message: `This organization's ${MODULE_LABEL[code]} subscription is not active. Contact support.`,
+    });
+  };
+}
+
+const MODULE_LABEL: Record<ModuleCode, string> = {
+  ACCOUNTING: "Accounting",
+  SALES: "Sales",
+  PURCHASE: "Purchase",
+  INVENTORY: "Inventory",
+  BOM: "Bill of Materials",
+};
 
 // Every data-scoped route (accounts, business partners, journal, org users)
 // normally operates on the caller's own organizationId. A platform admin

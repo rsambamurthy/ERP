@@ -40,6 +40,22 @@ export interface NavGroup {
   label: string;
   icon: string;
   items: NavItem[];
+  /**
+   * The subscription module this whole group belongs to. Undefined means
+   * the group is part of the product rather than a module anybody can be
+   * without - Accounting, Configuration and the statutory reports are the
+   * books themselves, and an organisation that gives up Inventory still
+   * keeps them.
+   *
+   * Matched against the DENY list from login, never an allow list: a group
+   * disappears only when its module was explicitly withdrawn. See
+   * backend/src/lib/entitlements.ts for why round that way.
+   *
+   * Hiding is a courtesy, not a control. requireModule() on the matching
+   * routes is what actually refuses, exactly as requirePermission() is the
+   * authority behind `roles` and `permission` above.
+   */
+  module?: "ACCOUNTING" | "SALES" | "PURCHASE" | "INVENTORY" | "BOM";
 }
 
 export const NAV_GROUPS: NavGroup[] = [
@@ -89,6 +105,7 @@ export const NAV_GROUPS: NavGroup[] = [
     id: "inventory",
     label: "Inventory",
     icon: "I",
+    module: "INVENTORY",
     items: [
       { id: "stock_adjustments", label: "Stock Adjustments", path: "/inventory/adjustments", dot: "#dc2626", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "inventory.post" },
       { id: "stock_transfers", label: "Stock Transfers", path: "/inventory/stock-transfers", dot: "#0d9488", roles: ALL_ROLES },
@@ -100,6 +117,7 @@ export const NAV_GROUPS: NavGroup[] = [
     id: "manufacturing",
     label: "Manufacturing",
     icon: "M",
+    module: "BOM",
     items: [
       { id: "production_orders", label: "Production Orders", path: "/manufacturing/production-orders", dot: "#ea580c", roles: ALL_ROLES },
     ],

@@ -40,7 +40,8 @@ const PHASES: Record<string, string[]> = {
         "production - refusals, close and cancel",
         "transfers - untaxed, one registration", "transfers - taxable, both ways",
         "transfers - cancellation and refusals", "transfers - reconciliation",
-        "GST returns - GSTR-1 and GSTR-3B", "controls and reconciliation"],
+        "GST returns - GSTR-1 and GSTR-3B", "controls and reconciliation",
+        "module entitlement"],
 };
 
 interface Result {

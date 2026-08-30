@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../db";
-import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
+import { authenticate, requirePermission, requireActiveSubscription, requireModule, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { consumeStock, receiveStock, InsufficientStockError } from "../lib/costing";
 import { isInterState } from "../lib/discountGst";
@@ -68,7 +68,10 @@ import {
 //     a consecutive serial number; there is no sensible number to invent.
 
 const router = Router();
-router.use(authenticate, requireActiveSubscription);
+// Stock movement, valuation and the stock ledger are the Inventory
+// module itself. An organisation that has given it up keeps its books,
+// its bills and its invoices - it just stops moving stock.
+router.use(authenticate, requireActiveSubscription, requireModule("INVENTORY"));
 // Moves stock and writes journal entries — the same gate as a Stock
 // Adjustment and a production posting.
 const canPost = requirePermission("inventory.post");

@@ -10,6 +10,9 @@
 // stkCasesC.mjs is batch 2, production orders, phases 10 to 12.
 // stkCasesD.mjs is batch 3, branch transfers in ORG-B, phases 13 to 16.
 // stkCasesE.mjs is batch 4, the GST returns in ORG-B, phase 17.
+// stkCasesF.mjs is module entitlement, phase 19 - the only batch that runs
+// AFTER the controls, because it posts nothing and puts back the one
+// column it changes.
 // This file is phases 7 to 9, and the controls, which stay last at 18.
 
 import { C, je, adj, L, val, SQL, CAP, bal, card, writeCases } from "./stkPack.mjs";
@@ -17,6 +20,7 @@ import "./stkCasesA.mjs";
 import "./stkCasesC.mjs";
 import "./stkCasesD.mjs";
 import "./stkCasesE.mjs";
+import "./stkCasesF.mjs";
 
 const T8 = "FIFO consumes the oldest layer first";
 C("STK-08.1", T8, "Lay down layer 1.", 7, {

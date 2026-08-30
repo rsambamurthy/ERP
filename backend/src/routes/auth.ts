@@ -5,6 +5,7 @@ import { hashPassword, verifyPassword } from "../lib/password";
 import { generateOtp, otpExpiry, sendOtp } from "../lib/otp";
 import { signToken } from "../lib/jwt";
 import { builtInPermissions, Permission } from "../lib/permissions";
+import { deniedModuleCodes } from "../lib/entitlements";
 
 const router = Router();
 
@@ -48,10 +49,23 @@ async function buildLoginResponse(user: User & { orgUsers: OrgUser[] }) {
     customRoleId: orgUser.customRoleId, branchId: orgUser.branchId, isPlatformAdmin: false,
   });
   const permissions = await resolvePermissions(orgUser.role, orgUser.customRoleId);
+  // Modules this organisation has had WITHDRAWN — a deny list, never an
+  // allow list. See lib/entitlements.ts for why round that way. The sidebar
+  // uses it to stop offering screens the organisation no longer subscribes
+  // to; requireModule() is what actually refuses them, exactly as
+  // `permissions` above is a snapshot for the sidebar and requirePermission()
+  // is the enforcement.
+  //
+  // A SNAPSHOT, like permissions: cancelling a module while somebody is
+  // logged in does not change their menu until they next log in. The API
+  // refuses them from the moment it is cancelled, so the worst case is a
+  // menu item that returns a clear 402 rather than a screen they should not
+  // have reached.
+  const deniedModules = await deniedModuleCodes(orgUser.organizationId);
 
   return {
     token, organizationId: orgUser.organizationId, role: orgUser.role, isPlatformAdmin: false, name: user.name,
-    permissions, customRoleId: orgUser.customRoleId,
+    permissions, customRoleId: orgUser.customRoleId, deniedModules,
   };
 }
 

@@ -54,7 +54,9 @@ const MODULES = [
     blurb: "The costing chain on one item - found stock, purchase, sale, " +
            "shrinkage, a refused over-issue, both returns - plus FIFO in ORG-B " +
            "and the reconciliation controls. Production, transfers and the GST " +
-           "returns are batches 2 to 4." },
+           "returns are batches 2 to 4. The last phase is module entitlement: " +
+           "what an organisation loses when Inventory is cancelled, and what " +
+           "it must keep." },
 ];
 
 const orgs = read(".testorgs.json", null);

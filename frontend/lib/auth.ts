@@ -8,6 +8,11 @@ const ADMIN_KEY = "smarterp_admin";
 const NAME_KEY = "smarterp_name";
 const PERMISSIONS_KEY = "smarterp_permissions";
 const CUSTOM_ROLE_ID_KEY = "smarterp_custom_role_id";
+// Modules this org has had WITHDRAWN, from the login response. A DENY
+// list, never an allow list - see backend/src/lib/entitlements.ts. An org
+// with no org_modules rows at all (one provisioned before those rows were
+// written) yields [], which hides nothing, which is the point.
+const DENIED_MODULES_KEY = "smarterp_denied_modules";
 
 export function setSession(
   token: string,
@@ -16,7 +21,8 @@ export function setSession(
   isPlatformAdmin?: boolean,
   name?: string | null,
   permissions?: string[],
-  customRoleId?: string | null
+  customRoleId?: string | null,
+  deniedModules?: string[]
 ) {
   if (typeof window === "undefined") return;
   localStorage.setItem(TOKEN_KEY, token);
@@ -35,6 +41,21 @@ export function setSession(
   // specific custom role (see accessControl.ts's customRoleKey()).
   if (customRoleId) localStorage.setItem(CUSTOM_ROLE_ID_KEY, customRoleId);
   else localStorage.removeItem(CUSTOM_ROLE_ID_KEY);
+  localStorage.setItem(DENIED_MODULES_KEY, JSON.stringify(deniedModules ?? []));
+}
+
+// Which modules the sidebar must stop offering. Defaults to [] on anything
+// unreadable - a corrupt value should show too much, not lock somebody out
+// of their own books. The API refuses what it must regardless.
+export function getDeniedModules(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(DENIED_MODULES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((m) => typeof m === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 export function getName(): string | null {

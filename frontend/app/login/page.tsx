@@ -43,7 +43,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
 
   function loginSuccess(res: MpinLoginResponse) {
-    setSession(res.token, res.organizationId, res.role, res.isPlatformAdmin, res.name, res.permissions, res.customRoleId);
+    setSession(res.token, res.organizationId, res.role, res.isPlatformAdmin, res.name, res.permissions, res.customRoleId, res.deniedModules);
     router.push(res.isPlatformAdmin ? "/admin" : "/dashboard");
   }
 

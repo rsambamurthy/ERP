@@ -39,7 +39,7 @@ function AcceptInviteForm() {
     setError(null);
     try {
       const res = await acceptInvite(token, name, password, mpin || undefined);
-      setSession(res.token, res.organizationId, res.role, false, res.name, res.permissions, res.customRoleId);
+      setSession(res.token, res.organizationId, res.role, false, res.name, res.permissions, res.customRoleId, res.deniedModules);
       router.push("/dashboard");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong.");

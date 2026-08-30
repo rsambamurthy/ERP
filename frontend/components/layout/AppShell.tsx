@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { NAV_GROUPS, NavItem } from "./navGroups";
-import { canUseChatbot, clearSession, getCustomRoleId, getName, getPermissions, getRole, isLoggedIn, isPlatformAdmin } from "@/lib/auth";
+import { canUseChatbot, clearSession, getCustomRoleId, getDeniedModules, getName, getPermissions, getRole, isLoggedIn, isPlatformAdmin } from "@/lib/auth";
 import { getMenuConfig } from "@/lib/api";
 import type { MenuConfigMap } from "@/lib/types";
 import ChatWidget from "@/components/chatbot/ChatWidget";
@@ -82,10 +82,22 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return role ? item.roles.includes(role as any) : false;
   };
 
-  const allowedGroups = NAV_GROUPS.map((g) => ({
-    ...g,
-    items: g.items.filter((i) => isVisible(i)),
-  })).filter((g) => g.items.length > 0);
+  // A group whose module has been WITHDRAWN is not offered at all, before
+  // roles and permissions are considered - those answer "may this person",
+  // this answers "does this organisation have it". Absence of a module in
+  // the deny list means keep showing it, so an org with no org_modules rows
+  // sees exactly what it saw before this existed.
+  //
+  // Read once per render from the login snapshot, so cancelling a
+  // subscription reaches an already-open session only at next login. The
+  // API refuses immediately either way, so the gap shows a menu entry that
+  // returns a clear 402 rather than a screen nobody should reach.
+  const denied = getDeniedModules();
+  const allowedGroups = NAV_GROUPS.filter((g) => !g.module || !denied.includes(g.module))
+    .map((g) => ({
+      ...g,
+      items: g.items.filter((i) => isVisible(i)),
+    })).filter((g) => g.items.length > 0);
 
   const activeGroupId = allowedGroups.find((g) =>
     g.items.some((i) => pathname === i.path || pathname?.startsWith(i.path + "/"))

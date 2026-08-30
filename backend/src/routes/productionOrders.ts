@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../db";
-import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
+import { authenticate, requirePermission, requireActiveSubscription, requireModule, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { consumeStock, receiveStock, InsufficientStockError } from "../lib/costing";
 
@@ -36,7 +36,9 @@ import { consumeStock, receiveStock, InsufficientStockError } from "../lib/costi
 // enters the figure rather than trusting a rate table nobody maintains.
 
 const router = Router();
-router.use(authenticate, requireActiveSubscription);
+// Production consumes a BOM, so it belongs to that module rather than to
+// Inventory. An organisation can hold one without the other.
+router.use(authenticate, requireActiveSubscription, requireModule("BOM"));
 // Every posting here writes a journal entry and moves stock, which is the
 // same gate a Stock Adjustment uses.
 const canPost = requirePermission("inventory.post");

@@ -1,9 +1,12 @@
 import { Router } from "express";
 import { prisma } from "../db";
-import { authenticate, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
+import { authenticate, requireActiveSubscription, requireModule, resolveOrgId } from "../middleware/auth";
 
 const router = Router();
-router.use(authenticate, requireActiveSubscription);
+// Stock movement, valuation and the stock ledger are the Inventory
+// module itself. An organisation that has given it up keeps its books,
+// its bills and its invoices - it just stops moving stock.
+router.use(authenticate, requireActiveSubscription, requireModule("INVENTORY"));
 
 function orgIdOr400(req: import("express").Request, res: import("express").Response): string | null {
   const organizationId = resolveOrgId(req);

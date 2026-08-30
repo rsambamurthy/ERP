@@ -341,10 +341,32 @@ export async function evaluate(raw: string, ctx: Ctx): Promise<string> {
     const q = /^sql\s+"([\s\S]*?)"\s*(?:capture\s+(\w+)|(>=|=)\s*(.+))?$/.exec(text);
     if (!q) throw new AssertionError(`cannot parse: ${text}`);
     const sql = substitute(q[1], ctx, true);
-    const rows: any[] = await prisma.$queryRawUnsafe(sql);
-    const first = rows[0] ? Object.values(rows[0])[0] : null;
-    const value = typeof first === "bigint" ? Number(first) : first;
-    if (q[2]) { ctx.captures[q[2]] = value; return `captured ${q[2]} = ${value}`; }
+    // A READ yields its first column; a WRITE yields the number of rows it
+    // changed. Almost every sql assertion in the pack is a read, and a pack
+    // that writes to the database behind the API's back would normally be a
+    // bad idea - it is how you end up asserting against state no user could
+    // have produced.
+    //
+    // The exception this exists for is ENTITLEMENT. Withdrawing a module is
+    // a platform-admin act, and the pack logs in as two ordinary org users
+    // by design; adding a third, more powerful login so that the suite can
+    // cancel subscriptions is a bigger and worse change than letting it set
+    // the one column the guard reads. What is under test is what the API
+    // does when the row says CANCELLED, not how the row got there.
+    //
+    // Returning the affected count rather than nothing is the point: `= 1`
+    // asserts the statement hit exactly the row it meant to, so a typo in
+    // the WHERE clause fails here instead of silently testing nothing.
+    const isRead = /^\s*(select|with)\b/i.test(sql);
+    let value: unknown;
+    if (isRead) {
+      const rows: any[] = await prisma.$queryRawUnsafe(sql);
+      const first = rows[0] ? Object.values(rows[0])[0] : null;
+      value = typeof first === "bigint" ? Number(first) : first;
+    } else {
+      value = await prisma.$executeRawUnsafe(sql);
+    }
+    if (q[2]) { ctx.captures[q[2]] = value as any; return `captured ${q[2]} = ${value}`; }
     const opGe = q[3] === ">=";
     const want = substitute(String(q[4] ?? "").trim(), ctx);
     if (opGe) {

@@ -151,6 +151,8 @@ export function login(payload: { email?: string; phone?: string; password: strin
   return request<{
     token: string; organizationId: string | null; role: string | null;
     isPlatformAdmin: boolean; name: string | null; permissions?: Permission[]; customRoleId?: string | null;
+    // Modules withdrawn from this org - a deny list. See lib/auth.ts.
+    deniedModules?: string[];
   }>("/auth/login", { method: "POST", body: JSON.stringify(payload) });
 }
 
@@ -159,6 +161,7 @@ export function login(payload: { email?: string; phone?: string; password: strin
 export interface MpinLoginResponse {
   token: string; organizationId: string | null; role: string | null;
   isPlatformAdmin: boolean; name: string | null; permissions?: Permission[]; customRoleId?: string | null;
+  deniedModules?: string[];
 }
 
 export function getMpinStatus(identifier: string) {
@@ -188,7 +191,7 @@ export function setMpin(identifier: string, otp: string, mpin: string) {
 export function acceptInvite(token: string, name: string, password: string, mpin?: string) {
   return request<{
     token: string; organizationId: string; role: string; name: string | null;
-    permissions: Permission[]; customRoleId: string | null;
+    permissions: Permission[]; customRoleId: string | null; deniedModules?: string[];
   }>("/auth/accept-invite", { method: "POST", body: JSON.stringify({ token, name, password, mpin: mpin || undefined }) });
 }
 

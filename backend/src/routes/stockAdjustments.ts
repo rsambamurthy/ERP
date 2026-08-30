@@ -1,14 +1,17 @@
 import { randomUUID } from "crypto";
 import { Router } from "express";
 import { prisma } from "../db";
-import { authenticate, requirePermission, requireActiveSubscription, resolveOrgId } from "../middleware/auth";
+import { authenticate, requirePermission, requireActiveSubscription, requireModule, resolveOrgId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { consumeStock, receiveStock, InsufficientStockError } from "../lib/costing";
 
 const INVENTORY_ADJUSTMENTS_CODE = "4002";
 
 const router = Router();
-router.use(authenticate, requireActiveSubscription);
+// Stock movement, valuation and the stock ledger are the Inventory
+// module itself. An organisation that has given it up keeps its books,
+// its bills and its invoices - it just stops moving stock.
+router.use(authenticate, requireActiveSubscription, requireModule("INVENTORY"));
 // Same gate as posting a journal entry directly — an adjustment is a real
 // accounting event, not a data-entry convenience.
 const canPost = requirePermission("inventory.post");
