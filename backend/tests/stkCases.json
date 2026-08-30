@@ -2848,6 +2848,307 @@
   "note": "Both organisations back to the default, asserted together rather than one at a time - the batch turned the setting on in two places and a restore that missed one would leave the next run starting somewhere different from where this one did."
  },
  {
+  "key": "STK-38.1",
+  "caseId": "STK-38",
+  "caseTitle": "A charge is part of the supply, not a line beside it",
+  "action": "The three recovered-income heads exist, and are not Sales Revenue.",
+  "phase": 18,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT count(*) FROM accounts WHERE organization_id={{ORG_A}} AND account_code IN ('5002','5003','5004') AND account_type='INCOME'\" = 3",
+   "sql \"SELECT count(*) FROM accounts WHERE organization_id={{ORG_A}} AND account_code='5001'\" = 1"
+  ],
+  "auto": "YES",
+  "note": "migration_054 adds them as templates so new organisations get them, and back-fills every organisation that already has 5001 - which is every organisation that can raise a sales invoice at all. Separate heads are the entire reason a charge is a row with an account rather than one more column on the invoice: freight recovered from customers is only meaningful next to freight paid to transporters, and crediting it to Sales Revenue makes that comparison impossible to draw ever again."
+ },
+ {
+  "key": "STK-38.2",
+  "caseId": "STK-38",
+  "caseTitle": "A charge is part of the supply, not a line beside it",
+  "action": "An item to sell, at a cost with no rounding in it.",
+  "phase": 18,
+  "login": "A",
+  "method": "POST",
+  "path": "/items",
+  "body": {
+   "sku": "CHG-TEST",
+   "name": "Charged with delivery",
+   "itemKind": "STOCK",
+   "stockAccountId": "{{ACC_1201_A}}",
+   "hsnCode": "84821010",
+   "taxRate": 18,
+   "openingQuantity": 20,
+   "openingCost": 100,
+   "openingBranchId": "{{BR_A_CHN}}",
+   "openingDate": "2026-04-01"
+  },
+  "status": 201,
+  "capture": {
+   "itemId": "data.id"
+  },
+  "asserts": [
+   "GET /inventory/valuation :: field data.rows[item.sku=CHG-TEST].quantityOnHand = 20"
+  ],
+  "auto": "YES",
+  "note": "100.00 exactly, so the COGS below is 1,000.00 exactly. Deliberate: this batch is about where a charge lands in the tax and in the ledger, and a four-decimal average would drag a paisa of rounding into every figure and turn a clear test into an argument about the last digit. STK-36.8 learned that the hard way."
+ },
+ {
+  "key": "STK-38.3",
+  "caseId": "STK-38",
+  "caseTitle": "A charge is part of the supply, not a line beside it",
+  "action": "Sell ten, with delivery and insurance on top.",
+  "phase": 18,
+  "login": "A",
+  "je": [
+   {
+    "code": "1005",
+    "name": "Accounts Receivable (customer)",
+    "debit": 5664,
+    "credit": 0
+   },
+   {
+    "code": "5001",
+    "name": "Sales Revenue",
+    "debit": 0,
+    "credit": 4000
+   },
+   {
+    "code": "5002",
+    "name": "Freight & Delivery Recovered",
+    "debit": 0,
+    "credit": 500
+   },
+   {
+    "code": "5004",
+    "name": "Insurance Recovered",
+    "debit": 0,
+    "credit": 300
+   },
+   {
+    "code": "2102",
+    "name": "CGST Output Payable",
+    "debit": 0,
+    "credit": 432
+   },
+   {
+    "code": "2103",
+    "name": "SGST Output Payable",
+    "debit": 0,
+    "credit": 432
+   },
+   {
+    "code": "4001",
+    "name": "Cost of Goods Sold",
+    "debit": 1000,
+    "credit": 0
+   },
+   {
+    "code": "1201",
+    "name": "Inventory (CHG-TEST card)",
+    "debit": 0,
+    "credit": 1000
+   }
+  ],
+  "method": "POST",
+  "path": "/sales-invoices",
+  "body": {
+   "businessPartnerId": "{{CUST_TN}}",
+   "invoiceDate": "2026-07-05",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{STK-38.itemId}}",
+     "quantity": 10,
+     "rate": 400,
+     "taxRate": 18
+    }
+   ],
+   "charges": [
+    {
+     "label": "Delivery charges",
+     "accountId": "{{ACC_5002_A}}",
+     "amount": 500
+    },
+    {
+     "label": "Transit insurance",
+     "accountId": "{{ACC_5004_A}}",
+     "amount": 300
+    }
+   ]
+  },
+  "status": 201,
+  "capture": {
+   "invId": "data.id"
+  },
+  "asserts": [
+   "journal sales_invoice {{invId}}"
+  ],
+  "auto": "YES",
+  "note": "EVERY FIGURE HERE IS THE POINT. Goods 4,000.00, charges 800.00, so the value of the supply is 4,800.00 and the tax is 18% OF THAT - 864.00, split 432.00 each way. Had the freight been billed as its own line at 5% under SAC 9965, the tax would have been 720.00 + 40.00 = 760.00, and this invoice would have understated output tax by 104.00. That is the error this design cannot make, because there is nowhere to put a rate for freight. And the two charges credit 5002 and 5004 at their FULL amounts - the proration is a GST device deciding which line carries the tax, not a way of splitting the revenue."
+ },
+ {
+  "key": "STK-38.4",
+  "caseId": "STK-38",
+  "caseTitle": "A charge is part of the supply, not a line beside it",
+  "action": "The charge is inside the LINE, which is what makes the tax right.",
+  "phase": 18,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT round(sum(taxable_value),2) FROM sales_invoice_lines WHERE sales_invoice_id={{STK-38.invId}}\" = 4800.00",
+   "sql \"SELECT round(subtotal,2) FROM sales_invoices WHERE id={{STK-38.invId}}\" = 4000.00",
+   "sql \"SELECT round(sum(amount),2) FROM sales_invoice_charges WHERE sales_invoice_id={{STK-38.invId}}\" = 800.00",
+   "sql \"SELECT count(*) FROM sales_invoice_charges WHERE sales_invoice_id={{STK-38.invId}}\" = 2"
+  ],
+  "auto": "YES",
+  "note": "THE IDENTITY THE WHOLE DESIGN RESTS ON: line taxable value equals goods net of discount PLUS charges. 4,000.00 + 800.00 = 4,800.00. subtotal stays at the goods figure because that is what Sales Revenue was credited with, and the charges are their own rows with their own heads. If these three ever stop tying, the GST on the invoice is wrong and so is the P&L, and this is the step that would say so."
+ },
+ {
+  "key": "STK-38.5",
+  "caseId": "STK-38",
+  "caseTitle": "A charge is part of the supply, not a line beside it",
+  "action": "GSTR-1 picks it up with no GST code changed at all.",
+  "phase": 18,
+  "login": "A",
+  "method": "GET",
+  "path": "/gst/gstr1?from=2026-07-01&to=2026-07-31",
+  "status": 200,
+  "asserts": [
+   "field data.totals.taxableValue = 4800.00",
+   "field data.totals.cgst = 432.00",
+   "field data.totals.sgst = 432.00",
+   "field count(data.hsn) = 1",
+   "field data.hsn[0].taxableValue = 4800.00",
+   "field data.hsn[0].quantity = 10",
+   "field data.hsn[0].rate = 18"
+  ],
+  "auto": "YES",
+  "note": "NOT ONE LINE OF gstReports.ts WAS TOUCHED FOR THIS FEATURE, and this step is the proof. Because the charge was prorated into the line taxable values, the return simply reads what is there: 4,800.00 in the supply tables and the same 4,800.00 in table 12, against ten units of one HSN at 18%. A charge implemented as a separate line would have needed a SAC, its own HSN row, its own rate in the summary, and a decision about whether table 12 counts it as a quantity - and every one of those is a place to disagree with 4A. July is chosen because ORG-A raised no other invoice in it, so every rupee here is this one document."
+ },
+ {
+  "key": "STK-39.1",
+  "caseId": "STK-39",
+  "caseTitle": "What a charge refuses",
+  "action": "A charge posted to Sales Revenue.",
+  "phase": 18,
+  "login": "A",
+  "method": "POST",
+  "path": "/sales-invoices",
+  "body": {
+   "businessPartnerId": "{{CUST_TN}}",
+   "invoiceDate": "2026-07-06",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{STK-38.itemId}}",
+     "quantity": 1,
+     "rate": 400,
+     "taxRate": 18
+    }
+   ],
+   "charges": [
+    {
+     "label": "Delivery charges",
+     "accountId": "{{ACC_5001_A}}",
+     "amount": 100
+    }
+   ]
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"cannot post to Sales Revenue\""
+  ],
+  "auto": "YES",
+  "note": "Refused, and the message says why rather than just saying no. Allowing it would be allowing the one thing separate heads exist to prevent: the moment recovered freight is inside Sales Revenue, nobody can ever again ask what delivery cost the business, and no report can reconstruct it because the split was never recorded."
+ },
+ {
+  "key": "STK-39.2",
+  "caseId": "STK-39",
+  "caseTitle": "What a charge refuses",
+  "action": "A charge posted to an EXPENSE account.",
+  "phase": 18,
+  "login": "A",
+  "method": "POST",
+  "path": "/sales-invoices",
+  "body": {
+   "businessPartnerId": "{{CUST_TN}}",
+   "invoiceDate": "2026-07-06",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{STK-38.itemId}}",
+     "quantity": 1,
+     "rate": 400,
+     "taxRate": 18
+    }
+   ],
+   "charges": [
+    {
+     "label": "Delivery charges",
+     "accountId": "{{ACC_4008}}",
+     "amount": 100
+    }
+   ]
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"must post to one of this organization's income accounts\""
+  ],
+  "auto": "YES",
+  "note": "Money coming IN from a customer is income. Crediting an expense head would net it against costs and quietly understate both sides of the P&L - the classic way a business ends up reporting neither its real revenue nor its real cost of delivery. The account must be INCOME and must exist in THIS organisation, which is one lookup doing both."
+ },
+ {
+  "key": "STK-39.3",
+  "caseId": "STK-39",
+  "caseTitle": "What a charge refuses",
+  "action": "A charge with no amount, and one with no label.",
+  "phase": 18,
+  "login": "A",
+  "method": "POST",
+  "path": "/sales-invoices",
+  "body": {
+   "businessPartnerId": "{{CUST_TN}}",
+   "invoiceDate": "2026-07-06",
+   "branchId": "{{BR_A_CHN}}",
+   "lines": [
+    {
+     "itemId": "{{STK-38.itemId}}",
+     "quantity": 1,
+     "rate": 400,
+     "taxRate": 18
+    }
+   ],
+   "charges": [
+    {
+     "label": "Delivery charges",
+     "accountId": "{{ACC_5002_A}}",
+     "amount": 0
+    }
+   ]
+  },
+  "status": 400,
+  "asserts": [
+   "error contains \"must be a positive amount\""
+  ],
+  "auto": "YES",
+  "note": "A zero charge is a row that says nothing and a negative one is a discount wearing a different name - and the invoice already has two honest ways to express a discount. A negative charge called 'Freight' would reduce a taxable value without looking like a discount to anybody reading the document, which is exactly the shape of a thing that should not be possible. The CHECK constraint in migration_054 says the same thing at the table."
+ },
+ {
+  "key": "STK-39.4",
+  "caseId": "STK-39",
+  "caseTitle": "What a charge refuses",
+  "action": "None of those three wrote anything.",
+  "phase": 18,
+  "login": "A",
+  "asserts": [
+   "sql \"SELECT count(*) FROM sales_invoices WHERE organization_id={{ORG_A}} AND invoice_date='2026-07-06'\" = 0",
+   "GET /inventory/valuation :: field data.rows[item.sku=CHG-TEST].quantityOnHand = 10",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='5002'\" = -500.00",
+   "sql \"SELECT round(coalesce(sum(l.debit-l.credit),0),2) FROM journal_lines l JOIN journal_entries e ON e.id=l.journal_entry_id JOIN accounts a ON a.id=l.account_id WHERE e.organization_id={{ORG_A}} AND a.account_code='5004'\" = -300.00"
+  ],
+  "auto": "YES",
+  "note": "THE CONTROL ON THE REFUSALS. Three invoices were rejected and not one of them left a document, consumed a unit of stock or credited a rupee of income. CHG-TEST is still at ten - twenty in, ten sold on the 5th, nothing on the 6th. The two income heads read as CREDITS under sum(debit-credit), which is what an income account should look like and is the same convention STK-11.3 uses for the conversion-cost heads. A refusal that half-posts is worse than no refusal at all, because the ledger then holds a document nobody can find."
+ },
+ {
   "key": "STK-33.1",
   "caseId": "STK-33",
   "caseTitle": "A module nobody recorded is not a module anybody withdrew",

@@ -180,6 +180,13 @@ export const FIXTURE_SPECS: Record<string, FixtureSpec> = {
   // migration will fail to resolve these, and that failure is the point.
   ACC_4004_A: { org: "A", kind: "account", match: "4004" },
   ACC_4005_A: { org: "A", kind: "account", match: "4005" },
+  // Sales Revenue and the two recovered-income heads a charge posts to.
+  // 5001 is here to be REFUSED: STK-39.1 offers it as a charge account and
+  // the invoice must reject it, which is a thing that can only be tested by
+  // being able to name it. 5002 and 5004 arrive with migration_054.
+  ACC_5001_A: { org: "A", kind: "account", match: "5001" },
+  ACC_5002_A: { org: "A", kind: "account", match: "5002" },
+  ACC_5004_A: { org: "A", kind: "account", match: "5004" },
   ORG_A:    { org: "A", kind: "org", match: "" },
   ORG_B:    { org: "B", kind: "org", match: "" },
 };

@@ -65,6 +65,11 @@ export interface SalesInvoicePdfData {
     igstAmount: number;
     lineTotal: number;
   }[];
+  // Freight, packing, insurance. No tax column, deliberately: the tax on
+  // a charge is already inside the line figures above, because the charge
+  // was prorated into their taxable values. A tax column here would read
+  // as additional tax, which it is not.
+  charges?: { label: string; amount: number }[];
 }
 
 // Business partner / branch address is a free-form Json column — same
@@ -262,6 +267,9 @@ export function buildSalesInvoicePdf(data: SalesInvoicePdfData): Promise<Buffer>
   }
   totalLine("Subtotal", money(data.subtotal));
   if (data.discountTotal > 0) totalLine("Discount", `- ${money(data.discountTotal)}`);
+  // Between the discount and the tax, which is where they belong in the
+  // arithmetic: a charge increases the value the tax is then computed on.
+  for (const c of data.charges ?? []) totalLine(c.label, money(c.amount));
   if (data.interState) {
     if (data.igstTotal > 0) totalLine("IGST", money(data.igstTotal));
   } else {

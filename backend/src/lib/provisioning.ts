@@ -130,6 +130,38 @@ export async function provisionOrganization(organizationId: string) {
     }
   }
 
+  // Charge Master. The standard three, bound to the recovered-income heads
+  // migration_054 provides. Same shape as the asset classes above: keyed off
+  // account codes, skipped when the chart predates them, and safe to re-run.
+  //
+  // Seeded rather than left empty because an organisation with no charge
+  // types cannot put delivery on an invoice at all - the master-only rule
+  // means an empty master is a closed door, and nobody should have to
+  // discover that mid-invoice. The labels are a starting point, freely
+  // renamed on the Charge Master screen.
+  const chargeAccounts = await prisma.account.findMany({
+    where: { organizationId, accountCode: { in: ["5002", "5003", "5004"] } },
+    select: { id: true, accountCode: true },
+  });
+  const chargeIdByCode = new Map(chargeAccounts.map((a) => [a.accountCode, a.id]));
+  const chargeSeed: { code: string; label: string; sortOrder: number }[] = [
+    { code: "5002", label: "Delivery charges", sortOrder: 10 },
+    { code: "5003", label: "Packing & forwarding", sortOrder: 20 },
+    { code: "5004", label: "Transit insurance", sortOrder: 30 },
+  ];
+  const existingChargeTypes = await prisma.chargeType.findMany({
+    where: { organizationId }, select: { label: true },
+  });
+  const takenLabels = new Set(existingChargeTypes.map((c) => c.label.toLowerCase()));
+  const chargeRows = chargeSeed.flatMap((c) => {
+    const accountId = chargeIdByCode.get(c.code);
+    if (!accountId || takenLabels.has(c.label.toLowerCase())) return [];
+    return [{ organizationId, label: c.label, accountId, sortOrder: c.sortOrder }];
+  });
+  if (chargeRows.length > 0) {
+    await prisma.chargeType.createMany({ data: chargeRows, skipDuplicates: true });
+  }
+
   // Enable each selected domain's default modules.
   const domainModules = await prisma.domainModule.findMany({
     where: { domainTypeId: { in: domainTypeIds } },

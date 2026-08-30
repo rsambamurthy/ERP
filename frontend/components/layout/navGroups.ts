@@ -68,6 +68,14 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: "company_master", label: "Company Master", path: "/settings/company-master", dot: "#0d9488", roles: ["OWNER", "ADMIN"], permission: "company.manage" },
       { id: "currency_master", label: "Currency Master", path: "/settings/currency-master", dot: "#ca8a04", roles: ["OWNER", "ADMIN"], permission: "currency.manage" },
       { id: "chart_of_accounts", label: "Chart of Accounts", path: "/accounting/chart-of-accounts", dot: "#2563eb", roles: ALL_ROLES },
+      // Beside Chart of Accounts rather than under Sales, because the only
+      // thing a charge type decides is which income head a recovery lands
+      // in — and it is gated on coa.manage for the same reason.
+      // OWNER/ADMIN only, matching Currency Master: ACCOUNTANT deliberately
+      // holds none of the master-data permissions (coa.manage,
+      // items.manage, currency.manage), so listing it here would show a
+      // screen whose every button the API then refuses.
+      { id: "charge_master", label: "Charge Master", path: "/settings/charge-master", dot: "#16a34a", roles: ["OWNER", "ADMIN"], permission: "coa.manage" },
       { id: "business_partners", label: "Business Partners", path: "/accounting/business-partners", dot: "#0891b2", roles: ALL_ROLES },
       { id: "items", label: "Items", path: "/inventory/items", dot: "#0d9488", roles: ALL_ROLES },
       { id: "recurring_expenses", label: "Recurring Expenses", path: "/settings/recurring-expenses", dot: "#e11d48", roles: ["OWNER", "ADMIN", "ACCOUNTANT"], permission: "purchase.post" },

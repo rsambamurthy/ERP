@@ -170,6 +170,7 @@ model Organization {
   salesOrders      SalesOrder[]
   deliveryNotes    DeliveryNote[]
   currencyRates    CurrencyRate[]
+  chargeTypes      ChargeType[]
   integrationConnection IntegrationConnection?
 
   @@map("organizations")
@@ -336,6 +337,8 @@ model Account {
   parent       Account?      @relation("AccountHierarchy", fields: [parentId], references: [id])
   children     Account[]     @relation("AccountHierarchy")
   journalLines JournalLine[]
+  invoiceCharges SalesInvoiceCharge[]
+  chargeTypes    ChargeType[]
   itemsUsingAsStockAccount Item[]
   // Two distinct roles on a prepaid schedule: the asset the bill debits, and
   // the expense head each instalment releases into. Named because Prisma
@@ -768,6 +771,13 @@ model SalesInvoice {
   journalEntry    JournalEntry       @relation(fields: [journalEntryId], references: [id])
   salesOrder      SalesOrder?        @relation(fields: [salesOrderId], references: [id])
   lines           SalesInvoiceLine[]
+  // Freight, packing, insurance and the like. Document-level amounts that
+  // are PRORATED across the lines for GST - see migration_054 and
+  // lib/discountGst.ts - so each one is taxed at the rate of the goods it
+  // accompanies, which is what section 8(a) requires of a composite
+  // supply. Each carries its own income account so recovered freight can
+  // be set against freight paid.
+  charges         SalesInvoiceCharge[]
   returns         SalesReturn[]
 
   @@unique([organizationId, invoiceNumber])
@@ -826,6 +836,70 @@ model SalesInvoiceLine {
   deliveryNoteLine DeliveryNoteLine? @relation(fields: [deliveryNoteLineId], references: [id])
 
   @@map("sales_invoice_lines")
+}
+
+// A charge on a sales invoice: freight, packing, insurance, handling.
+//
+// amount is EXCLUSIVE of tax, and there is deliberately no tax column.
+// The tax on a charge lives in the invoice LINES, because the charge is
+// prorated into their taxable values before GST is computed - which is
+// how a composite supply gets taxed at the rate of the principal supply
+// without anybody having to choose a rate for the freight. A tax column
+// here would be the same rupee stored twice, in two places free to
+// disagree.
+model SalesInvoiceCharge {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  salesInvoiceId String   @map("sales_invoice_id") @db.Uuid
+  label          String   @db.VarChar(60)
+  // Its own INCOME head - 5002 Freight & Delivery Recovered and friends,
+  // added by migration_054. Never Sales Revenue: the point of separating
+  // them is that recovered freight can be read against freight paid.
+  accountId      String   @map("account_id") @db.Uuid
+  amount         Decimal  @db.Decimal(14, 2)
+  sortOrder      Int      @default(0) @map("sort_order")
+  createdAt      DateTime @default(now()) @map("created_at")
+  // The master row this charge was chosen from - migration_055. Nullable
+  // because charges raised before the master existed have no type, and
+  // inventing one for them would be a guess a report would then trust.
+  // label and accountId above stay authoritative for the DOCUMENT: renaming
+  // a charge type must not restate an invoice already issued.
+  chargeTypeId   String?  @map("charge_type_id") @db.Uuid
+
+  salesInvoice SalesInvoice @relation(fields: [salesInvoiceId], references: [id], onDelete: Cascade)
+  account      Account      @relation(fields: [accountId], references: [id])
+  chargeType   ChargeType?  @relation(fields: [chargeTypeId], references: [id])
+
+  @@index([salesInvoiceId])
+  @@map("sales_invoice_charges")
+}
+
+// A charge the organisation can put on an invoice: a label bound to an
+// income account, chosen rather than typed.
+//
+// migration_054 let the label be free text and it drifted - "Delivery
+// charges", "Delivery Charges", "Freight" on one account, fragmenting every
+// report that grouped by it. There is no rate here for the same reason there
+// is none on SalesInvoiceCharge: a charge is prorated into the goods lines
+// and taxed at THEIR rate, so it never has one of its own.
+//
+// Deactivated, never deleted. A type that has been used is referenced by
+// documents, and is_active is what takes it out of the picker without
+// rewriting history.
+model ChargeType {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  label          String   @db.VarChar(60)
+  accountId      String   @map("account_id") @db.Uuid
+  isActive       Boolean  @default(true) @map("is_active")
+  sortOrder      Int      @default(0) @map("sort_order")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization          @relation(fields: [organizationId], references: [id])
+  account      Account               @relation(fields: [accountId], references: [id])
+  charges      SalesInvoiceCharge[]
+
+  @@index([organizationId])
+  @@map("charge_types")
 }
 
 model PurchaseBill {

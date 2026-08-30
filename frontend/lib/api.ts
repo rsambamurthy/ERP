@@ -241,6 +241,45 @@ export function toggleAccount(id: string) {
   return request<{ data: Account }>(`/accounts/${id}/toggle`, { method: "PATCH" });
 }
 
+// ── Charge Master ────────────────────────────────────────────────────────
+//
+// The labels an invoice may put on freight, packing and insurance, each
+// bound to the income account it credits. Chosen, never typed - see
+// migration_055 for what free text did to reporting.
+
+export interface ChargeType {
+  id: string;
+  label: string;
+  accountId: string;
+  isActive: boolean;
+  sortOrder: number;
+  account: { id: string; accountCode: string; accountName: string; accountType: string };
+}
+
+// Active only by default, which is what the invoice picker wants;
+// includeInactive is for the master screen, which has to show a retired
+// type in order to bring it back.
+export function getChargeTypes(includeInactive = false) {
+  return request<{ data: ChargeType[] }>(
+    `/charge-types${includeInactive ? "?includeInactive=true" : ""}`
+  );
+}
+
+export function createChargeType(body: { label: string; accountId: string; sortOrder?: number }) {
+  return request<{ data: ChargeType }>("/charge-types", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function updateChargeType(id: string, body: { label?: string; accountId?: string; sortOrder?: number }) {
+  return request<{ data: ChargeType }>(`/charge-types/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+// There is no delete. A charge type that has been used is referenced by
+// documents; retiring it takes it out of the picker and leaves every
+// invoice it ever appeared on exactly as it was.
+export function toggleChargeType(id: string) {
+  return request<{ data: ChargeType }>(`/charge-types/${id}/toggle`, { method: "PATCH" });
+}
+
 // ── Company Master ───────────────────────────────────────────────────────
 
 export function getCompanyMaster() {
@@ -885,6 +924,12 @@ export function createSalesInvoice(body: {
   // the user has been shown the shortfall and chosen to go ahead.
   allowNegativeStock?: boolean;
   negativeStockReason?: string;
+  // Freight, packing, insurance. Only the type and the amount: the label
+  // and the income account come from the Charge Master server-side, so one
+  // organisation's "Delivery charges" is the same three words and the same
+  // head on every invoice it ever raises. Prorated across the lines so the
+  // tax follows the goods' rate - a charge has no rate of its own.
+  charges?: { chargeTypeId: string; amount: number }[];
 }) {
   return request<{ data: SalesInvoice }>("/sales-invoices", { method: "POST", body: JSON.stringify(body) });
 }

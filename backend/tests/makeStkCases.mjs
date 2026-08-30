@@ -12,6 +12,7 @@
 // stkCasesE.mjs is batch 4, the GST returns in ORG-B, phase 17.
 // stkCasesG.mjs is the negative-stock override, phase 18 - BEFORE the
 // controls, because it moves stock and posts COGS.
+// stkCasesH.mjs is invoice charges, also phase 18 and for the same reason.
 // stkCasesF.mjs is module entitlement, phase 20 - the only batch that runs
 // AFTER the controls at 19, because it posts nothing and puts back the one
 // column it changes.
@@ -23,6 +24,7 @@ import "./stkCasesC.mjs";
 import "./stkCasesD.mjs";
 import "./stkCasesE.mjs";
 import "./stkCasesG.mjs";
+import "./stkCasesH.mjs";
 import "./stkCasesF.mjs";
 
 const T8 = "FIFO consumes the oldest layer first";

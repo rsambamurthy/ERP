@@ -9,7 +9,7 @@ import CurrencyPicker from "@/components/shared/CurrencyPicker";
 import ItemPicker from "@/components/shared/ItemPicker";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import {
-  ApiError, createSalesInvoice, downloadSalesInvoicePdf, getBranches, getBusinessPartnerLookup, getCompanyMaster, getDeliveryNotes, getItems, getSalesInvoice,
+  ApiError, createSalesInvoice, downloadSalesInvoicePdf, getBranches, getAccounts, getBusinessPartnerLookup, getCompanyMaster, getDeliveryNotes, getItems, getSalesInvoice,
   getSalesInvoices, getSalesOrder, getSalesOrders, lookupCurrencyRate, updateSalesInvoiceReference,
 } from "@/lib/api";
 import { computeDiscountedLines, isInterState, round2 } from "@/lib/discountGst";
@@ -35,6 +35,20 @@ function SalesInvoicesInner() {
   const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [narration, setNarration] = useState("");
   const [lines, setLines] = useState<SalesLineInput[]>([emptyLine()]);
+  // FREIGHT, PACKING, INSURANCE. Document-level charges, each posting to its
+  // own income head. They are NOT lines: a charge has no tax rate of its own,
+  // because it is prorated across the goods lines and taxed at their rate -
+  // section 15(2)(c) puts it inside the value of the supply and section 8(a)
+  // taxes a composite supply at the rate of the principal one. Giving the
+  // user a rate box for freight would be offering them a way to get that
+  // wrong on every invoice.
+  const [charges, setCharges] = useState<{ label: string; accountId: string; amount: string }[]>([]);
+  const [incomeAccounts, setIncomeAccounts] = useState<{ id: string; accountCode: string; accountName: string }[]>([]);
+  const chargesTotal = useMemo(
+    () => round2(charges.reduce((s, c) => s + (Number(c.amount) || 0), 0)),
+    [charges]
+  );
+
   const [invoiceDiscountType, setInvoiceDiscountType] = useState<DiscountType | "">("");
   const [invoiceDiscountValue, setInvoiceDiscountValue] = useState("");
   const [currency, setCurrency] = useState("INR");
@@ -97,9 +111,10 @@ function SalesInvoicesInner() {
       computeDiscountedLines(
         lines.map((l) => ({ quantity: Number(l.quantity || 0), rate: Number(l.rate || 0), taxRate: Number(l.taxRate || 0), discountType: l.discountType, discountValue: Number(l.discountValue || 0) })),
         { type: invoiceDiscountType || null, value: Number(invoiceDiscountValue || 0) },
-        interState
+        interState,
+        chargesTotal
       ),
-    [lines, invoiceDiscountType, invoiceDiscountValue, interState]
+    [lines, invoiceDiscountType, invoiceDiscountValue, interState, chargesTotal]
   );
 
   const totals = useMemo(() => {
@@ -360,6 +375,17 @@ function SalesInvoicesInner() {
       .catch(() => setCompanyAllowsNegative(false));
   }, []);
 
+  // Heads a charge may post to: every INCOME account except Sales Revenue
+  // itself, which the server refuses anyway. Excluding it here as well
+  // means the user is never offered a choice that will be rejected.
+  useEffect(() => {
+    getAccounts()
+      .then((res) => setIncomeAccounts(
+        res.data.filter((a) => a.accountType === "INCOME" && !a.isGroup && a.accountCode !== "5001")
+      ))
+      .catch(() => setIncomeAccounts([]));
+  }, []);
+
   async function handleCreate(e: React.FormEvent, override = false) {
     e.preventDefault();
     setSaving(true);
@@ -369,6 +395,9 @@ function SalesInvoicesInner() {
         ...(override ? { allowNegativeStock: true, negativeStockReason: overrideReason.trim() } : {}),
         businessPartnerId: linkedSO ? undefined : businessPartnerId, invoiceDate, narration,
         lines: lines.filter((l) => l.itemId && l.quantity > 0),
+        charges: charges
+          .filter((c) => c.label.trim() && c.accountId && Number(c.amount) > 0)
+          .map((c) => ({ label: c.label.trim(), accountId: c.accountId, amount: Number(c.amount) })),
         discountType: invoiceDiscountType || null,
         discountValue: invoiceDiscountValue ? Number(invoiceDiscountValue) : 0,
         currency, exchangeRate: isForeign ? Number(exchangeRate) : undefined,
@@ -383,7 +412,7 @@ function SalesInvoicesInner() {
       setShowForm(false);
       setShortfall(null); setOverrideReason("");
       setBusinessPartnerId(""); setNarration(""); setLines([emptyLine()]);
-      setInvoiceDiscountType(""); setInvoiceDiscountValue("");
+      setInvoiceDiscountType(""); setInvoiceDiscountValue(""); setCharges([]);
       setCurrency("INR"); setExchangeRate("1");
       setExportType("LUT"); setLutBondNumber(""); setLutBondDate("");
       setNewShippingBillNumber(""); setNewShippingBillDate(""); setNewPortCode("");
@@ -599,6 +628,73 @@ function SalesInvoicesInner() {
             </table>
             <button type="button" className="ent-add-row" style={{ margin: "10px 0" }} onClick={() => setLines((ls) => [...ls, emptyLine()])}>+ Add line</button>
 
+            {/* CHARGES. Deliberately not lines, and deliberately without a tax
+                rate box. A charge is prorated across the goods above and taxed
+                at their rate - section 15(2)(c) puts incidental expenses inside
+                the value of the supply, and section 8(a) taxes a composite
+                supply at the rate of the principal one. Offering a rate here
+                would be offering a way to get that wrong on every invoice. */}
+            {charges.length > 0 && (
+              <table className="ent-table" style={{ marginBottom: 8 }}>
+                <thead>
+                  <tr>
+                    <th style={{ width: "34%" }}>Charge</th>
+                    <th style={{ width: "44%" }}>Posts to</th>
+                    <th style={{ width: "18%" }}>Amount</th>
+                    <th style={{ width: "4%" }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {charges.map((c, i) => (
+                    <tr key={i}>
+                      <td>
+                        <input
+                          className="ent-fc" maxLength={60} placeholder="e.g. Delivery charges"
+                          value={c.label}
+                          onChange={(e) => setCharges((cs) => cs.map((x, idx) => idx === i ? { ...x, label: e.target.value } : x))}
+                        />
+                      </td>
+                      <td>
+                        <select
+                          className="ent-fc" value={c.accountId}
+                          onChange={(e) => setCharges((cs) => cs.map((x, idx) => idx === i ? { ...x, accountId: e.target.value } : x))}
+                        >
+                          <option value="">Select an income account…</option>
+                          {incomeAccounts.map((a) => (
+                            <option key={a.id} value={a.id}>{a.accountCode} {a.accountName}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <input
+                          type="number" min={0} step="0.01" className="ent-fc" placeholder="0.00"
+                          value={c.amount}
+                          onChange={(e) => setCharges((cs) => cs.map((x, idx) => idx === i ? { ...x, amount: e.target.value } : x))}
+                        />
+                      </td>
+                      <td>
+                        <button type="button" className="ent-ia ent-ia-del" onClick={() => setCharges((cs) => cs.filter((_, idx) => idx !== i))}>✕</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 12px" }}>
+              <button
+                type="button" className="ent-add-row" style={{ margin: 0 }}
+                onClick={() => setCharges((cs) => [...cs, { label: "", accountId: "", amount: "" }])}
+              >
+                + Add charge (freight, packing, insurance)
+              </button>
+              {charges.length > 0 && (
+                <span style={{ fontSize: 11.5, color: "var(--color-muted)" }}>
+                  Charges are spread across the lines above by value and taxed at the goods&rsquo; rate,
+                  as a composite supply. They have no rate of their own.
+                </span>
+              )}
+            </div>
+
             <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 12 }}>
               <div className="ent-fg" style={{ marginBottom: 0 }}>
                 <label className="ent-fl">Invoice Discount</label>
@@ -628,6 +724,7 @@ function SalesInvoicesInner() {
             }}>
               <span>Gross Subtotal: <strong>{totals.subtotal.toFixed(2)}</strong></span>
               <span>Discount: <strong>-{totals.discountTotal.toFixed(2)}</strong></span>
+              {chargesTotal > 0 && <span>Charges: <strong>+{chargesTotal.toFixed(2)}</strong></span>}
               {interState ? (
                 <span>IGST: <strong>{totals.igst.toFixed(2)}</strong></span>
               ) : (

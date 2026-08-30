@@ -9,7 +9,11 @@ import { isSupportedCurrency } from "../lib/currencies";
 import { buildSalesInvoicePdf } from "../lib/salesInvoicePdf";
 
 const TRADE_RECEIVABLES_CODE = "1005";
-const SALES_REVENUE_CODE = "5001";
+// Exported because routes/chargeTypes.ts refuses a charge type that credits
+// it, and that refusal has to be the same account as the one the invoice
+// refuses. Two copies of "5001" is exactly the drift the Charge Master was
+// built to stop, so there is one.
+export const SALES_REVENUE_CODE = "5001";
 const DISCOUNT_ALLOWED_CODE = "4003";
 const CGST_OUTPUT_CODE = "2102";
 const SGST_OUTPUT_CODE = "2103";
@@ -73,6 +77,7 @@ router.get("/:id", async (req, res) => {
     where: { id: req.params.id, organizationId },
     include: {
       businessPartner: true, lines: { include: { item: true } }, journalEntry: { include: { journalLines: true } },
+      charges: { include: { account: { select: { accountCode: true, accountName: true } } }, orderBy: { sortOrder: "asc" } },
       salesOrder: { select: { id: true, soNumber: true } },
     },
   });
@@ -93,6 +98,7 @@ router.get("/:id/pdf", async (req, res) => {
       businessPartner: { select: { name: true, gstin: true, address: true, phone: true, email: true } },
       branch: { select: { name: true, gstin: true, address: true, phone: true, email: true } },
       lines: { include: { item: { select: { sku: true, name: true, hsnCode: true, uom: true } } } },
+      charges: { orderBy: { sortOrder: "asc" } },
       salesOrder: { select: { soNumber: true } },
     },
   });
@@ -150,6 +156,13 @@ router.get("/:id/pdf", async (req, res) => {
       cgstAmount: Number(l.cgstAmount), sgstAmount: Number(l.sgstAmount), igstAmount: Number(l.igstAmount),
       lineTotal: Number(l.lineTotal),
     })),
+    // Shown as their own lines under the goods, with a note that the tax
+    // is already in the figures above. A customer reading the invoice has
+    // to be able to see what the freight was; a customer reading a tax
+    // column beside it would reasonably expect that tax to be additional,
+    // and it is not - it is inside the goods lines, which is where the Act
+    // puts it.
+    charges: invoice.charges.map((c) => ({ label: c.label, amount: Number(c.amount) })),
   });
 
   res.setHeader("Content-Type", "application/pdf");
@@ -220,7 +233,7 @@ router.post("/", canPost, async (req, res) => {
   if (!organizationId) return;
 
   const {
-    businessPartnerId, invoiceDate, branchId, narration, lines, discountType, discountValue,
+    businessPartnerId, invoiceDate, branchId, narration, lines, discountType, discountValue, charges,
     currency, exchangeRate, exportType, lutBondNumber, lutBondDate,
     shippingBillNumber, shippingBillDate, portCode, salesOrderId,
   } = req.body ?? {};
@@ -437,10 +450,83 @@ router.post("/", canPost, async (req, res) => {
   // customer — never fall back to CGST+SGST just because a foreign
   // business partner has no Indian state code set.
   const interState = isForeign ? true : isInterState(branch?.stateCode, customer.stateCode);
+
+  // FREIGHT, PACKING, INSURANCE. Document-level amounts, each with its own
+  // income head, PRORATED across the lines below so that GST on them follows
+  // the goods.
+  //
+  // Section 15(2)(c) puts incidental expenses inside the value of the supply
+  // and section 8(a) taxes a composite supply at the rate of the principal
+  // one, so freight on an invoice for 18% goods is taxed at 18% under the
+  // goods' HSN - not at 5% under SAC 9965. Prorating makes that true by
+  // construction: a charge never has a rate of its own to get wrong.
+  //
+  // THE LABEL AND THE ACCOUNT COME FROM THE CHARGE MASTER, NOT FROM THE
+  // REQUEST. All an invoice sends is a chargeTypeId and an amount. That is
+  // what makes "Delivery charges" the same three words on every document
+  // and 5002 the same head every time - see migration_055 for why the free
+  // text this replaced could not be left alone.
+  //
+  // The row is still written with its OWN copy of label and accountId,
+  // snapshotted here, so renaming a charge type next year does not restate
+  // an invoice issued today. chargeTypeId is stored alongside so a report
+  // can group by type across such a rename.
+  type ChargeInput = { chargeTypeId?: string; amount?: number };
+  const chargeInputs: ChargeInput[] = Array.isArray(charges) ? charges : [];
+  if (chargeInputs.length > 20) {
+    return res.status(400).json({ message: "An invoice can carry at most 20 charges." });
+  }
+  const chargeTypeIds = [...new Set(chargeInputs.map((c) => String(c.chargeTypeId ?? "")))];
+  const chargeTypes = chargeTypeIds.length
+    ? await prisma.chargeType.findMany({
+        where: { id: { in: chargeTypeIds }, organizationId, isActive: true },
+        include: { account: { select: { id: true, accountCode: true, accountType: true, isGroup: true } } },
+      })
+    : [];
+  const chargeTypeById = new Map(chargeTypes.map((t) => [t.id, t]));
+  for (const c of chargeInputs) {
+    const type = chargeTypeById.get(String(c.chargeTypeId ?? ""));
+    if (!type) {
+      return res.status(400).json({
+        message: "Every charge must name an active charge type from the Charge Master.",
+      });
+    }
+    if (!(Number(c.amount ?? 0) > 0)) {
+      return res.status(400).json({ message: `Charge "${type.label}" must be a positive amount.` });
+    }
+    // The master refuses these at creation, so reaching them here means the
+    // account was changed underneath a type that already existed. Checked
+    // again rather than trusted, because the cost of being wrong is a
+    // recovery buried in Sales Revenue where no report can find it again.
+    if (type.account.accountType !== "INCOME" || type.account.isGroup) {
+      return res.status(400).json({
+        message: `Charge "${type.label}" points at an account that is no longer a postable income head.`,
+      });
+    }
+    if (type.account.accountCode === SALES_REVENUE_CODE) {
+      return res.status(400).json({
+        message: `Charge "${type.label}" cannot post to Sales Revenue \u2014 use a separate head such as ` +
+          `Freight & Delivery Recovered, so recovered charges can be read against what they cost.`,
+      });
+    }
+  }
+  const chargeRows = chargeInputs.map((c, i) => {
+    const type = chargeTypeById.get(String(c.chargeTypeId))!;
+    return {
+      chargeTypeId: type.id,
+      label: type.label,
+      accountId: type.accountId,
+      amount: round2(Number(c.amount)),
+      sortOrder: i,
+    };
+  });
+  const chargesTotal = round2(chargeRows.reduce((s, c) => s + c.amount, 0));
+
   const discountLines = computeDiscountedLines(
     typedLines.map((l) => ({ quantity: l.quantity, rate: l.rate, taxRate: l.taxRate ?? 0, discountType: l.discountType, discountValue: l.discountValue })),
     { type: discountType, value: discountValue },
-    interState
+    interState,
+    chargesTotal
   );
 
   const count = await prisma.salesInvoice.count({ where: { organizationId } });
@@ -506,6 +592,14 @@ router.post("/", canPost, async (req, res) => {
         data: [
           { journalEntryId: journalEntry.id, accountId: tradeReceivables.id, businessPartnerId: customer.id, debit: grandTotal, credit: 0, narration: `Receivable from ${customer.name}` },
           { journalEntryId: journalEntry.id, accountId: salesRevenue.id, businessPartnerId: null, debit: 0, credit: subtotal, narration: `Sales revenue — ${invoiceNumber}` },
+          // Each charge to its OWN head, at its full amount - not prorated.
+          // The proration is a GST device: it decides which line carries the
+          // tax. The revenue itself belongs where somebody put it, whole, or
+          // the P&L cannot answer "what did we recover on freight".
+          ...chargeRows.map((c) => ({
+            journalEntryId: journalEntry.id, accountId: c.accountId, businessPartnerId: null,
+            debit: 0, credit: c.amount, narration: `${c.label} — ${invoiceNumber}`,
+          })),
           ...(discountTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: discountAllowed!.id, businessPartnerId: null, debit: discountTotal, credit: 0, narration: "Discount allowed" }] : []),
           ...(cgstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: cgstOutput!.id, businessPartnerId: null, debit: 0, credit: cgstTotal, narration: "CGST Output" }] : []),
           ...(sgstTotal > 0 ? [{ journalEntryId: journalEntry.id, accountId: sgstOutput!.id, businessPartnerId: null, debit: 0, credit: sgstTotal, narration: "SGST Output" }] : []),
@@ -549,6 +643,10 @@ router.post("/", canPost, async (req, res) => {
           shippingBillDate: isForeign && shippingBillDate ? new Date(shippingBillDate) : null,
           portCode: isForeign && portCode ? String(portCode) : null,
           salesOrderId: linkedSo?.id ?? null,
+          // The charges themselves. Their TAX is not stored here: it is
+          // already in the lines, because that is where the proration put
+          // it. Storing it twice would be two figures free to disagree.
+          charges: chargeRows.length ? { create: chargeRows } : undefined,
           // Pin the customer's tax identity to this document. GSTR-1 reads
           // these and never the master, so editing a customer later can no
           // longer restate a period that has already been filed — see
