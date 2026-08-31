@@ -476,7 +476,16 @@ router.post("/", canPost, async (req, res) => {
   if (chargeInputs.length > 20) {
     return res.status(400).json({ message: "An invoice can carry at most 20 charges." });
   }
-  const chargeTypeIds = [...new Set(chargeInputs.map((c) => String(c.chargeTypeId ?? "")))];
+  // Only well-formed ids reach the query. An id that is not a uuid - "", or
+  // a charge object with no chargeTypeId at all - goes to Prisma as one
+  // anyway and comes back as P2023, which the error handler turns into a 500
+  // with a stack trace. A malformed request is a 400, and dropping the bad
+  // ids here means the "no such active charge type" refusal below is what
+  // answers, which is both correct and the message the user needs.
+  const CHARGE_TYPE_UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  const chargeTypeIds = [...new Set(
+    chargeInputs.map((c) => String(c.chargeTypeId ?? "")).filter((id) => CHARGE_TYPE_UUID.test(id))
+  )];
   const chargeTypes = chargeTypeIds.length
     ? await prisma.chargeType.findMany({
         where: { id: { in: chargeTypeIds }, organizationId, isActive: true },

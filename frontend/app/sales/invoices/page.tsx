@@ -9,9 +9,10 @@ import CurrencyPicker from "@/components/shared/CurrencyPicker";
 import ItemPicker from "@/components/shared/ItemPicker";
 import CostingMethodGate from "@/components/inventory/CostingMethodGate";
 import {
-  ApiError, createSalesInvoice, downloadSalesInvoicePdf, getBranches, getAccounts, getBusinessPartnerLookup, getCompanyMaster, getDeliveryNotes, getItems, getSalesInvoice,
+  ApiError, createSalesInvoice, downloadSalesInvoicePdf, getBranches, getChargeTypes, getBusinessPartnerLookup, getCompanyMaster, getDeliveryNotes, getItems, getSalesInvoice,
   getSalesInvoices, getSalesOrder, getSalesOrders, lookupCurrencyRate, updateSalesInvoiceReference,
 } from "@/lib/api";
+import type { ChargeType } from "@/lib/api";
 import { computeDiscountedLines, isInterState, round2 } from "@/lib/discountGst";
 import type { Branch, BusinessPartnerLookup, DiscountType, ExportType, Item, SalesInvoice, SalesLineInput, SalesOrder } from "@/lib/types";
 import { SUPPORTED_CURRENCIES, currencySymbol, EXPORT_TYPE_LABELS } from "@/lib/types";
@@ -42,8 +43,11 @@ function SalesInvoicesInner() {
   // taxes a composite supply at the rate of the principal one. Giving the
   // user a rate box for freight would be offering them a way to get that
   // wrong on every invoice.
-  const [charges, setCharges] = useState<{ label: string; accountId: string; amount: string }[]>([]);
-  const [incomeAccounts, setIncomeAccounts] = useState<{ id: string; accountCode: string; accountName: string }[]>([]);
+  // The label and the account are NOT typed here - they come from the
+  // Charge Master, and all this form carries is which type and how much.
+  // See migration_055 for what free text did to reporting.
+  const [charges, setCharges] = useState<{ chargeTypeId: string; amount: string }[]>([]);
+  const [chargeTypes, setChargeTypes] = useState<ChargeType[]>([]);
   const chargesTotal = useMemo(
     () => round2(charges.reduce((s, c) => s + (Number(c.amount) || 0), 0)),
     [charges]
@@ -375,15 +379,12 @@ function SalesInvoicesInner() {
       .catch(() => setCompanyAllowsNegative(false));
   }, []);
 
-  // Heads a charge may post to: every INCOME account except Sales Revenue
-  // itself, which the server refuses anyway. Excluding it here as well
-  // means the user is never offered a choice that will be rejected.
+  // Active charge types only - a retired one must not be offered on a new
+  // invoice, though every invoice that already used it keeps it.
   useEffect(() => {
-    getAccounts()
-      .then((res) => setIncomeAccounts(
-        res.data.filter((a) => a.accountType === "INCOME" && !a.isGroup && a.accountCode !== "5001")
-      ))
-      .catch(() => setIncomeAccounts([]));
+    getChargeTypes()
+      .then((res) => setChargeTypes(res.data))
+      .catch(() => setChargeTypes([]));
   }, []);
 
   async function handleCreate(e: React.FormEvent, override = false) {
@@ -396,8 +397,8 @@ function SalesInvoicesInner() {
         businessPartnerId: linkedSO ? undefined : businessPartnerId, invoiceDate, narration,
         lines: lines.filter((l) => l.itemId && l.quantity > 0),
         charges: charges
-          .filter((c) => c.label.trim() && c.accountId && Number(c.amount) > 0)
-          .map((c) => ({ label: c.label.trim(), accountId: c.accountId, amount: Number(c.amount) })),
+          .filter((c) => c.chargeTypeId && Number(c.amount) > 0)
+          .map((c) => ({ chargeTypeId: c.chargeTypeId, amount: Number(c.amount) })),
         discountType: invoiceDiscountType || null,
         discountValue: invoiceDiscountValue ? Number(invoiceDiscountValue) : 0,
         currency, exchangeRate: isForeign ? Number(exchangeRate) : undefined,
@@ -638,32 +639,33 @@ function SalesInvoicesInner() {
               <table className="ent-table" style={{ marginBottom: 8 }}>
                 <thead>
                   <tr>
-                    <th style={{ width: "34%" }}>Charge</th>
-                    <th style={{ width: "44%" }}>Posts to</th>
+                    <th style={{ width: "40%" }}>Charge</th>
+                    <th style={{ width: "38%" }}>Credits</th>
                     <th style={{ width: "18%" }}>Amount</th>
                     <th style={{ width: "4%" }}></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {charges.map((c, i) => (
+                  {charges.map((c, i) => {
+                    // The account is shown, not chosen. It belongs to the
+                    // charge type, and letting it be overridden here would
+                    // reopen the drift the master was built to close.
+                    const type = chargeTypes.find((t) => t.id === c.chargeTypeId);
+                    return (
                     <tr key={i}>
                       <td>
-                        <input
-                          className="ent-fc" maxLength={60} placeholder="e.g. Delivery charges"
-                          value={c.label}
-                          onChange={(e) => setCharges((cs) => cs.map((x, idx) => idx === i ? { ...x, label: e.target.value } : x))}
-                        />
-                      </td>
-                      <td>
                         <select
-                          className="ent-fc" value={c.accountId}
-                          onChange={(e) => setCharges((cs) => cs.map((x, idx) => idx === i ? { ...x, accountId: e.target.value } : x))}
+                          className="ent-fc" value={c.chargeTypeId}
+                          onChange={(e) => setCharges((cs) => cs.map((x, idx) => idx === i ? { ...x, chargeTypeId: e.target.value } : x))}
                         >
-                          <option value="">Select an income account…</option>
-                          {incomeAccounts.map((a) => (
-                            <option key={a.id} value={a.id}>{a.accountCode} {a.accountName}</option>
+                          <option value="">Select a charge…</option>
+                          {chargeTypes.map((t) => (
+                            <option key={t.id} value={t.id}>{t.label}</option>
                           ))}
                         </select>
+                      </td>
+                      <td style={{ fontSize: 12, color: "var(--color-muted)" }}>
+                        {type ? `${type.account.accountCode} ${type.account.accountName}` : "—"}
                       </td>
                       <td>
                         <input
@@ -676,17 +678,28 @@ function SalesInvoicesInner() {
                         <button type="button" className="ent-ia ent-ia-del" onClick={() => setCharges((cs) => cs.filter((_, idx) => idx !== i))}>✕</button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             )}
             <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 12px" }}>
-              <button
-                type="button" className="ent-add-row" style={{ margin: 0 }}
-                onClick={() => setCharges((cs) => [...cs, { label: "", accountId: "", amount: "" }])}
-              >
-                + Add charge (freight, packing, insurance)
-              </button>
+              {/* No button at all when the master is empty, and a sentence
+                  saying where to go instead. An "Add charge" that can only
+                  produce an empty dropdown is worse than no button. */}
+              {chargeTypes.length > 0 ? (
+                <button
+                  type="button" className="ent-add-row" style={{ margin: 0 }}
+                  onClick={() => setCharges((cs) => [...cs, { chargeTypeId: "", amount: "" }])}
+                >
+                  + Add charge (freight, packing, insurance)
+                </button>
+              ) : (
+                <span style={{ fontSize: 11.5, color: "var(--color-muted)" }}>
+                  To charge delivery, packing or insurance on an invoice, set the charges up once under
+                  Configuration &rsaquo; Charge Master.
+                </span>
+              )}
               {charges.length > 0 && (
                 <span style={{ fontSize: 11.5, color: "var(--color-muted)" }}>
                   Charges are spread across the lines above by value and taxed at the goods&rsquo; rate,
