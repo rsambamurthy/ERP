@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { Router } from "express";
 import type { OrgUser, User } from "@prisma/client";
 import { prisma } from "../db";
@@ -6,6 +7,19 @@ import { generateOtp, otpExpiry, sendOtp } from "../lib/otp";
 import { signToken } from "../lib/jwt";
 import { builtInPermissions, Permission } from "../lib/permissions";
 import { deniedModuleCodes } from "../lib/entitlements";
+import { applyDomainSelection, DomainSelectionError, provisionOrganization } from "../lib/provisioning";
+
+// 24h — the window a signup has to click the verification link before the
+// PendingRegistration is treated as expired and a fresh /register call is
+// needed to get a new one. Confirmed with the user as an acceptable expiry.
+const PENDING_REGISTRATION_TTL_MS = 24 * 60 * 60 * 1000;
+
+function generateVerificationToken() {
+  // 32 random bytes -> 64 hex chars, matching pending_registrations.token
+  // VARCHAR(64). Unguessable (256 bits of entropy) since this token alone —
+  // no password, no OTP — is what proves the email inbox was reached.
+  return crypto.randomBytes(32).toString("hex");
+}
 
 const router = Router();
 
@@ -85,108 +99,144 @@ async function resolvePermissions(role: string | null, customRoleId: string | nu
   return [];
 }
 
-// POST /auth/register — create user + org shell (status PENDING_VERIFICATION)
+// Looks up the (single) OWNER user created for an organization, with the
+// orgUsers include buildLoginResponse needs. Used by /verify-email for both
+// the first-click and the idempotent-replay path below.
+async function userForOrganization(organizationId: string) {
+  const orgUser = await prisma.orgUser.findFirst({ where: { organizationId } });
+  if (!orgUser) return null;
+  return prisma.user.findUnique({ where: { id: orgUser.userId }, include: { orgUsers: true } });
+}
+
+// POST /auth/register — stage a signup as a PendingRegistration. No
+// Organization/User row is created here — that only happens once the
+// emailed verification link is clicked (POST /auth/verify-email) after
+// domain selection (POST /onboarding/domain). Both email and phone are
+// mandatory: email because the verification link has to go somewhere,
+// phone because the user asked for it to be required contact info even
+// though nothing is ever sent to it (no SMS gateway) or verified against
+// it — it's a plain mandatory field, not a second verification channel.
 router.post("/register", async (req, res) => {
-  const { businessName, name, email, phone, password } = req.body ?? {};
-  if (!businessName || !name || !password || (!email && !phone)) {
+  const { businessName, name, email, phone, password, confirmPassword } = req.body ?? {};
+  if (!businessName || !name || !email || !phone || !password) {
     return res.status(400).json({
-      message: "businessName, name, password, and at least one of email/phone are required.",
+      message: "businessName, name, email, phone, and password are required.",
     });
   }
+  if (confirmPassword !== undefined && password !== confirmPassword) {
+    return res.status(400).json({ message: "Password and confirm password do not match." });
+  }
+  if (password.length < 8) {
+    return res.status(400).json({ message: "Password must be at least 8 characters." });
+  }
 
-  const existing = await prisma.user.findFirst({
-    where: { OR: [email ? { email } : undefined, phone ? { phone } : undefined].filter(Boolean) as any },
+  const existingUser = await prisma.user.findFirst({
+    where: { OR: [{ email }, { phone }] },
   });
-  if (existing) {
+  if (existingUser) {
     return res.status(409).json({ message: "An account with that email or phone already exists." });
   }
 
   const passwordHash = await hashPassword(password);
-  const otp = generateOtp();
+  const token = generateVerificationToken();
+  const expiresAt = new Date(Date.now() + PENDING_REGISTRATION_TTL_MS);
 
-  const result = await prisma.$transaction(async (tx) => {
+  // A signup that never finished (or never checked their inbox) may retry
+  // with the same email — invalidate their earlier unconsumed link rather
+  // than leaving two live tokens for the same address, then issue this
+  // fresh one.
+  await prisma.pendingRegistration.deleteMany({
+    where: { email, consumedAt: null },
+  });
+
+  const pending = await prisma.pendingRegistration.create({
+    data: { businessName, name, email, phone, passwordHash, token, expiresAt },
+  });
+
+  res.status(201).json({ pendingRegistrationId: pending.id });
+});
+
+// POST /auth/verify-email — click-through target for the link sent by
+// POST /onboarding/domain. Creates the real Organization/User/OrgUser rows
+// from the staged PendingRegistration, applies the domain selection it
+// staged, runs provisionOrganization(), and logs the new owner straight in.
+// Idempotent: a second hit on the same token (double-click, an email
+// client's link-prefetch, the user going back) finds consumedAt already set
+// and just re-derives the same login response from createdOrganizationId
+// instead of erroring or provisioning twice.
+router.post("/verify-email", async (req, res) => {
+  const { token } = req.body ?? {};
+  if (!token) return res.status(400).json({ message: "token is required." });
+
+  const pending = await prisma.pendingRegistration.findUnique({ where: { token } });
+  if (!pending) return res.status(404).json({ message: "Verification link not found." });
+
+  if (pending.consumedAt) {
+    if (!pending.createdOrganizationId) {
+      return res.status(409).json({ message: "This link has already been used." });
+    }
+    const user = await userForOrganization(pending.createdOrganizationId);
+    if (!user) return res.status(409).json({ message: "This link has already been used." });
+    try {
+      return res.json(await buildLoginResponse(user));
+    } catch (err) {
+      if (err instanceof LoginBlocked) return res.status(err.status).json({ message: err.message });
+      throw err;
+    }
+  }
+
+  if (pending.expiresAt < new Date()) {
+    return res.status(410).json({ message: "This verification link has expired — please sign up again." });
+  }
+
+  const domains = pending.domains as Record<string, unknown>;
+  if (!domains || Object.keys(domains).length === 0) {
+    return res.status(400).json({ message: "Domain selection is incomplete — please sign up again." });
+  }
+
+  const { organization } = await prisma.$transaction(async (tx) => {
     const organization = await tx.organization.create({
-      data: { name: businessName, status: "PENDING_VERIFICATION" },
+      data: { name: pending.businessName, status: "PENDING_DOMAIN" },
     });
     const user = await tx.user.create({
-      data: { name, email: email || null, phone: phone || null, passwordHash },
+      data: {
+        name: pending.name, email: pending.email, phone: pending.phone,
+        passwordHash: pending.passwordHash, isVerified: true,
+      },
     });
     await tx.orgUser.create({
       data: { organizationId: organization.id, userId: user.id, role: "OWNER" },
     });
     await tx.onboardingState.create({
-      data: {
-        organizationId: organization.id,
-        step: "SIGNUP",
-        otpCode: otp,
-        otpExpiresAt: otpExpiry(),
-      },
+      data: { organizationId: organization.id, step: "VERIFIED" },
+    });
+    await tx.pendingRegistration.update({
+      where: { id: pending.id },
+      data: { consumedAt: new Date(), createdOrganizationId: organization.id },
     });
     return { organization, user };
   });
 
-  sendOtp(email || phone, otp);
-
-  // Dev convenience: no email/SMS provider is wired up yet, so surface the
-  // OTP directly in the response until a real provider is in place. Set
-  // EXPOSE_DEV_OTP=false in Railway to turn this off (e.g. before going live).
-  const exposeDevOtp = process.env.EXPOSE_DEV_OTP !== "false";
-
-  res.status(201).json({
-    organizationId: result.organization.id,
-    userId: result.user.id,
-    ...(exposeDevOtp ? { devOtp: otp } : {}),
-  });
-});
-
-// POST /auth/verify-otp
-router.post("/verify-otp", async (req, res) => {
-  const { organizationId, otp } = req.body ?? {};
-  if (!organizationId || !otp) {
-    return res.status(400).json({ message: "organizationId and otp are required." });
+  try {
+    await applyDomainSelection(organization.id, domains);
+    await provisionOrganization(organization.id);
+  } catch (err) {
+    // The organization/user/token bookkeeping above already committed, so
+    // this isn't retried automatically — logged for follow-up, and the
+    // owner still gets a working (if unprovisioned) login below rather than
+    // a dead-end error after their link is already spent.
+    console.error("[verify-email] domain/provisioning step failed:", err instanceof DomainSelectionError ? err.message : err);
   }
 
-  const state = await prisma.onboardingState.findUnique({ where: { organizationId } });
-  if (!state) return res.status(404).json({ message: "Organization not found." });
-  if (!state.otpCode || state.otpCode !== otp) {
-    return res.status(400).json({ message: "Incorrect OTP." });
+  const user = await userForOrganization(organization.id);
+  if (!user) return res.status(500).json({ message: "Verification succeeded but sign-in failed — try logging in." });
+
+  try {
+    res.json(await buildLoginResponse(user));
+  } catch (err) {
+    if (err instanceof LoginBlocked) return res.status(err.status).json({ message: err.message });
+    throw err;
   }
-  if (!state.otpExpiresAt || state.otpExpiresAt < new Date()) {
-    return res.status(400).json({ message: "OTP expired — request a new one." });
-  }
-
-  await prisma.$transaction([
-    prisma.organization.update({
-      where: { id: organizationId },
-      data: { status: "PENDING_DOMAIN" },
-    }),
-    prisma.onboardingState.update({
-      where: { organizationId },
-      data: { step: "VERIFIED", otpCode: null, otpExpiresAt: null },
-    }),
-    prisma.user.updateMany({
-      where: { orgUsers: { some: { organizationId } } },
-      data: { isVerified: true },
-    }),
-  ]);
-
-  // Log the owner straight in — the rest of the wizard (domain selection,
-  // provisioning) and the dashboard/accounting screens that follow all need
-  // an authenticated session.
-  const orgUser = await prisma.orgUser.findFirst({ where: { organizationId } });
-  const token = orgUser
-    ? signToken({
-        userId: orgUser.userId,
-        organizationId,
-        role: orgUser.role,
-        customRoleId: orgUser.customRoleId,
-        branchId: orgUser.branchId,
-        isPlatformAdmin: false,
-      })
-    : null;
-  const permissions = orgUser ? await resolvePermissions(orgUser.role, orgUser.customRoleId) : [];
-
-  res.json({ ok: true, token, permissions, customRoleId: orgUser?.customRoleId ?? null });
 });
 
 // POST /auth/login — for returning users (registration already happened).

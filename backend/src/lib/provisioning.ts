@@ -2,6 +2,62 @@ import { prisma } from "../db";
 
 export class ProvisioningError extends Error {}
 
+export class DomainSelectionError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+// Validates a DomainDetailsMap and writes it onto an already-created
+// organization — sets org_domains, flips the org to PENDING_PROVISION, and
+// advances onboarding_state to DOMAIN_SELECTED. Doesn't provision the chart
+// of accounts itself; call provisionOrganization() next for that. Used by
+// POST /auth/verify-email, right after it creates the organization from a
+// consumed PendingRegistration (see routes/auth.ts) — pulled out here
+// rather than left inline so the route stays about orchestration, not
+// domain-write mechanics.
+export async function applyDomainSelection(organizationId: string, domains: Record<string, unknown>) {
+  const org = await prisma.organization.findUnique({ where: { id: organizationId } });
+  if (!org) throw new DomainSelectionError(404, "Organization not found.");
+  if (org.domainLockedAt) {
+    throw new DomainSelectionError(409, "This organization's domains are locked — it already has a posted transaction.");
+  }
+
+  const codes = Object.keys(domains);
+  if (codes.length === 0) {
+    throw new DomainSelectionError(400, "Select at least one domain.");
+  }
+
+  const domainTypes = await prisma.domainType.findMany({ where: { code: { in: codes } } });
+  if (domainTypes.length !== codes.length) {
+    throw new DomainSelectionError(400, "Unknown domain code.");
+  }
+
+  await prisma.$transaction([
+    ...domainTypes.map((dt) =>
+      prisma.orgDomain.upsert({
+        where: { organizationId_domainTypeId: { organizationId, domainTypeId: dt.id } },
+        update: { domainDetails: domains[dt.code] as any },
+        create: {
+          organizationId,
+          domainTypeId: dt.id,
+          domainDetails: domains[dt.code] as any,
+        },
+      })
+    ),
+    prisma.organization.update({
+      where: { id: organizationId },
+      data: { status: "PENDING_PROVISION" },
+    }),
+    prisma.onboardingState.update({
+      where: { organizationId },
+      data: { step: "DOMAIN_SELECTED" },
+    }),
+  ]);
+}
+
 // The fixed-asset classes every organization starts with — the same twelve
 // migration_034 seeded onto organizations that already existed. Without this,
 // an org provisioned after migration_034 would get the asset accounts but no

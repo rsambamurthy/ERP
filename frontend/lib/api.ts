@@ -48,7 +48,6 @@ import type {
   JournalLineInput,
   LedgerResponse,
   MenuConfigMap,
-  OnboardingStatus,
   OrgRole,
   OrgUsersResponse,
   PnLResponse,
@@ -138,11 +137,14 @@ export function registerUser(payload: RegisterPayload) {
   });
 }
 
-// POST /auth/verify-otp
-export function verifyOtp(organizationId: string, otp: string) {
-  return request<{ ok: true; token: string | null; permissions: Permission[] }>("/auth/verify-otp", {
+// POST /auth/verify-email — click-through target for the emailed
+// verification link. Same response shape as login()/acceptInvite(): the
+// organization is created and the owner logged straight in as part of this
+// call.
+export function verifyEmail(token: string) {
+  return request<MpinLoginResponse>("/auth/verify-email", {
     method: "POST",
-    body: JSON.stringify({ organizationId, otp }),
+    body: JSON.stringify({ token }),
   });
 }
 
@@ -200,27 +202,15 @@ export function getDomainTypes() {
   return request<DomainType[]>("/domain-types");
 }
 
-// POST /onboarding/domain — upserts one or more domains for the org
-export function submitDomains(organizationId: string, domains: DomainDetailsMap) {
+// POST /onboarding/domain — stages the domain selection onto the pending
+// (unverified) registration and triggers the verification email. There's no
+// organization yet at this point, so this now keys off pendingRegistrationId
+// rather than organizationId — see backend/src/routes/onboarding.ts.
+export function submitDomains(pendingRegistrationId: string, domains: DomainDetailsMap) {
   return request<{ ok: true }>("/onboarding/domain", {
     method: "POST",
-    body: JSON.stringify({ organizationId, domains }),
+    body: JSON.stringify({ pendingRegistrationId, domains }),
   });
-}
-
-// POST /onboarding/provision
-export function provisionWorkspace(organizationId: string) {
-  return request<{ ok: true }>("/onboarding/provision", {
-    method: "POST",
-    body: JSON.stringify({ organizationId }),
-  });
-}
-
-// GET /onboarding/status
-export function getOnboardingStatus(organizationId: string) {
-  return request<OnboardingStatus>(
-    `/onboarding/status?organizationId=${encodeURIComponent(organizationId)}`
-  );
 }
 
 // ── Chart of Accounts ────────────────────────────────────────────────────────

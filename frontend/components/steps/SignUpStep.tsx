@@ -18,7 +18,9 @@ export default function SignUpStep({ loading, error, onSubmit }: Props) {
     email: "",
     phone: "",
     password: "",
+    confirmPassword: "",
   });
+  const [mismatchError, setMismatchError] = useState<string | null>(null);
 
   function update<K extends keyof RegisterPayload>(key: K, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -29,6 +31,11 @@ export default function SignUpStep({ loading, error, onSubmit }: Props) {
       className="flex flex-col gap-4"
       onSubmit={(e) => {
         e.preventDefault();
+        if (form.password !== form.confirmPassword) {
+          setMismatchError("Password and confirm password do not match.");
+          return;
+        }
+        setMismatchError(null);
         onSubmit(form);
       }}
     >
@@ -66,7 +73,15 @@ export default function SignUpStep({ loading, error, onSubmit }: Props) {
         value={form.password}
         onChange={(e) => update("password", e.target.value)}
       />
-      {error && <p className="auth-err">{error}</p>}
+      <Input
+        label="Confirm password"
+        type="password"
+        required
+        minLength={8}
+        value={form.confirmPassword}
+        onChange={(e) => update("confirmPassword", e.target.value)}
+      />
+      {(mismatchError || error) && <p className="auth-err">{mismatchError || error}</p>}
       <Button type="submit" loading={loading}>
         Continue
       </Button>

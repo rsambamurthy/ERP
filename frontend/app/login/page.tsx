@@ -4,15 +4,16 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AuthCard from "@/components/ui/AuthCard";
-import { ApiError, getMpinStatus, requestMpinOtp, setMpin, verifyMpin, type MpinLoginResponse } from "@/lib/api";
+import { ApiError, getMpinStatus, login, requestMpinOtp, setMpin, verifyMpin, type MpinLoginResponse } from "@/lib/api";
 import { setSession } from "@/lib/auth";
 
 // SmartAppt Gold-style login: identifier -> (M-PIN, if already set) or
 // (OTP -> set a new M-PIN) -> in. Same navy/blue enterprise theme as the
 // rest of the app (see .auth-* classes in globals.css). Email/phone +
-// password (POST /auth/login) still works on the backend for anyone who
-// hasn't set an M-PIN yet — this screen just doesn't surface that path
-// anymore, matching the reference screen.
+// password (POST /auth/login) is surfaced as an alternative right on this
+// screen too — "Sign in with password instead" toggles the identifier step
+// into a one-shot identifier+password form, for anyone who hasn't set an
+// M-PIN yet or who'd rather not depend on OTP delivery.
 type Step = "identifier" | "mpin" | "otp" | "set_mpin";
 
 function PinInput({ value, onChange, autoFocus }: { value: string; onChange: (v: string) => void; autoFocus?: boolean }) {
@@ -41,10 +42,27 @@ export default function LoginPage() {
   const [devOtp, setDevOtp] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [usePassword, setUsePassword] = useState(false);
+  const [password, setPasswordValue] = useState("");
 
   function loginSuccess(res: MpinLoginResponse) {
     setSession(res.token, res.organizationId, res.role, res.isPlatformAdmin, res.name, res.permissions, res.customRoleId, res.deniedModules);
     router.push(res.isPlatformAdmin ? "/admin" : "/dashboard");
+  }
+
+  async function handlePasswordSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      // Same "@ means email" convention as the backend's identifierWhere().
+      const payload = identifier.includes("@") ? { email: identifier, password } : { phone: identifier, password };
+      loginSuccess(await login(payload));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Incorrect email/phone or password.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleIdentifierSubmit(e: React.FormEvent) {
@@ -130,9 +148,9 @@ export default function LoginPage() {
         {error && <div className="auth-err" style={{ marginBottom: "1rem" }}>{error}</div>}
 
         {step === "identifier" && (
-          <form onSubmit={handleIdentifierSubmit}>
+          <form onSubmit={usePassword ? handlePasswordSubmit : handleIdentifierSubmit}>
             <div className="auth-fg" style={{ marginBottom: "1rem" }}>
-              <label className="auth-fl">Email or mobile number</label>
+              <label className="auth-fl">Email ID or mobile number</label>
               <input
                 type="text"
                 placeholder="you@company.com or +91 98765 43210"
@@ -143,9 +161,40 @@ export default function LoginPage() {
                 autoFocus
               />
             </div>
+
+            {usePassword && (
+              <div className="auth-fg" style={{ marginBottom: "1rem" }}>
+                <label className="auth-fl">Password</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPasswordValue(e.target.value)}
+                  required
+                  className="auth-fc"
+                />
+              </div>
+            )}
+
             <button type="submit" className="auth-btn" disabled={loading}>
-              {loading ? "Checking…" : "Continue"}
+              {loading ? (usePassword ? "Logging in…" : "Checking…") : (usePassword ? "Log in" : "Continue")}
             </button>
+
+            <div style={{ textAlign: "center", marginTop: "1rem" }}>
+              <button
+                type="button"
+                className="auth-link"
+                onClick={() => { setUsePassword((v) => !v); setPasswordValue(""); setError(null); }}
+              >
+                {usePassword ? "Sign in with M-PIN instead" : "Sign in with password instead"}
+              </button>
+            </div>
+            {usePassword && (
+              <div style={{ textAlign: "center", marginTop: "0.5rem" }}>
+                <Link href="/forgot-password" className="auth-link">
+                  Forgot password?
+                </Link>
+              </div>
+            )}
             <div style={{ textAlign: "center", marginTop: "1rem" }}>
               <Link href="/register" className="auth-link">
                 Register Company

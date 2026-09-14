@@ -1,23 +1,36 @@
 import { Router } from "express";
 import { prisma } from "../db";
 import { provisionOrganization, ProvisioningError } from "../lib/provisioning";
+import { sendEmail } from "../lib/email";
 
 const router = Router();
 
-// POST /onboarding/domain — upsert org_domains (one or more), rejected once
-// domain_locked_at is set.
+// Base URL the verification link is built against — the frontend's own
+// origin, since that's where /verify-email?token=... is served from. Falls
+// back to localhost so a dev box with no env var set still produces a
+// clickable (if locally-scoped) link rather than a broken one.
+const FRONTEND_URL = (process.env.FRONTEND_URL || "http://localhost:3000").replace(/\/$/, "");
+
+// POST /onboarding/domain — for a still-pending (unverified) registration:
+// stages the domain selection onto pending_registrations.domains (no
+// org_domains row exists yet, because no organization exists yet) and sends
+// the verification email. This is "go till the last but don't create
+// workspace" (step 3) followed by "send a verification email" (step 4) from
+// the flow the user specified — the actual organization/org_domains rows
+// aren't written until POST /auth/verify-email consumes the token.
 router.post("/domain", async (req, res) => {
-  const { organizationId, domains } = req.body ?? {};
-  if (!organizationId || !domains || typeof domains !== "object") {
-    return res.status(400).json({ message: "organizationId and domains are required." });
+  const { pendingRegistrationId, domains } = req.body ?? {};
+  if (!pendingRegistrationId || !domains || typeof domains !== "object") {
+    return res.status(400).json({ message: "pendingRegistrationId and domains are required." });
   }
 
-  const org = await prisma.organization.findUnique({ where: { id: organizationId } });
-  if (!org) return res.status(404).json({ message: "Organization not found." });
-  if (org.domainLockedAt) {
-    return res.status(409).json({
-      message: "This organization's domains are locked — it already has a posted transaction.",
-    });
+  const pending = await prisma.pendingRegistration.findUnique({ where: { id: pendingRegistrationId } });
+  if (!pending) return res.status(404).json({ message: "Registration not found." });
+  if (pending.consumedAt) {
+    return res.status(409).json({ message: "This registration has already been verified." });
+  }
+  if (pending.expiresAt < new Date()) {
+    return res.status(410).json({ message: "This registration has expired — please sign up again." });
   }
 
   const codes = Object.keys(domains);
@@ -30,27 +43,17 @@ router.post("/domain", async (req, res) => {
     return res.status(400).json({ message: "Unknown domain code." });
   }
 
-  await prisma.$transaction([
-    ...domainTypes.map((dt) =>
-      prisma.orgDomain.upsert({
-        where: { organizationId_domainTypeId: { organizationId, domainTypeId: dt.id } },
-        update: { domainDetails: domains[dt.code] },
-        create: {
-          organizationId,
-          domainTypeId: dt.id,
-          domainDetails: domains[dt.code],
-        },
-      })
-    ),
-    prisma.organization.update({
-      where: { id: organizationId },
-      data: { status: "PENDING_PROVISION" },
-    }),
-    prisma.onboardingState.update({
-      where: { organizationId },
-      data: { step: "DOMAIN_SELECTED" },
-    }),
-  ]);
+  await prisma.pendingRegistration.update({
+    where: { id: pendingRegistrationId },
+    data: { domains },
+  });
+
+  const verifyLink = `${FRONTEND_URL}/verify-email?token=${pending.token}`;
+  void sendEmail(
+    pending.email,
+    "Verify your SmartERP registration",
+    `Hi ${pending.name},\n\nClick the link below to verify your email and create your SmartERP workspace for ${pending.businessName}. This link expires in 24 hours.\n\n${verifyLink}\n\nIf you didn't request this, you can ignore this email.`
+  );
 
   res.json({ ok: true });
 });

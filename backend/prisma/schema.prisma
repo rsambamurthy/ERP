@@ -172,6 +172,11 @@ model Organization {
   currencyRates    CurrencyRate[]
   chargeTypes      ChargeType[]
   integrationConnection IntegrationConnection?
+  // The PendingRegistration this org was ultimately created from — set on
+  // exactly one row once POST /auth/verify-email consumes it. A list only
+  // because that's how Prisma models the reverse of PendingRegistration's
+  // optional FK; in practice it never has more than one member.
+  pendingRegistrations PendingRegistration[]
 
   @@map("organizations")
 }
@@ -514,6 +519,29 @@ model OnboardingState {
   organization Organization @relation(fields: [organizationId], references: [id])
 
   @@map("onboarding_state")
+}
+
+// Staged company registration — see migration_056's comment. Holds
+// everything POST /auth/register + POST /onboarding/domain collect, keyed
+// by an emailed verification token; POST /auth/verify-email is what turns
+// one of these into a real Organization/User/OrgUser.
+model PendingRegistration {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  token                  String    @unique @db.VarChar(64)
+  businessName           String    @map("business_name") @db.VarChar(200)
+  name                   String    @db.VarChar(150)
+  email                  String    @db.VarChar(255)
+  phone                  String    @db.VarChar(20)
+  passwordHash           String    @map("password_hash")
+  domains                Json      @default("{}")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  expiresAt              DateTime  @map("expires_at")
+  consumedAt             DateTime? @map("consumed_at")
+  createdOrganizationId  String?   @map("created_organization_id") @db.Uuid
+
+  createdOrganization Organization? @relation(fields: [createdOrganizationId], references: [id])
+
+  @@map("pending_registrations")
 }
 
 // Per-org, per-module subscription standing — mirrors SmartAppt's

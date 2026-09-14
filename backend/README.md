@@ -42,8 +42,9 @@ doesn't need a DB connection.
 
 | Endpoint | Notes |
 |---|---|
-| `POST /auth/register` | Creates `organizations` + `users` + `org_users` (OWNER) + `onboarding_state`. Returns `devOtp` in the response (until a real SMS/email provider is wired up — set `EXPOSE_DEV_OTP=false` to turn that off). |
-| `POST /auth/verify-otp` | Checks the OTP, advances org to `PENDING_DOMAIN`, and returns a JWT (`token`) — the wizard and every screen after it use this. |
+| `POST /auth/register` | Stages a signup as a `pending_registrations` row — no `organizations`/`users` row is created yet. `businessName`, `name`, `email`, `phone`, and `password` are all required (phone is mandatory contact info but is never verified — no SMS gateway exists). Re-registering the same email while an unexpired, unconsumed pending row exists deletes it and issues a fresh one. Returns `{ pendingRegistrationId }`. |
+| `POST /onboarding/domain` | `{ pendingRegistrationId, domains }` — stages the domain selection onto that `pending_registrations` row (JSONB `domains` column; no `org_domains` row exists yet) and emails the verification link to `pending_registrations.email`. 24h expiry, set at `/auth/register` time. |
+| `POST /auth/verify-email` | Click-through target for that emailed link. Creates the real `organizations` + `users` + `org_users` (OWNER) + `onboarding_state` rows from the pending registration, applies the staged domain selection, runs the same provisioning `POST /onboarding/provision` used to do (chart of accounts, asset classes, charge types, modules, head-office branch), marks the pending row consumed, and returns a JWT — same response shape as `/auth/login`. Idempotent: clicking an already-consumed link re-derives the same login instead of erroring or double-provisioning. |
 | `POST /auth/login` | Returning users: email/phone + password → JWT. Rejects (403) a `SUSPENDED` member — see Team / user management below. |
 | `POST /auth/forgot-password` | `{ email\|phone }` → generates a reset OTP if the account exists, returns the same generic message either way (no account enumeration). Returns `devOtp` until a real provider exists. |
 | `POST /auth/reset-password` | `{ email\|phone, otp, newPassword }` → verifies the OTP and sets a new password. Logged-out flow — distinct from `POST /me/change-password` below. |
@@ -52,10 +53,9 @@ doesn't need a DB connection.
 | `POST /auth/mpin/verify` | `{ identifier, mpin }` → JWT, same response shape as `/auth/login`. The normal returning-user login once an M-PIN is set. |
 | `POST /auth/mpin/set` | `{ identifier, otp, mpin }` → verifies the OTP, hashes and stores the M-PIN (`users.mpin_hash`), logs straight in. Covers both first-time setup and "forgot M-PIN" — see `routes/auth.ts`'s note on why that's one endpoint instead of two. |
 | `GET /domain-types` | Reads from the `domain_types` seed. |
-| `POST /onboarding/domain` | Upserts `org_domains` (one or more). Rejects with 409 once `domain_locked_at` is set. |
-| `POST /onboarding/provision` | Seeds `accounts` from core + selected domains' `coa_templates` (flagged `is_system`), enables modules, creates the head-office `branches` row. |
-| `GET /onboarding/status` | Returns `onboarding_state.step`. |
-All routes below require `Authorization: Bearer <token>` from login/verify-otp.
+| `POST /onboarding/provision` | Manual re-provision hook — `{ organizationId }`, seeds `accounts` from core + selected domains' `coa_templates` (flagged `is_system`), enables modules, creates the head-office `branches` row. `POST /auth/verify-email` already calls this internally for a fresh signup; this route exists for re-running it against an existing org (e.g. after Sync from Templates adds new template rows). |
+| `GET /onboarding/status` | Returns `onboarding_state.step`. Not used by the registration wizard anymore (provisioning is synchronous inside `/auth/verify-email`), but left in place for any other caller. |
+All routes below require `Authorization: Bearer <token>` from login/mpin/accept-invite/verify-email.
 
 | Endpoint | Notes |
 |---|---|
@@ -923,10 +923,15 @@ so nothing that worked before this feature existed is newly blocked.
    the app is unaffected.
 4b. Add `SMTP_USER`/`SMTP_PASS` (and `SMTP_HOST`/`SMTP_PORT`/`SMTP_SECURE`
    if your domain's mail isn't GoDaddy Workspace Email — see
-   `.env.example`) to send real email OTPs for registration and M-PIN,
-   through a mailbox on your own domain (e.g. `otp@yourdomain.com`).
-   Optional: without it, `lib/otp.ts` falls back to the same console-log +
-   `devOtp` stub used for phone.
+   `.env.example`) to send real email OTPs for M-PIN/forgot-password, and
+   the registration verification link, through a mailbox on your own domain
+   (e.g. `otp@yourdomain.com`). Optional: without SMTP configured, both fall
+   back to a console-log (`devOtp` in the response for OTPs; the raw link
+   in the server log for registration, which no one but you can see — so
+   registration is effectively unusable in production without this set).
+   Also set `FRONTEND_URL` to your deployed frontend's origin — it's what
+   the registration verification link is built against; unset, it defaults
+   to `http://localhost:3000`.
 5. Once deployed, run the schema, migration, and seed against the Railway
    Postgres instance (from your machine, using the same `DATABASE_URL`):
    ```bash
@@ -961,10 +966,21 @@ so nothing that worked before this feature existed is newly blocked.
   lines (PO-linked bills, to catch a vendor invoicing for quantity that was
   actually returned). Requires `ANTHROPIC_API_KEY`; line-item matching is
   best-effort text matching, not exact.
-- OTP delivery: email sends for real via SMTP (`lib/email.ts`) once
+- OTP delivery (M-PIN, forgot-password — registration no longer uses OTP,
+  see below): email sends for real via SMTP (`lib/email.ts`) once
   `SMTP_USER`/`SMTP_PASS` are set — otherwise, and always for phone (no SMS
   gateway wired up), it falls back to a console-log + `devOtp` in the API
   response.
+- Registration verification: company signup no longer uses an OTP. A signup
+  stages a `pending_registrations` row (`POST /auth/register`), and after
+  domain selection (`POST /onboarding/domain`) an email with a click-to-
+  verify link goes out via the same `lib/email.ts` SMTP path — set
+  `SMTP_USER`/`SMTP_PASS` or the link only ever reaches the server console
+  log (`[email] SMTP not configured ...`), never the signup's actual inbox.
+  Set `FRONTEND_URL` so the link points at the real frontend origin instead
+  of `http://localhost:3000`. The link expires in 24 hours
+  (`pending_registrations.expires_at`); re-registering the same email before
+  that invalidates the old link and issues a fresh one.
 - JWT auth is a shared-secret HS256 token, 30-day expiry, no refresh/revoke
   flow — fine for MVP, not a production auth system.
 - Journal entries don't carry a branch selector in the UI yet — they post

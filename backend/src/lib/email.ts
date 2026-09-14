@@ -56,7 +56,9 @@ function getTransporter(): Transporter | null {
 export async function sendEmail(to: string, subject: string, text: string): Promise<boolean> {
   const tx = getTransporter();
   if (!tx) {
-    console.log(`[email] SMTP not configured — would have sent to ${to}: ${subject}`);
+    // Include the full body, not just the subject — this is the only place
+    // an OTP or a verify-email link surfaces when SMTP isn't configured yet.
+    console.log(`[email] SMTP not configured (SMTP_USER/SMTP_PASS unset) — would have sent to ${to}: ${subject} — ${text}`);
     return false;
   }
   try {

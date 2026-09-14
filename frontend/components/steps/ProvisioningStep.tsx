@@ -1,28 +1,19 @@
-import type { OnboardingStep } from "@/lib/types";
-
-export const PROVISION_LABELS: Record<OnboardingStep, string> = {
-  SIGNUP: "Setting up your account…",
-  VERIFIED: "Account verified…",
-  DOMAIN_SELECTED: "Seeding your chart of accounts…",
-  PROVISIONED: "Workspace ready.",
-};
-
-export default function ProvisioningStep({
-  step,
-  error,
-}: {
-  step: OnboardingStep;
-  error: string | null;
-}) {
+// Final step of the registration wizard. Provisioning is no longer polled
+// from here — POST /auth/verify-email (triggered by the user clicking the
+// emailed link, not by anything in this browser tab) creates the
+// organization and runs provisionOrganization() synchronously in one shot.
+// This step is just the "we sent you a link" confirmation the flow's step 5
+// calls for.
+export default function ProvisioningStep({ email }: { email: string }) {
   return (
     <div className="flex flex-col items-center gap-3 text-center">
-      {!error && (
-        <div
-          className="h-8 w-8 animate-spin rounded-full"
-          style={{ border: "2px solid var(--theme-accent)", borderTopColor: "transparent" }}
-        />
-      )}
-      {error && <p className="auth-err">{error}</p>}
+      <p>
+        We&apos;ve sent a verification link to <strong>{email || "your email"}</strong>.
+      </p>
+      <p style={{ color: "var(--color-muted)" }}>
+        Click the link in that email to verify your address and create your workspace. The link
+        expires in 24 hours.
+      </p>
     </div>
   );
 }
