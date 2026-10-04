@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import AppShell, { useNavGroups } from "@/components/layout/AppShell";
 import GroupIcon from "@/components/layout/GroupIcon";
+import ItemIcon, { hasItemIcon } from "@/components/layout/ItemIcon";
 import { getName } from "@/lib/auth";
 
 // Card launcher used when the "menu cards" preference is on (AppShell's header
@@ -54,7 +55,13 @@ function Cards() {
               className="sa-card-tile"
               style={{ ["--cc" as string]: item.dot || color }}
             >
-              <div className="sa-card-ic"><span className="sa-dot" style={{ background: item.dot || color }} /></div>
+              <div className="sa-card-ic">
+                {hasItemIcon(item.id) ? (
+                  <ItemIcon id={item.id} size={24} />
+                ) : (
+                  <span className="sa-dot" style={{ background: item.dot || color }} />
+                )}
+              </div>
               <div className="sa-card-t">{item.label}</div>
               <Arrow />
             </Link>
