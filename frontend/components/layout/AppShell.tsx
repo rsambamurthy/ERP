@@ -9,6 +9,8 @@ import { getMenuConfig } from "@/lib/api";
 import type { MenuConfigMap } from "@/lib/types";
 import ChatWidget from "@/components/chatbot/ChatWidget";
 
+const OPEN_GROUPS_KEY = "smarterp.openNavGroups";
+
 // Structure ported from SmartAppt Gold's authenticated app shell
 // (frontend/src/components/organisms/Layout.tsx — WebLayout) — sa-shell /
 // sa-header / sa-sidebar / sa-mg-* classes come straight from its
@@ -48,14 +50,36 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     setSidebarOpen(false);
   }, [pathname]);
 
+  // Every page renders its own <AppShell>, so this component remounts on each
+  // navigation and plain useState would reset the open groups every click.
+  // Restore what the user had expanded from sessionStorage, and always open
+  // the group that contains the current page so you land with it expanded.
+  useEffect(() => {
+    let saved: unknown = [];
+    try {
+      saved = JSON.parse(sessionStorage.getItem(OPEN_GROUPS_KEY) ?? "[]");
+    } catch {
+      /* storage unavailable or corrupt — fall back to just the active group */
+    }
+    const next = new Set<string>(Array.isArray(saved) ? (saved as string[]) : []);
+    const active = NAV_GROUPS.find((g) =>
+      g.items.some((i) => pathname === i.path || pathname?.startsWith(i.path + "/"))
+    );
+    if (active) next.add(active.id);
+    setOpenGroups(next);
+  }, [pathname]);
+
   if (!ready) return null;
 
   const toggleGroup = (id: string) => {
-    setOpenGroups((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
+    const next = new Set(openGroups);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setOpenGroups(next);
+    try {
+      sessionStorage.setItem(OPEN_GROUPS_KEY, JSON.stringify(Array.from(next)));
+    } catch {
+      /* storage unavailable — toggle still works for this page view */
+    }
   };
 
   const handleLogout = () => {
