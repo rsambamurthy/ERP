@@ -319,6 +319,28 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   MENU CARDS (alternative to the sidebar — see app/menu/page.tsx)
+   ══════════════════════════════════════════════════════════════ */
+
+.sa-menu-link { display: inline-flex; align-items: center; gap: 6px; width: auto; padding: 0 10px; font-size: 13px; text-decoration: none; margin-left: 8px; }
+.sa-cards-hdr { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.sa-cards-hdr h1 { font-size: 1.35rem; font-weight: 700; }
+.sa-cards-back { font-size: 13px; color: var(--theme-accent); text-decoration: none; }
+.sa-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+.sa-card-tile {
+  display: flex; flex-direction: column; gap: 6px; text-align: left;
+  padding: 16px; background: #fff; border: 1px solid var(--color-border);
+  border-radius: 8px; cursor: pointer; text-decoration: none; color: var(--color-text);
+  font: inherit; transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.sa-card-tile:hover { border-color: var(--theme-accent); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08); transform: translateY(-1px); }
+.sa-card-tile.active { border-color: var(--theme-accent); background: var(--theme-accent-light); }
+.sa-card-ic { font-size: 22px; line-height: 1; display: flex; align-items: center; gap: 8px; }
+.sa-card-ic .sa-dot { width: 10px; height: 10px; }
+.sa-card-t { font-size: 14px; font-weight: 600; }
+.sa-card-s { font-size: 12px; color: var(--color-muted); }
+
+/* ═══════════════════════════════════════════════════════════════
    ENTERPRISE PAGE CONTENT (ent- prefix)
    ══════════════════════════════════════════════════════════════ */
 

@@ -1,15 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { NAV_GROUPS, NavItem } from "./navGroups";
+import { NAV_GROUPS, NavGroup, NavItem } from "./navGroups";
 import { canUseChatbot, clearSession, getCustomRoleId, getDeniedModules, getName, getPermissions, getRole, isLoggedIn, isPlatformAdmin } from "@/lib/auth";
 import { getMenuConfig } from "@/lib/api";
 import type { MenuConfigMap } from "@/lib/types";
 import ChatWidget from "@/components/chatbot/ChatWidget";
 
 const OPEN_GROUPS_KEY = "smarterp.openNavGroups";
+
+// Sidebar vs. menu cards is a personal, per-browser preference (localStorage) —
+// nothing server-side. "cards" hides the sidebar and uses /menu as the launcher.
+const MENU_MODE_KEY = "smarterp.menuMode";
+type MenuMode = "sidebar" | "cards";
+
+// The role/permission/module-filtered nav groups AppShell already computes,
+// shared with whatever renders inside it (MenuCards) so the card view applies
+// exactly the same visibility rules as the sidebar without refetching.
+const NavContext = createContext<NavGroup[]>([]);
+export function useNavGroups() {
+  return useContext(NavContext);
+}
 
 // Structure ported from SmartAppt Gold's authenticated app shell
 // (frontend/src/components/organisms/Layout.tsx — WebLayout) — sa-shell /
@@ -24,6 +37,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [menuConfig, setMenuConfig] = useState<MenuConfigMap>({});
+  const [menuMode, setMenuMode] = useState<MenuMode>("sidebar");
 
   useEffect(() => {
     if (!isLoggedIn()) {
@@ -33,6 +47,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     if (isPlatformAdmin()) {
       router.replace("/admin");
       return;
+    }
+    // Read the mode in the same pass that flips `ready`, so the first frame
+    // that renders already has the right layout (no sidebar flash for cards).
+    try {
+      if (localStorage.getItem(MENU_MODE_KEY) === "cards") setMenuMode("cards");
+    } catch {
+      /* storage unavailable — stay on the sidebar */
     }
     setReady(true);
   }, [router]);
@@ -82,6 +103,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const toggleMenuMode = () => {
+    const next: MenuMode = menuMode === "cards" ? "sidebar" : "cards";
+    setMenuMode(next);
+    try {
+      localStorage.setItem(MENU_MODE_KEY, next);
+    } catch {
+      /* storage unavailable — switch still applies until reload */
+    }
+    if (next === "cards") router.push("/menu");
+    else if (pathname === "/menu") router.push("/dashboard");
+  };
+
   const handleLogout = () => {
     clearSession();
     router.push("/login");
@@ -128,21 +161,49 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   )?.id;
 
   return (
+    <NavContext.Provider value={allowedGroups}>
     <div className="sa-shell">
       {/* ── Header ── */}
       <header className="sa-header">
-        <button className="sa-hamburger" onClick={() => setSidebarOpen((o) => !o)} aria-label="Toggle menu">
-          <svg viewBox="0 0 20 20" fill="currentColor" width="20" height="20">
-            <path fillRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
-          </svg>
-        </button>
+        {menuMode === "sidebar" && (
+          <button className="sa-hamburger" onClick={() => setSidebarOpen((o) => !o)} aria-label="Toggle menu">
+            <svg viewBox="0 0 20 20" fill="currentColor" width="20" height="20">
+              <path fillRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+            </svg>
+          </button>
+        )}
 
         <Link href="/dashboard" className="sa-logo">
           <span className="sa-logo-box">S</span>
           SmartERP
         </Link>
 
+        {menuMode === "cards" && (
+          <Link href="/menu" className={`sa-hbtn sa-menu-link${pathname === "/menu" ? " active" : ""}`} title="All modules">
+            <svg viewBox="0 0 20 20" fill="currentColor" width="17" height="17">
+              <path d="M3 3h5v5H3V3zm9 0h5v5h-5V3zM3 12h5v5H3v-5zm9 0h5v5h-5v-5z" />
+            </svg>
+            <span>Menu</span>
+          </Link>
+        )}
+
         <div style={{ flex: 1 }} />
+
+        <button
+          className="sa-hbtn"
+          onClick={toggleMenuMode}
+          title={menuMode === "cards" ? "Switch to sidebar menu" : "Switch to menu cards"}
+        >
+          {menuMode === "cards" ? (
+            <svg viewBox="0 0 20 20" fill="currentColor" width="17" height="17">
+              <path d="M3 4h4v12H3V4zm6 0h8v2H9V4zm0 5h8v2H9V9zm0 5h8v2H9v-2z" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 20 20" fill="currentColor" width="17" height="17">
+              <path d="M3 3h5v5H3V3zm9 0h5v5h-5V3zM3 12h5v5H3v-5zm9 0h5v5h-5v-5z" />
+            </svg>
+          )}
+        </button>
 
         <button className="sa-hbtn" onClick={handleLogout} title="Logout">
           <svg viewBox="0 0 20 20" fill="currentColor" width="17" height="17">
@@ -160,6 +221,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </header>
 
       <div className="sa-body">
+        {menuMode === "sidebar" && (
+        <>
         <div className={`sa-sidebar-overlay${sidebarOpen ? " open" : ""}`} onClick={() => setSidebarOpen(false)} />
 
         <aside className={`sa-sidebar${sidebarOpen ? " mobile-open" : ""}`}>
@@ -202,11 +265,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           ))}
         </aside>
+        </>
+        )}
 
         <main className="sa-main">{children}</main>
       </div>
 
       {canUseChatbot() && <ChatWidget />}
     </div>
+    </NavContext.Provider>
   );
 }
