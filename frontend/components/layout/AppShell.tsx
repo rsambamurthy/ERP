@@ -8,6 +8,7 @@ import { canUseChatbot, clearSession, getCustomRoleId, getDeniedModules, getName
 import { getMenuConfig } from "@/lib/api";
 import type { MenuConfigMap } from "@/lib/types";
 import ChatWidget from "@/components/chatbot/ChatWidget";
+import GroupIcon from "./GroupIcon";
 
 const OPEN_GROUPS_KEY = "smarterp.openNavGroups";
 
@@ -82,19 +83,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     } catch {
       /* storage unavailable or corrupt — fall back to just the active group */
     }
-    const next = new Set<string>(Array.isArray(saved) ? (saved as string[]) : []);
+    // Accordion: at most one group open. The group containing the current page
+    // wins; otherwise keep whatever single group was open before.
     const active = NAV_GROUPS.find((g) =>
       g.items.some((i) => pathname === i.path || pathname?.startsWith(i.path + "/"))
     );
-    if (active) next.add(active.id);
-    setOpenGroups(next);
+    const first = Array.isArray(saved) && typeof saved[0] === "string" ? (saved[0] as string) : null;
+    const open = active?.id ?? first;
+    setOpenGroups(new Set<string>(open ? [open] : []));
   }, [pathname]);
 
   if (!ready) return null;
 
   const toggleGroup = (id: string) => {
-    const next = new Set(openGroups);
-    next.has(id) ? next.delete(id) : next.add(id);
+    // Accordion: opening a group closes the others; clicking the open one closes it.
+    const next = new Set<string>(openGroups.has(id) ? [] : [id]);
     setOpenGroups(next);
     try {
       sessionStorage.setItem(OPEN_GROUPS_KEY, JSON.stringify(Array.from(next)));
@@ -241,7 +244,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 className={`sa-mg-h${openGroups.has(group.id) ? " open" : ""}${activeGroupId === group.id ? " active-group" : ""}`}
                 onClick={() => toggleGroup(group.id)}
               >
-                <div className="sa-mg-ic">{group.icon}</div>
+                <div className="sa-mg-ic"><GroupIcon id={group.id} fallback={group.icon} size={12} /></div>
                 <span className="sa-mg-t">{group.label}</span>
                 <svg className="sa-mg-cv" viewBox="0 0 20 20" fill="currentColor" width="12" height="12">
                   <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
