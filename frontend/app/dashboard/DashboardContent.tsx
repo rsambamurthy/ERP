@@ -104,14 +104,16 @@ export default function DashboardContent() {
   const name = getName();
   const monthLabel = new Date().toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 
-  const metrics: { label: string; value: number | undefined; hint: string; tone?: "profit" }[] = [
+  type Metric = { label: string; value: number | undefined; hint: string; tone?: "profit" };
+  const allMetrics: Metric[] = [
     { label: "Sales", value: data.sales, hint: monthLabel },
     { label: "Purchases", value: data.purchases, hint: monthLabel },
     { label: "Net profit", value: data.netProfit, hint: monthLabel, tone: "profit" },
     { label: "Cash and bank", value: data.cash, hint: "Current balance" },
     { label: "Stock value", value: data.stock, hint: "At cost" },
     { label: "Net worth", value: data.assets !== undefined && data.liabilities !== undefined ? data.assets - data.liabilities : undefined, hint: "Assets minus liabilities" },
-  ].filter((m) => m.value !== undefined);
+  ];
+  const metrics = allMetrics.filter((m) => m.value !== undefined);
 
   const attention = [
     { label: "Purchase orders awaiting approval", n: data.poPending, href: "/purchase/orders" },
